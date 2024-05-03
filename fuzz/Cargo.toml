@@ -1,0 +1,53 @@
+[package]
+name = "rylv-metrics-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.rylv-metrics]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_metric_collector"
+path = "fuzz_targets/fuzz_metric_collector.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_metric_names"
+path = "fuzz_targets/fuzz_metric_names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tags"
+path = "fuzz_targets/fuzz_tags.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_packet_limits"
+path = "fuzz_targets/fuzz_packet_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_numeric_values"
+path = "fuzz_targets/fuzz_numeric_values.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,9 @@
+/target
+
+flamegraph.svg
+perf.data*
+profile.json.gz
+
+/target-docker
+
+.idea

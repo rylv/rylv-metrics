@@ -1,0 +1,56 @@
+[package]
+name = "rylv-metrics"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "High-performance DogStatsD metrics client with client-side aggregation"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rylv/rylv-metrics"
+documentation = "https://docs.rs/rylv-metrics"
+readme = "README.md"
+authors = ["Rylv"]
+keywords = ["metrics", "dogstatsd", "statsd", "monitoring", "telemetry"]
+categories = ["development-tools::profiling", "network-programming"]
+exclude = [".github/", "fuzz/", "Makefile", ".gitignore"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+crossbeam = { version = "0.8.4", features = ["std", "crossbeam-queue"], default-features = false }
+hdrhistogram = { version = "7.5.4", default-features = false}
+thiserror = { version = "1.0.59", default-features = false }
+arc-swap = { version = "1.7.1", default-features = false }
+itoa = { version = "1.0.15", default-features = false }
+dashmap = { version = "6.1.0", default-features = false, features=["raw-api"] }
+tracing = { version = "0.1", default-features = false }
+
+rustix = { version = "1.1.2", features = ["net"] }
+libc = "0.2"
+bumpalo = { version = "3.19.0" , features = ["collections"], default-features = false}
+dhat = {version="0.3.3", optional=true, default-features = false}
+
+ahash = { version = "0.8.12", default-features = false, optional = true}
+gxhash = { version = "3.4.1", features = ["std"], default-features = false, optional = true }
+
+allocation-counter = { version = "0", optional = true }
+[dev-dependencies]
+criterion = "0.5.1"
+
+[profile.release]
+debug = true
+
+[[bench]]
+name = "sync_collector"
+path = "benches/sync_collector.rs"
+harness = false
+
+[features]
+default = ["ahash"]
+
+std = []
+ahash = ["dep:ahash"]
+gxhash = ["dep:gxhash"]
+
+dhat-heap = ["dep:dhat"]    # if you are doing heap profiling
+allocationcounter = ["dep:allocation-counter"]
