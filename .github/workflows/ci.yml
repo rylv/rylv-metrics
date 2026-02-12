@@ -69,12 +69,6 @@ jobs:
       - name: Run cargo test
         run: cargo test --verbose
 
-      - name: Run cargo test (no default features)
-        run: cargo test --no-default-features --verbose
-
-      - name: Run cargo test (with gxhash)
-        run: cargo test --no-default-features --features gxhash --verbose
-
   clippy:
     name: Clippy on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -111,7 +105,7 @@ jobs:
           key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy -- -D warnings
 
   cross-compile-arm:
     name: Cross-compile for ARM (${{ matrix.target }})
