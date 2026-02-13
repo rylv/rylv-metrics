@@ -69,19 +69,85 @@ pub trait MetricCollectorTrait {
 ///
 /// ```ignore
 /// use rylv_metrics::collector::HistogramConfig;
-/// let config = HistogramConfig::new(SigFig::new(2).unwrap());
+/// let config = HistogramConfig::new(SigFig::new(2).unwrap(), vec![0.95, 0.99]).unwrap();
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct HistogramConfig {
     sig_fig: SigFig,
+    percentiles: Arc<[f64]>,
+    emit_base_metrics: [bool; 4],
     // TODO: add bounds configs
 }
 
 impl HistogramConfig {
-    /// Creates a new histogram configuration with the given significant figures.
+    /// Creates a new histogram configuration with the given significant figures and percentiles.
+    ///
+    /// # Errors
+    /// Returns an error if any percentile is NaN/inf or outside `[0.0, 1.0)`.
+    pub fn new(sig_fig: SigFig, percentiles: Vec<f64>) -> MetricResult<Self> {
+        for percentile in &percentiles {
+            if !percentile.is_finite() || *percentile < 0.0 || *percentile >= 1.0 {
+                return Err("Invalid percentile: must be finite and in range [0.0, 1.0)".into());
+            }
+        }
+
+        Ok(Self {
+            sig_fig,
+            percentiles: percentiles.into(),
+            emit_base_metrics: [true; 4],
+        })
+    }
+
+    /// Enables or disables the `.count` histogram metric.
     #[must_use]
-    pub const fn new(sig_fig: SigFig) -> Self {
-        Self { sig_fig }
+    pub const fn with_count(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[0] = emit;
+        self
+    }
+
+    /// Enables or disables the `.min` histogram metric.
+    #[must_use]
+    pub const fn with_min(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[1] = emit;
+        self
+    }
+
+    /// Enables or disables the `.avg` histogram metric.
+    ///
+    /// Note: `.avg` currently reflects p50 behavior for compatibility.
+    #[must_use]
+    pub const fn with_avg(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[2] = emit;
+        self
+    }
+
+    /// Enables or disables the `.max` histogram metric.
+    #[must_use]
+    pub const fn with_max(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[3] = emit;
+        self
+    }
+
+    pub(crate) const fn sig_fig(&self) -> SigFig {
+        self.sig_fig
+    }
+
+    pub(crate) fn percentiles(&self) -> Arc<[f64]> {
+        self.percentiles.clone()
+    }
+
+    pub(crate) const fn emit_base_metrics(&self) -> [bool; 4] {
+        self.emit_base_metrics
+    }
+}
+
+impl Default for HistogramConfig {
+    fn default() -> Self {
+        Self {
+            sig_fig: SigFig::default(),
+            percentiles: vec![0.95, 0.99].into(),
+            emit_base_metrics: [true; 4],
+        }
     }
 }
 
@@ -108,7 +174,7 @@ impl HistogramConfig {
 ///     stats_prefix: "myapp.".to_string(),
 ///     writer_type: rylv_metrics::DEFAULT_STATS_WRITER_TYPE,
 ///     histogram_configs: Default::default(),
-///     default_sig_fig: rylv_metrics::SigFig::default(),
+///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
 ///     hasher_builder: std::hash::RandomState::new(),
 /// };
 ///
@@ -134,7 +200,7 @@ where
 {
     aggregator: Arc<ArcSwap<Aggregator<S>>>,
     _hasher_builder: S,
-    default_sig_fig: SigFig,
+    default_histogram_config: HistogramConfig,
     sender: Option<Sender<()>>,
     histogram_configs: std::collections::HashMap<String, HistogramConfig>,
     // only used in cold path
@@ -196,8 +262,8 @@ where
     pub writer_type: StatsWriterType,
     /// Per-metric histogram configuration for custom precision settings.
     pub histogram_configs: std::collections::HashMap<String, HistogramConfig>,
-    /// Default histogram significant figures when metric-specific config is absent.
-    pub default_sig_fig: SigFig,
+    /// Default histogram configuration when metric-specific config is absent.
+    pub default_histogram_config: HistogramConfig,
     /// Hasher builder used by internal aggregation maps.
     pub hasher_builder: S,
 }
@@ -211,7 +277,7 @@ impl Default for MetricCollectorOptions<DefaultMetricHasher> {
             stats_prefix: String::new(),
             writer_type: DEFAULT_STATS_WRITER_TYPE,
             histogram_configs: std::collections::HashMap::new(),
-            default_sig_fig: SigFig::default(),
+            default_histogram_config: HistogramConfig::default(),
             hasher_builder: DefaultMetricHasher::new(),
         }
     }
@@ -232,7 +298,7 @@ where
     ) -> Self {
         let (sender, receiver) = unbounded::<()>();
         let hasher_builder = options.hasher_builder.clone();
-        let default_sig_fig = options.default_sig_fig;
+        let default_histogram_config = options.default_histogram_config.clone();
 
         let alloc_aggregator = Arc::new(ArcSwap::new(Arc::new(Aggregator::with_hasher_builder(
             hasher_builder.clone(),
@@ -246,7 +312,7 @@ where
         Self {
             aggregator: alloc_aggregator,
             _hasher_builder: hasher_builder,
-            default_sig_fig,
+            default_histogram_config,
             sender: Some(sender),
             job_handle: Some(job_handle),
             histogram_configs,
@@ -265,7 +331,7 @@ where
         value: u64,
         hashmap: &DashMap<AggregatorEntryKey, V, S>,
         record_fn: impl FnOnce(&mut V, u64) -> Result<(), String>,
-        new_fn: impl FnOnce(SigFig) -> Option<V>,
+        new_fn: impl FnOnce(&HistogramConfig) -> Option<V>,
     ) {
         let lookup_key = build_lookup_key(metric, tags, hashmap);
 
@@ -287,11 +353,11 @@ where
                 }
             }
             Err(insert_slot) => {
-                let sig_fig = self
+                let histogram_config = self
                     .histogram_configs
                     .get(lookup_key.metric.as_ref())
-                    .map_or(self.default_sig_fig, |config| config.sig_fig);
-                if let Some(mut v) = new_fn(sig_fig) {
+                    .unwrap_or(&self.default_histogram_config);
+                if let Some(mut v) = new_fn(histogram_config) {
                     if let Err(err) = record_fn(&mut v, value) {
                         error!("Fail to record: {err}");
                     }
@@ -411,7 +477,7 @@ where
             value,
             hashmap,
             |v, value| v.record(value).map_err(|err| err.to_string()),
-            |sig_fig| aggregator.get_histogram(sig_fig),
+            |config| aggregator.get_histogram(config),
         );
     }
 
@@ -492,6 +558,26 @@ where
         // Wait for the background job to finish gracefully
         if let Some(handle) = self.job_handle.take() {
             let _ = handle.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HistogramConfig, SigFig};
+
+    #[test]
+    fn histogram_config_allows_empty_percentiles() {
+        let config = HistogramConfig::new(SigFig::default(), vec![]);
+        assert!(config.is_ok());
+    }
+
+    #[test]
+    fn histogram_config_rejects_invalid_percentiles() {
+        let invalid = [f64::NAN, f64::INFINITY, -0.1, 1.0];
+        for percentile in invalid {
+            let config = HistogramConfig::new(SigFig::default(), vec![percentile]);
+            assert!(config.is_err());
         }
     }
 }

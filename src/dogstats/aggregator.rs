@@ -1,6 +1,6 @@
 use super::Tags;
 use super::{materialize_tags, GaugeState, RylvStr};
-use crate::{DefaultMetricHasher, MetricsError};
+use crate::{DefaultMetricHasher, HistogramConfig, MetricsError};
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use hdrhistogram::Histogram;
@@ -9,6 +9,7 @@ use std::cmp::{max, min};
 use std::hash::BuildHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -99,6 +100,8 @@ pub struct HistogramWrapper {
     pub max: u64,
     pub histogram: Histogram<u64>,
     pub sig_fig: SigFig,
+    pub percentiles: Arc<[f64]>,
+    pub emit_base_metrics: [bool; 4],
 }
 
 impl HistogramWrapper {
@@ -185,10 +188,15 @@ where
         }
     }
 
-    pub(crate) fn get_histogram(&self, sig_fig: SigFig) -> Option<HistogramWrapper> {
-        if let Some(h) =
+    pub(crate) fn get_histogram(&self, config: &HistogramConfig) -> Option<HistogramWrapper> {
+        let sig_fig = config.sig_fig();
+        let percentiles = config.percentiles();
+        let emit_base_metrics = config.emit_base_metrics();
+        if let Some(mut h) =
             unsafe { self.pool_histograms.get_unchecked(sig_fig.value() as usize) }.pop()
         {
+            h.percentiles = percentiles;
+            h.emit_base_metrics = emit_base_metrics;
             return Some(h);
         }
 
@@ -199,6 +207,8 @@ where
                 min: u64::MAX,
                 max: u64::MIN,
                 sig_fig,
+                percentiles,
+                emit_base_metrics,
             });
         }
 

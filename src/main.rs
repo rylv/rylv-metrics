@@ -1,5 +1,5 @@
 use rylv_metrics::{
-    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SigFig,
+    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
     DEFAULT_STATS_WRITER_TYPE,
 };
 use std::{
@@ -41,7 +41,7 @@ fn sync_main() {
         writer_type: DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: std::collections::HashMap::new(),
         hasher_builder: RandomState::new(),
-        default_sig_fig: SigFig::new(3).unwrap(),
+        default_histogram_config: rylv_metrics::HistogramConfig::default(),
     };
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);

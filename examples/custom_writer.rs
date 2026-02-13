@@ -56,7 +56,7 @@ fn main() {
         stats_prefix: "app.".to_string(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
-        default_sig_fig: rylv_metrics::SigFig::default(),
+        default_histogram_config: rylv_metrics::HistogramConfig::default(),
         hasher_builder: std::hash::RandomState::new(),
     };
 

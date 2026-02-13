@@ -33,7 +33,7 @@
 ///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
 ///     histogram_configs: std::collections::HashMap::new(),
-///     default_sig_fig: rylv_metrics::SigFig::default(),
+///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
 ///     hasher_builder: std::hash::RandomState::new(),
 /// };
 /// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);
@@ -102,7 +102,7 @@ macro_rules! histogram {
 ///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
 ///     histogram_configs: std::collections::HashMap::new(),
-///     default_sig_fig: rylv_metrics::SigFig::default(),
+///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
 ///     hasher_builder: std::hash::RandomState::new(),
 /// };
 /// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);
@@ -165,7 +165,7 @@ macro_rules! count {
 ///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
 ///     histogram_configs: std::collections::HashMap::new(),
-///     default_sig_fig: rylv_metrics::SigFig::default(),
+///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
 ///     hasher_builder: std::hash::RandomState::new(),
 /// };
 /// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);
@@ -228,7 +228,7 @@ macro_rules! count_add {
 ///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
 ///     histogram_configs: std::collections::HashMap::new(),
-///     default_sig_fig: rylv_metrics::SigFig::default(),
+///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
 ///     hasher_builder: std::hash::RandomState::new(),
 /// };
 /// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);

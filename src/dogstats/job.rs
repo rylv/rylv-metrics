@@ -116,6 +116,21 @@ where
         bump.alloc_str(value)
     }
 
+    fn get_percentile_suffix(percentile: f64, bump: &Bump) -> &str {
+        let mut percentile_number = (percentile * 100.0).to_string();
+        if percentile_number.contains('.') {
+            while percentile_number.ends_with('0') {
+                percentile_number.pop();
+            }
+            if percentile_number.ends_with('.') {
+                percentile_number.pop();
+            }
+        }
+
+        let suffix = format!(".{percentile_number}percentile");
+        bump.alloc_str(&suffix)
+    }
+
     fn process_histogram<'data, 'bump: 'data, 'w>(
         stats_writer: &'w mut dyn StatsWriterTrait,
         keys_to_remove: &mut Vec<RemoveKey>,
@@ -140,81 +155,79 @@ where
 
                 let min = histogram_entry.min;
                 let p50 = histogram_entry.histogram.value_at_quantile(0.50);
-                let p95 = histogram_entry.histogram.value_at_quantile(0.95);
-                let p99 = histogram_entry.histogram.value_at_quantile(0.99);
                 let max = histogram_entry.max;
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".count"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(count)
-                    } else {
-                        Self::get_value(count, bump, buffer)
-                    },
-                    MetricType::Count,
-                );
+                if histogram_entry.emit_base_metrics[0] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".count"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(count)
+                        } else {
+                            Self::get_value(count, bump, buffer)
+                        },
+                        MetricType::Count,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".min"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(min)
-                    } else {
-                        Self::get_value(min, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                if histogram_entry.emit_base_metrics[1] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".min"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(min)
+                        } else {
+                            Self::get_value(min, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".avg"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(p50)
-                    } else {
-                        Self::get_value(p50, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                if histogram_entry.emit_base_metrics[2] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".avg"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(p50)
+                        } else {
+                            Self::get_value(p50, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".95percentile"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(p95)
-                    } else {
-                        Self::get_value(p95, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                for percentile in histogram_entry.percentiles.iter() {
+                    let percentile_value = histogram_entry.histogram.value_at_quantile(*percentile);
+                    let percentile_metric_suffix = Self::get_percentile_suffix(*percentile, bump);
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, percentile_metric_suffix],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(percentile_value)
+                        } else {
+                            Self::get_value(percentile_value, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".99percentile"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(p99)
-                    } else {
-                        Self::get_value(p99, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
-
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".max"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(max)
-                    } else {
-                        Self::get_value(max, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                if histogram_entry.emit_base_metrics[3] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".max"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(max)
+                        } else {
+                            Self::get_value(max, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
                 histogram_entry.reset();
             } else {
