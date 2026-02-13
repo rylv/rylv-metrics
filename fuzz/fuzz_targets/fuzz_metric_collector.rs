@@ -1,7 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rylv_metrics::{MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+use rylv_metrics::{
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    StatsWriterType,
+};
 use std::time::Duration;
 
 // Fuzz target that tests the metric collector with various random inputs
@@ -18,6 +21,8 @@ fuzz_target!(|data: &[u8]| {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Simple,
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -40,30 +45,21 @@ fuzz_target!(|data: &[u8]| {
     let tags_str = String::from_utf8_lossy(&remaining[split_point..]);
 
     // Split tags by common delimiters
-    let mut tags: Vec<String> = tags_str
+    let tags: Vec<String> = tags_str
         .split(|c: char| c == ',' || c == ';' || c == ' ')
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
 
     // Execute different operations based on fuzz input
+    let metric = RylvStr::from(metric_name.as_ref());
+    let mut tag_refs: Vec<RylvStr<'_>> = tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
+
     match op {
-        0 => {
-            // Test increment_by_one
-            collector.increment_by_one(metric_name.to_string(), &mut tags);
-        }
-        1 => {
-            // Test increment_by_value
-            collector.increment_by_value(metric_name.to_string(), value, &mut tags);
-        }
-        2 => {
-            // Test gauge
-            collector.gauge(metric_name.to_string(), value, &mut tags);
-        }
-        3 => {
-            // Test histogram
-            collector.histogram(metric_name.to_string(), value, &mut tags);
-        }
+        0 => collector.count(metric, &mut tag_refs),
+        1 => collector.count_add(metric, value, &mut tag_refs),
+        2 => collector.gauge(metric, value, &mut tag_refs),
+        3 => collector.histogram(metric, value, &mut tag_refs),
         _ => unreachable!(),
     }
 

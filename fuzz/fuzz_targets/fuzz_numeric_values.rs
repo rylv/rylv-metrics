@@ -1,7 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rylv_metrics::{MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+use rylv_metrics::{
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    StatsWriterType,
+};
 use std::time::Duration;
 
 // Fuzz target focusing on numeric edge cases
@@ -17,6 +20,8 @@ fuzz_target!(|data: &[u8]| {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Simple,
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -33,22 +38,23 @@ fuzz_target!(|data: &[u8]| {
         data[12], data[13], data[14], data[15],
     ]);
 
-    let mut tags = vec!["fuzz:test".to_string()];
+    let tags = vec!["fuzz:test".to_string()];
+    let mut tag_refs: Vec<RylvStr<'_>> = tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
 
     // Test with potentially extreme values
-    collector.increment_by_value("fuzz.counter", value1, &mut tags);
-    collector.gauge("fuzz.gauge", value2, &mut tags);
-    collector.histogram("fuzz.histogram", value1, &mut tags);
+    collector.count_add(RylvStr::from_static("fuzz.counter"), value1, &mut tag_refs);
+    collector.gauge(RylvStr::from_static("fuzz.gauge"), value2, &mut tag_refs);
+    collector.histogram(RylvStr::from_static("fuzz.histogram"), value1, &mut tag_refs);
 
     // Test common edge cases
-    collector.increment_by_value("fuzz.zero", 0, &mut tags);
-    collector.increment_by_value("fuzz.max", u64::MAX, &mut tags);
-    collector.gauge("fuzz.one", 1, &mut tags);
-    collector.histogram("fuzz.edge", u64::MAX / 2, &mut tags);
+    collector.count_add(RylvStr::from_static("fuzz.zero"), 0, &mut tag_refs);
+    collector.count_add(RylvStr::from_static("fuzz.max"), u64::MAX, &mut tag_refs);
+    collector.gauge(RylvStr::from_static("fuzz.one"), 1, &mut tag_refs);
+    collector.histogram(RylvStr::from_static("fuzz.edge"), u64::MAX / 2, &mut tag_refs);
 
     // Test rapid updates to the same metric (aggregation stress test)
     for _ in 0..100 {
-        collector.increment_by_value("fuzz.rapid", value1, &mut tags);
+        collector.count_add(RylvStr::from_static("fuzz.rapid"), value1, &mut tag_refs);
     }
 
     drop(collector);

@@ -1,7 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rylv_metrics::{MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+use rylv_metrics::{
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    StatsWriterType,
+};
 use std::time::Duration;
 
 // Fuzz target focusing on edge cases in tags
@@ -17,6 +20,8 @@ fuzz_target!(|data: &[u8]| {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Simple,
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -41,9 +46,10 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Test with various tag combinations
-    collector.increment_by_one("fuzz.metric", &mut tags);
-    collector.gauge("fuzz.gauge", 42, &mut tags);
-    collector.histogram("fuzz.histogram", 100, &mut tags);
+    let mut tag_refs: Vec<RylvStr<'_>> = tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
+    collector.count(RylvStr::from_static("fuzz.metric"), &mut tag_refs);
+    collector.gauge(RylvStr::from_static("fuzz.gauge"), 42, &mut tag_refs);
+    collector.histogram(RylvStr::from_static("fuzz.histogram"), 100, &mut tag_refs);
 
     drop(collector);
 });
