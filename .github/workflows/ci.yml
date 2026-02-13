@@ -72,9 +72,6 @@ jobs:
       - name: Run cargo test (no default features)
         run: cargo test --no-default-features --verbose
 
-      - name: Run cargo test (with gxhash)
-        run: cargo test --no-default-features --features gxhash --verbose
-
   clippy:
     name: Clippy on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

@@ -1,8 +1,11 @@
 use rylv_metrics::{
-    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SigFig,
     DEFAULT_STATS_WRITER_TYPE,
 };
-use std::time::{Duration, Instant};
+use std::{
+    hash::RandomState,
+    time::{Duration, Instant},
+};
 
 const SERVER_ADDRESS: &str = "127.0.0.1:9090";
 
@@ -37,6 +40,8 @@ fn sync_main() {
         stats_prefix: String::new(),
         writer_type: DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: std::collections::HashMap::new(),
+        hasher_builder: RandomState::new(),
+        default_sig_fig: SigFig::new(3).unwrap(),
     };
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
@@ -80,6 +85,8 @@ fn sync_main_heavy() {
         stats_prefix: String::new(),
         writer_type: DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: std::collections::HashMap::new(),
+        hasher_builder: RandomState::new(),
+        ..Default::default()
     };
 
     #[allow(unused_variables)]

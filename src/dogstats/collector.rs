@@ -8,10 +8,10 @@ use super::job::initialize_job;
 use crate::dogstats::aggregator::{AggregatorEntryKey, LookupKey, SigFig, DEFAULT_SIG_FIG};
 use crate::dogstats::writer::StatsWriterTrait;
 use crate::dogstats::{Aggregator, GaugeState, RylvStr};
-use crate::{HashMap, MetricResult};
+use crate::{DefaultMetricHasher, MetricResult};
 use arc_swap::ArcSwap;
 use crossbeam::channel::{unbounded, Sender};
-use dashmap::SharedValue;
+use dashmap::{DashMap, SharedValue};
 use tracing::error;
 
 /// Trait defining the interface for metric collection.
@@ -108,6 +108,8 @@ impl HistogramConfig {
 ///     stats_prefix: "myapp.".to_string(),
 ///     writer_type: rylv_metrics::DEFAULT_STATS_WRITER_TYPE,
 ///     histogram_configs: Default::default(),
+///     default_sig_fig: rylv_metrics::SigFig::default(),
+///     hasher_builder: std::hash::RandomState::new(),
 /// };
 ///
 /// let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
@@ -126,8 +128,13 @@ impl HistogramConfig {
 /// count_add!(collector, "bytes.sent", 1024, "endpoint:api");
 /// gauge!(collector, "connections", 100, "pool:main");
 /// ```
-pub struct MetricCollector {
-    aggregator: Arc<ArcSwap<Aggregator>>,
+pub struct MetricCollector<S = DefaultMetricHasher>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    aggregator: Arc<ArcSwap<Aggregator<S>>>,
+    _hasher_builder: S,
+    default_sig_fig: SigFig,
     sender: Option<Sender<()>>,
     histogram_configs: std::collections::HashMap<String, HistogramConfig>,
     // only used in cold path
@@ -171,7 +178,10 @@ pub const DEFAULT_STATS_WRITER_TYPE: StatsWriterType = StatsWriterType::Simple;
 ///
 /// Controls UDP packet sizes, flush intervals, and writer backend selection.
 #[derive(Debug)]
-pub struct MetricCollectorOptions {
+pub struct MetricCollectorOptions<S = DefaultMetricHasher>
+where
+    S: BuildHasher + Clone,
+{
     // TODO: add support for this metric, if value = 1 -> no aggregation at all -> queue of MetricLines
     // pub max_metrics_per_packet: u16,
     /// Maximum size of a single UDP packet in bytes. Recommended: 1432 for safe MTU.
@@ -186,9 +196,13 @@ pub struct MetricCollectorOptions {
     pub writer_type: StatsWriterType,
     /// Per-metric histogram configuration for custom precision settings.
     pub histogram_configs: std::collections::HashMap<String, HistogramConfig>,
+    /// Default histogram significant figures when metric-specific config is absent.
+    pub default_sig_fig: SigFig,
+    /// Hasher builder used by internal aggregation maps.
+    pub hasher_builder: S,
 }
 
-impl Default for MetricCollectorOptions {
+impl Default for MetricCollectorOptions<DefaultMetricHasher> {
     fn default() -> Self {
         Self {
             max_udp_packet_size: 1432,
@@ -197,11 +211,16 @@ impl Default for MetricCollectorOptions {
             stats_prefix: String::new(),
             writer_type: DEFAULT_STATS_WRITER_TYPE,
             histogram_configs: std::collections::HashMap::new(),
+            default_sig_fig: DEFAULT_SIG_FIG,
+            hasher_builder: DefaultMetricHasher::new(),
         }
     }
 }
 
-impl MetricCollector {
+impl<S> MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     /// Creates a new metric collector that sends aggregated metrics to `dst_addr`.
     ///
     /// Binds a UDP socket to `bind_addr` and spawns a background flush thread.
@@ -209,11 +228,15 @@ impl MetricCollector {
     pub fn new(
         bind_addr: SocketAddr,
         dst_addr: SocketAddr,
-        mut options: MetricCollectorOptions,
+        mut options: MetricCollectorOptions<S>,
     ) -> Self {
         let (sender, receiver) = unbounded::<()>();
+        let hasher_builder = options.hasher_builder.clone();
+        let default_sig_fig = options.default_sig_fig;
 
-        let alloc_aggregator = Arc::new(ArcSwap::new(Arc::new(Aggregator::default())));
+        let alloc_aggregator = Arc::new(ArcSwap::new(Arc::new(Aggregator::with_hasher_builder(
+            hasher_builder.clone(),
+        ))));
         let alloc_clone = alloc_aggregator.clone();
         let mut histogram_configs = std::collections::HashMap::new();
         mem::swap(&mut options.histogram_configs, &mut histogram_configs);
@@ -222,6 +245,8 @@ impl MetricCollector {
 
         Self {
             aggregator: alloc_aggregator,
+            _hasher_builder: hasher_builder,
+            default_sig_fig,
             sender: Some(sender),
             job_handle: Some(job_handle),
             histogram_configs,
@@ -229,13 +254,16 @@ impl MetricCollector {
     }
 }
 
-impl MetricCollector {
+impl<S> MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     fn add_or_insert_entry_write<V>(
         &self,
         metric: RylvStr<'_>,
         tags: &[RylvStr<'_>],
         value: u64,
-        hashmap: &HashMap<AggregatorEntryKey, V>,
+        hashmap: &DashMap<AggregatorEntryKey, V, S>,
         record_fn: impl FnOnce(&mut V, u64) -> Result<(), String>,
         new_fn: impl FnOnce(SigFig) -> Option<V>,
     ) {
@@ -262,7 +290,7 @@ impl MetricCollector {
                 let sig_fig = self
                     .histogram_configs
                     .get(lookup_key.metric.as_ref())
-                    .map_or(DEFAULT_SIG_FIG, |config| config.sig_fig);
+                    .map_or(self.default_sig_fig, |config| config.sig_fig);
                 if let Some(mut v) = new_fn(sig_fig) {
                     if let Err(err) = record_fn(&mut v, value) {
                         error!("Fail to record: {err}");
@@ -286,7 +314,7 @@ fn add_or_insert_entry_read_first<V>(
     metric: RylvStr<'_>,
     tags: &[RylvStr<'_>],
     value: u64,
-    hashmap: &HashMap<AggregatorEntryKey, V>,
+    hashmap: &DashMap<AggregatorEntryKey, V, impl BuildHasher + Clone>,
     record_fn: impl FnOnce(&V, u64) -> Result<(), String>,
     new_fn: impl FnOnce() -> Option<V>,
 ) {
@@ -349,7 +377,7 @@ fn add_or_insert_entry_read_first<V>(
 fn build_lookup_key<'a, V>(
     metric: RylvStr<'a>,
     tags: &'a [RylvStr<'a>],
-    hashmap: &HashMap<AggregatorEntryKey, V>,
+    hashmap: &DashMap<AggregatorEntryKey, V, impl BuildHasher + Clone>,
 ) -> LookupKey<'a> {
     let mut hasher = hashmap.hasher().build_hasher();
     metric.as_ref().hash(&mut hasher);
@@ -363,7 +391,10 @@ fn build_lookup_key<'a, V>(
         hash: hasher.finish(),
     }
 }
-impl MetricCollectorTrait for MetricCollector {
+impl<S> MetricCollectorTrait for MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -448,7 +479,10 @@ impl MetricCollectorTrait for MetricCollector {
     }
 }
 
-impl Drop for MetricCollector {
+impl<S> Drop for MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     fn drop(&mut self) {
         // Drop the sender to signal the background job to stop.
         // When the sender is dropped, the receiver in the background job

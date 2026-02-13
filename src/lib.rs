@@ -24,6 +24,8 @@
 //!     stats_prefix: "myapp.".to_string(),
 //!     writer_type: rylv_metrics::DEFAULT_STATS_WRITER_TYPE,
 //!     histogram_configs: Default::default(),
+//!     default_sig_fig: rylv_metrics::SigFig::default(),
+//!     hasher_builder: std::hash::RandomState::new(),
 //! };
 //!
 //! let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
@@ -71,7 +73,7 @@ pub use dogstats::collector::{
     StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
 pub use dogstats::writer::StatsWriterTrait;
-pub use dogstats::{RylvStr, SigFig, DEFAULT_SIG_FIG};
+pub use dogstats::{RylvStr, SigFig};
 pub use error::MetricsError;
 
 /// Result type for metric operations.
@@ -79,38 +81,5 @@ pub use error::MetricsError;
 /// Wraps errors that can occur during metric collection and transmission.
 pub type MetricResult<T> = Result<T, MetricsError>;
 
-// Exactly one hasher feature must be enabled
-#[cfg(all(feature = "ahash", feature = "gxhash"))]
-compile_error!("Features `ahash` and `gxhash` are mutually exclusive");
-#[cfg(all(feature = "ahash", feature = "std"))]
-compile_error!("Features `ahash` and `std` are mutually exclusive");
-#[cfg(all(feature = "gxhash", feature = "std"))]
-compile_error!("Features `gxhash` and `std` are mutually exclusive");
-#[cfg(not(any(feature = "ahash", feature = "gxhash", feature = "std")))]
-compile_error!("One of `ahash`, `gxhash`, or `std` features must be enabled");
-
-#[cfg(feature = "ahash")]
-type MetricHasher = ahash::RandomState;
-
-#[cfg(feature = "ahash")]
-pub(crate) fn create_metric_hasher() -> MetricHasher {
-    ahash::RandomState::new()
-}
-
-#[cfg(feature = "gxhash")]
-type MetricHasher = gxhash::GxBuildHasher;
-
-#[cfg(feature = "gxhash")]
-pub(crate) fn create_metric_hasher() -> MetricHasher {
-    gxhash::GxBuildHasher::default()
-}
-
-#[cfg(feature = "std")]
-type MetricHasher = std::hash::RandomState;
-
-#[cfg(feature = "std")]
-pub(crate) fn create_metric_hasher() -> MetricHasher {
-    std::hash::RandomState::new()
-}
-
-type HashMap<K, V> = dashmap::DashMap<K, V, MetricHasher>;
+/// Default hasher builder used by metric aggregation maps.
+pub(crate) type DefaultMetricHasher = std::hash::RandomState;

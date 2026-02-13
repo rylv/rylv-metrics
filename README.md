@@ -27,7 +27,10 @@ rylv-metrics = "0.1"
 ## Quick Start
 
 ```rust
-use rylv_metrics::{MetricCollector, MetricCollectorOptions, MetricCollectorTrait, histogram};
+use rylv_metrics::{
+    count, count_add, gauge, histogram, MetricCollector, MetricCollectorOptions,
+    MetricCollectorTrait, RylvStr,
+};
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -37,9 +40,11 @@ fn main() {
         max_udp_packet_size: 1432,
         max_udp_batch_size: 10,
         flush_interval: Duration::from_secs(10),
-        stats_prefix: "myapp".to_string(),
+        stats_prefix: "myapp.".to_string(),
         writer_type: rylv_metrics::DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: Default::default(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     // Create the collector
@@ -48,12 +53,26 @@ fn main() {
     let collector = MetricCollector::new(bind_addr, dst_addr, options);
 
     // Record metrics
-    collector.histogram("request.latency", 42, &mut ["endpoint:api", "method:GET"]);
-    collector.increment_by_one("request.count", &mut ["endpoint:api"]);
-    collector.gauge("connections.active", 100, &mut ["pool:main"]);
+    collector.histogram(
+        RylvStr::from_static("request.latency"),
+        42,
+        &mut [RylvStr::from_static("endpoint:api"), RylvStr::from_static("method:GET")],
+    );
+    collector.count(
+        RylvStr::from_static("request.count"),
+        &mut [RylvStr::from_static("endpoint:api")],
+    );
+    collector.gauge(
+        RylvStr::from_static("connections.active"),
+        100,
+        &mut [RylvStr::from_static("pool:main")],
+    );
 
-    // Or use the histogram macro for convenience
+    // Or use convenience macros with string literals
     histogram!(collector, "request.latency", 42, "endpoint:api", "method:GET");
+    count!(collector, "request.count", "endpoint:api");
+    count_add!(collector, "bytes.sent", 1024, "endpoint:api");
+    gauge!(collector, "connections.active", 100, "pool:main");
 
     // Collector flushes automatically on drop
 }
@@ -66,7 +85,7 @@ fn main() {
 Records distribution of values with configurable precision:
 
 ```rust
-collector.histogram("response.time", 150, &mut ["service:api"]);
+histogram!(collector, "response.time", 150, "service:api");
 ```
 
 ### Counter
@@ -74,8 +93,8 @@ collector.histogram("response.time", 150, &mut ["service:api"]);
 Increments a counter, aggregated client-side:
 
 ```rust
-collector.increment_by_one("requests.total", &mut ["status:200"]);
-collector.increment_by_value("bytes.sent", 1024, &mut ["endpoint:upload"]);
+count!(collector, "requests.total", "status:200");
+count_add!(collector, "bytes.sent", 1024, "endpoint:upload");
 ```
 
 ### Gauge
@@ -83,7 +102,7 @@ collector.increment_by_value("bytes.sent", 1024, &mut ["endpoint:upload"]);
 Records point-in-time values:
 
 ```rust
-collector.gauge("memory.used", 1024000, &mut ["host:server1"]);
+gauge!(collector, "memory.used", 1024000, "host:server1");
 ```
 
 ## Custom Writer
@@ -115,9 +134,8 @@ impl StatsWriterTrait for MyWriter {
 
 ## Feature Flags
 
-- `ahash` (default): Use ahash for faster hashing
-- `gxhash`: Use gxhash instead of ahash (mutually exclusive)
-- `std`: Use standard library hasher
+- `dhat-heap`: Enables heap profiling support via `dhat`
+- `allocationcounter`: Enables allocation counting instrumentation
 
 ## Platform Support
 

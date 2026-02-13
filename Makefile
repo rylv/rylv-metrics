@@ -47,12 +47,10 @@ coverage-open:
 
 .PHONY: coverage-all
 coverage-all:
-	@echo "Running coverage with default features (ahash)..."
+	@echo "Running coverage with default features..."
 	cargo llvm-cov --workspace --html
-	@echo "Running coverage with no-default-features (std)..."
+	@echo "Running coverage with no-default-features..."
 	cargo llvm-cov --no-default-features --workspace --html
-	@echo "Running coverage with gxhash..."
-	cargo llvm-cov --no-default-features --features gxhash --workspace --html
 	@echo "All coverage reports generated at target/llvm-cov/html/index.html"
 
 .PHONY: docker-coverage
@@ -63,14 +61,6 @@ docker-coverage:
 .PHONY: bench
 bench:
 	RUSTFLAGS="-C force-frame-pointers=yes" cargo bench --bench sync_collector
-
-.PHONY: bench-ahash
-bench-ahash:
-	RUSTFLAGS="-C force-frame-pointers=yes" cargo bench --bench sync_collector --no-default-features --features ahash
-
-.PHONY: bench-gxhash
-bench-gxhash:
-	RUSTFLAGS="-C target-cpu=native -C force-frame-pointers=yes" cargo bench --bench sync_collector --no-default-features --features gxhash
 
 .PHONY: bench-dhat
 bench-dhat:

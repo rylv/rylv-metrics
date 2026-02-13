@@ -15,6 +15,8 @@ fn main() {
         stats_prefix: "myapp.".to_string(),
         writer_type: StatsWriterType::Simple,
         histogram_configs: std::collections::HashMap::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();

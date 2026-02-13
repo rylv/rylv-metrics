@@ -14,7 +14,7 @@ mod net;
 pub mod writer;
 mod writer_utils;
 
-pub use aggregator::{SigFig, DEFAULT_SIG_FIG};
+pub use aggregator::SigFig;
 
 /// A flexible string type that can hold static references, borrowed references, or owned values.
 /// Used for metric names and tags.

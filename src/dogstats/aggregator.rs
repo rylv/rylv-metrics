@@ -1,10 +1,12 @@
 use super::Tags;
 use super::{materialize_tags, GaugeState, RylvStr};
-use crate::{create_metric_hasher, HashMap, MetricsError};
+use crate::{DefaultMetricHasher, MetricsError};
 use crossbeam::queue::SegQueue;
+use dashmap::DashMap;
 use hdrhistogram::Histogram;
 use std::borrow::Cow;
 use std::cmp::{max, min};
+use std::hash::BuildHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -119,12 +121,12 @@ const _: () = assert!(SIG_FIG_DEF <= SIG_FIG_MAX);
 pub const POOL_COUNT: usize = SIG_FIG_MAX as usize + 1;
 
 /// Default number of significant figures (3) for histogram recording.
-pub const DEFAULT_SIG_FIG: SigFig = SigFig { value: SIG_FIG_DEF };
+pub(crate) const DEFAULT_SIG_FIG: SigFig = SigFig { value: SIG_FIG_DEF };
 
 /// Number of significant figures for histogram precision (0..=5).
 ///
 /// Higher values increase precision but also memory usage.
-/// Use [`DEFAULT_SIG_FIG`] for the default value of 3.
+/// Use [`SigFig::default()`] for the default value of 3.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct SigFig {
@@ -151,16 +153,41 @@ impl SigFig {
     }
 }
 
-pub struct Aggregator {
-    pub histograms: HashMap<AggregatorEntryKey, HistogramWrapper>,
-    pub count: HashMap<AggregatorEntryKey, AtomicU64>,
-    pub gauge: HashMap<AggregatorEntryKey, GaugeState>,
+impl Default for SigFig {
+    fn default() -> Self {
+        Self { value: SIG_FIG_DEF }
+    }
+}
+
+pub struct Aggregator<S = DefaultMetricHasher> {
+    pub histograms: DashMap<AggregatorEntryKey, HistogramWrapper, S>,
+    pub count: DashMap<AggregatorEntryKey, AtomicU64, S>,
+    pub gauge: DashMap<AggregatorEntryKey, GaugeState, S>,
 
     // TODO: reuse cross Aggregators
     pub pool_histograms: [SegQueue<HistogramWrapper>; POOL_COUNT],
 }
 
-impl Aggregator {
+impl<S> Aggregator<S>
+where
+    S: BuildHasher + Clone,
+{
+    pub(crate) fn with_hasher_builder(hasher_builder: S) -> Self {
+        Self {
+            histograms: DashMap::with_hasher(hasher_builder.clone()),
+            count: DashMap::with_hasher(hasher_builder.clone()),
+            gauge: DashMap::with_hasher(hasher_builder),
+            pool_histograms: [
+                SegQueue::new(),
+                SegQueue::new(),
+                SegQueue::new(),
+                SegQueue::new(),
+                SegQueue::new(),
+                SegQueue::new(),
+            ],
+        }
+    }
+
     pub(crate) fn get_histogram(&self, sig_fig: SigFig) -> Option<HistogramWrapper> {
         if let Some(h) =
             unsafe { self.pool_histograms.get_unchecked(sig_fig.value() as usize) }.pop()
@@ -179,24 +206,6 @@ impl Aggregator {
         }
 
         None
-    }
-}
-
-impl Default for Aggregator {
-    fn default() -> Self {
-        Self {
-            histograms: HashMap::with_hasher(create_metric_hasher()),
-            count: HashMap::with_hasher(create_metric_hasher()),
-            gauge: HashMap::with_hasher(create_metric_hasher()),
-            pool_histograms: [
-                SegQueue::new(),
-                SegQueue::new(),
-                SegQueue::new(),
-                SegQueue::new(),
-                SegQueue::new(),
-                SegQueue::new(),
-            ],
-        }
     }
 }
 

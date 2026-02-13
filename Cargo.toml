@@ -30,12 +30,10 @@ libc = "0.2"
 bumpalo = { version = "3.19.0" , features = ["collections"], default-features = false}
 dhat = {version="0.3.3", optional=true, default-features = false}
 
-ahash = { version = "0.8.12", default-features = false, optional = true}
-gxhash = { version = "3.4.1", features = ["std"], default-features = false, optional = true }
-
 allocation-counter = { version = "0", optional = true }
 [dev-dependencies]
 criterion = "0.5.1"
+ahash = "0.8.12"
 
 [profile.release]
 debug = true
@@ -46,11 +44,7 @@ path = "benches/sync_collector.rs"
 harness = false
 
 [features]
-default = ["ahash"]
-
-std = []
-ahash = ["dep:ahash"]
-gxhash = ["dep:gxhash"]
+default = []
 
 dhat-heap = ["dep:dhat"]    # if you are doing heap profiling
 allocationcounter = ["dep:allocation-counter"]

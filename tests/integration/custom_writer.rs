@@ -122,6 +122,8 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -209,6 +211,8 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -268,6 +272,8 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
         stats_prefix: "app.".to_string(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -327,6 +333,8 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -432,6 +440,8 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
