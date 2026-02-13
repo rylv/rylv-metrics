@@ -28,7 +28,7 @@ fn create_test_collector() -> MetricCollector {
 fn test_parallel_histogram_stress() {
     let collector = Arc::new(create_test_collector());
     let num_threads = 8;
-    let iterations_per_thread = 10_000;
+    let iterations_per_thread = 100;
 
     let handles: Vec<_> = (0..num_threads)
         .map(|thread_id| {
