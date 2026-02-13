@@ -128,6 +128,7 @@ impl MetricCollectorJob {
 
                 let min = histogram_entry.min;
                 let p50 = histogram_entry.histogram.value_at_quantile(0.50);
+                let p95 = histogram_entry.histogram.value_at_quantile(0.95);
                 let p99 = histogram_entry.histogram.value_at_quantile(0.99);
                 let max = histogram_entry.max;
 
@@ -163,6 +164,18 @@ impl MetricCollectorJob {
                         buffer.format(p50)
                     } else {
                         Self::get_value(p50, bump, buffer)
+                    },
+                    MetricType::Gauge,
+                );
+
+                Self::send_metric(
+                    stats_writer,
+                    &[metric_str, ".95percentile"],
+                    joined_tags,
+                    if can_use_stack {
+                        buffer.format(p95)
+                    } else {
+                        Self::get_value(p95, bump, buffer)
                     },
                     MetricType::Gauge,
                 );

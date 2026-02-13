@@ -94,7 +94,7 @@ fn test_build_collector() -> std::io::Result<()> {
     let receiver = spawn_udp_receiver_exact(9090, 2);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9090, DEFAULT_STATS_WRITER_TYPE, String::new(), 261);
+    let collector = create_collector(9090, DEFAULT_STATS_WRITER_TYPE, String::new(), 284);
 
     collector.histogram(
         RylvStr::from_static("some.metric"),
@@ -113,8 +113,8 @@ fn test_build_collector() -> std::io::Result<()> {
         ],
     );
 
-    let expected1 = "some.metric.count:1|c|#tag2:value2,tag:value\nsome.metric.min:1|g|#tag2:value2,tag:value\nsome.metric.avg:1|g|#tag2:value2,tag:value\nsome.metric.99percentile:1|g|#tag2:value2,tag:value\nsome.metric.max:1|g|#tag2:value2,tag:value\n";
-    let expected2 = "some.metric.count:1|c|#tag2:value3,tag:value\nsome.metric.min:1|g|#tag2:value3,tag:value\nsome.metric.avg:1|g|#tag2:value3,tag:value\nsome.metric.99percentile:1|g|#tag2:value3,tag:value\nsome.metric.max:1|g|#tag2:value3,tag:value\n";
+    let expected1 = "some.metric.count:1|c|#tag2:value2,tag:value\nsome.metric.min:1|g|#tag2:value2,tag:value\nsome.metric.avg:1|g|#tag2:value2,tag:value\nsome.metric.95percentile:1|g|#tag2:value2,tag:value\nsome.metric.99percentile:1|g|#tag2:value2,tag:value\nsome.metric.max:1|g|#tag2:value2,tag:value\n";
+    let expected2 = "some.metric.count:1|c|#tag2:value3,tag:value\nsome.metric.min:1|g|#tag2:value3,tag:value\nsome.metric.avg:1|g|#tag2:value3,tag:value\nsome.metric.95percentile:1|g|#tag2:value3,tag:value\nsome.metric.99percentile:1|g|#tag2:value3,tag:value\nsome.metric.max:1|g|#tag2:value3,tag:value\n";
 
     let mut expected_set = HashSet::new();
     expected_set.insert(expected1.to_owned());
