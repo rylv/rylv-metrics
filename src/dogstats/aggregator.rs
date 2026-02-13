@@ -120,9 +120,6 @@ const _: () = assert!(SIG_FIG_DEF <= SIG_FIG_MAX);
 /// Number of pool buckets: one per valid `SigFig` value (0..=5).
 pub const POOL_COUNT: usize = SIG_FIG_MAX as usize + 1;
 
-/// Default number of significant figures (3) for histogram recording.
-pub(crate) const DEFAULT_SIG_FIG: SigFig = SigFig { value: SIG_FIG_DEF };
-
 /// Number of significant figures for histogram precision (0..=5).
 ///
 /// Higher values increase precision but also memory usage.

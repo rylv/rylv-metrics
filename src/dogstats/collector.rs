@@ -5,7 +5,7 @@ use std::thread::{spawn, JoinHandle};
 use std::{mem, net::SocketAddr, time::Duration};
 
 use super::job::initialize_job;
-use crate::dogstats::aggregator::{AggregatorEntryKey, LookupKey, SigFig, DEFAULT_SIG_FIG};
+use crate::dogstats::aggregator::{AggregatorEntryKey, LookupKey, SigFig};
 use crate::dogstats::writer::StatsWriterTrait;
 use crate::dogstats::{Aggregator, GaugeState, RylvStr};
 use crate::{DefaultMetricHasher, MetricResult};
@@ -211,7 +211,7 @@ impl Default for MetricCollectorOptions<DefaultMetricHasher> {
             stats_prefix: String::new(),
             writer_type: DEFAULT_STATS_WRITER_TYPE,
             histogram_configs: std::collections::HashMap::new(),
-            default_sig_fig: DEFAULT_SIG_FIG,
+            default_sig_fig: SigFig::default(),
             hasher_builder: DefaultMetricHasher::new(),
         }
     }

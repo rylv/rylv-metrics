@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
+#[allow(dead_code)]
 fn benchmark_record_histogram(c: &mut Criterion) {
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = std::net::ToSocketAddrs::to_socket_addrs("127.0.0.1:9090")
@@ -48,8 +49,8 @@ fn benchmark_record_histogram(c: &mut Criterion) {
         stats_prefix: String::new(),
         writer_type: DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: std::collections::HashMap::new(),
-        default_sig_fig: rylv_metrics::SigFig::new(3).unwrap(),
-        hasher_builder: ahash::RandomState::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
@@ -143,8 +144,8 @@ fn benchmark_record_histogram_single(c: &mut Criterion) {
         stats_prefix: String::new(),
         writer_type: DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: std::collections::HashMap::new(),
-        default_sig_fig: rylv_metrics::SigFig::new(3).unwrap(),
-        hasher_builder: ahash::RandomState::new(),
+        default_sig_fig: rylv_metrics::SigFig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
@@ -155,10 +156,13 @@ fn benchmark_record_histogram_single(c: &mut Criterion) {
     c.bench_function("histogram", |b| {
         let internal = Instant::now();
         b.iter(|| {
-            let _ = collector.histogram(
-                black_box(RylvStr::Static("some.metric")),
+            collector.histogram(
+                black_box(RylvStr::from_static("some.metric")),
                 black_box(1),
-                black_box([RylvStr::Static("tag:value"), RylvStr::Static("tag2:value2")]),
+                black_box([
+                    RylvStr::from_static("tag:value"),
+                    RylvStr::from_static("tag2:value2"),
+                ]),
             );
         });
         count_millis += internal.elapsed().as_millis() as u64;
