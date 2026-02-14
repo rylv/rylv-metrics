@@ -50,25 +50,12 @@ fn benchmark_record_histogram(c: &mut Criterion) {
         writer_type: DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: std::collections::HashMap::new(),
         default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
+        hasher_builder: ahash::RandomState::new(),
     };
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
     let mut count_millis: u64 = 0;
-    // #[cfg(feature = "dhat-heap")]
-    // let _profiler = dhat::Profiler::new_heap();
-    // c.bench_function("histogram", |b| {
-    //     let internal = Instant::now();
-    //     b.iter(|| {
-    //         let _ = collector.histogram(
-    //             black_box("some.metric"),
-    //             black_box(1),
-    //             black_box(["tag:value", "tag2:value2"]),
-    //         );
-    //     });
-    //     count_millis += internal.elapsed().as_millis() as u64;
-    // });
     let n = 1024 * 1024;
     let mut vec_metrics = Vec::<&'static str>::with_capacity(n);
     let mut tags_metrics = Vec::<&'static str>::with_capacity(n);
@@ -145,7 +132,7 @@ fn benchmark_record_histogram_single(c: &mut Criterion) {
         writer_type: DEFAULT_STATS_WRITER_TYPE,
         histogram_configs: std::collections::HashMap::new(),
         default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
+        hasher_builder: ahash::RandomState::new(),
     };
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
