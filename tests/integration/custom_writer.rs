@@ -507,7 +507,8 @@ fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
         &mut [RylvStr::from_static("scope:test")],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
+
     let metrics = writer_clone.get_all_metrics_as_text();
 
     assert!(
@@ -569,7 +570,8 @@ fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()>
         &mut [RylvStr::from_static("scope:test")],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
+
     let metrics = writer_clone.get_all_metrics_as_text();
 
     assert!(
