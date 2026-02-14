@@ -190,3 +190,14 @@ miri-all:
 	@echo "=> Attempting to run all tests under Miri (will fail on network I/O)"
 	@echo "This is expected - use 'make miri' for working tests only"
 	MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check" cargo +nightly miri test --lib --tests || true
+
+.PHONY: prepare-publish
+prepare-publish:
+	@echo "=> Preparing for cargo publish"
+	@$(MAKE) prepare-commit
+	@echo "=> Checking package contents"
+	@cargo package --list
+	@echo "=> Building docs with warnings as errors"
+	@RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+	@echo "=> Running cargo publish dry-run"
+	@cargo publish --dry-run
