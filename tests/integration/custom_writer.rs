@@ -106,6 +106,11 @@ impl StatsWriterTrait for TestStatsWriter {
     }
 }
 
+fn random_datadog_addr() -> std::net::SocketAddr {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.local_addr().unwrap()
+}
+
 // ============================================================================
 // Tests for Custom Writer
 // ============================================================================
@@ -127,7 +132,7 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -157,7 +162,7 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     );
 
     // Wait for flush
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -216,7 +221,7 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -229,7 +234,7 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
         &mut empty_tags,
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -277,7 +282,7 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -296,7 +301,7 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
         &mut [RylvStr::from_static("service:api")],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -338,7 +343,7 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -395,7 +400,7 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
         &mut [RylvStr::from_static("endpoint:/users")],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -445,7 +450,7 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -459,7 +464,7 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
         ],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -493,7 +498,7 @@ fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
     collector.histogram(
@@ -555,7 +560,7 @@ fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()>
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
     collector.histogram(

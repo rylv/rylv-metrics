@@ -6,6 +6,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+fn random_datadog_addr() -> std::net::SocketAddr {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.local_addr().unwrap()
+}
+
 fn create_test_collector() -> MetricCollector {
     let options = MetricCollectorOptions {
         max_udp_packet_size: 1500,
@@ -19,7 +24,7 @@ fn create_test_collector() -> MetricCollector {
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:8125".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     MetricCollector::new(bind_addr, datadog_addr, options)
 }
