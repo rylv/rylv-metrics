@@ -16,16 +16,12 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 #[allow(dead_code)]
 fn benchmark_record_histogram(c: &mut Criterion) {
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = std::net::ToSocketAddrs::to_socket_addrs("127.0.0.1:9090")
-        .unwrap()
-        .next()
-        .unwrap();
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let datadog_addr = socket.local_addr().unwrap();
 
     let finish = Arc::new(AtomicBool::new(false));
     let finish2 = finish.clone();
-    let add_clone = datadog_addr;
     let join = spawn(move || {
-        let socket = UdpSocket::bind(add_clone).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();
@@ -96,18 +92,15 @@ fn benchmark_record_histogram(c: &mut Criterion) {
     println!("finish reader in :{} ms", now.elapsed().as_millis());
 }
 
+#[allow(dead_code)]
 fn benchmark_record_histogram_single(c: &mut Criterion) {
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = std::net::ToSocketAddrs::to_socket_addrs("127.0.0.1:9090")
-        .unwrap()
-        .next()
-        .unwrap();
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let datadog_addr = socket.local_addr().unwrap();
 
     let finish = Arc::new(AtomicBool::new(false));
     let finish2 = finish.clone();
-    let add_clone = datadog_addr;
     let join = spawn(move || {
-        let socket = UdpSocket::bind(add_clone).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();
@@ -167,7 +160,7 @@ fn benchmark_record_histogram_single(c: &mut Criterion) {
 // Criterion group and main function
 criterion_group!(
     benches,
-    //benchmark_record_histogram,
+    // benchmark_record_histogram,
     benchmark_record_histogram_single
 );
 criterion_main!(benches);

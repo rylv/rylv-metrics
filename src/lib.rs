@@ -83,3 +83,60 @@ pub type MetricResult<T> = Result<T, MetricsError>;
 
 /// Default hasher builder used by metric aggregation maps.
 pub(crate) type DefaultMetricHasher = std::hash::RandomState;
+
+/// Internal exports used by benchmarks to measure hot paths directly.
+#[doc(hidden)]
+pub mod __bench {
+    use crate::dogstats::{materialize_tags, AggregatorEntryKey, LookupKey, RylvStr};
+    use std::borrow::Cow;
+
+    /// Fixture that benchmarks `LookupKey::compare` without exposing internal key types.
+    pub struct CompareFixture {
+        metric: RylvStr<'static>,
+        tags: Box<[RylvStr<'static>]>,
+        hash: u64,
+        entry: AggregatorEntryKey,
+    }
+
+    impl CompareFixture {
+        /// Creates a reusable compare fixture from lookup and entry tag sets.
+        #[must_use]
+        pub fn new(metric: &str, lookup_tags: &[&str], entry_tags: &[&str], hash: u64) -> Self {
+            let metric_owned = RylvStr::from(metric.to_owned());
+            let lookup_tags_owned: Box<[RylvStr<'static>]> = lookup_tags
+                .iter()
+                .map(|tag| RylvStr::from((*tag).to_owned()))
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let entry_tags_owned: Vec<RylvStr<'static>> = entry_tags
+                .iter()
+                .map(|tag| RylvStr::from((*tag).to_owned()))
+                .collect();
+
+            let entry = AggregatorEntryKey {
+                metric: Cow::Owned(metric.to_owned()),
+                tags: materialize_tags(&entry_tags_owned),
+                hash,
+                id: 1,
+            };
+
+            Self {
+                metric: metric_owned,
+                tags: lookup_tags_owned,
+                hash,
+                entry,
+            }
+        }
+
+        /// Runs one `LookupKey::compare` operation against the prepared entry.
+        #[must_use]
+        pub fn compare(&self) -> bool {
+            let lookup = LookupKey {
+                metric: self.metric.clone(),
+                tags: &self.tags,
+                hash: self.hash,
+            };
+            lookup.compare(&self.entry)
+        }
+    }
+}

@@ -69,29 +69,48 @@ impl LookupKey<'_> {
     pub fn compare(&self, c: &AggregatorEntryKey) -> bool {
         c.hash == self.hash
             && c.metric.as_ref().eq(self.metric.as_ref())
-            && self.compare_tags(c.tags.tags.as_slice())
+            && self.compare_tags_joined(c.tags.joined_tags.as_ref(), c.tags.tags.len())
     }
 
-    fn compare_tags(&self, tags: &'_ [Cow<'_, str>]) -> bool {
+    fn compare_tags_joined(&self, joined_tags: &str, tag_count: usize) -> bool {
         let compare = self.tags;
-        if tags.len() != compare.len() {
+        if tag_count != compare.len() {
             return false;
         }
-        if tags.is_empty() {
-            return true;
+        if joined_tags.len() != Self::joined_tags_len(compare) {
+            return false;
+        }
+        if compare.is_empty() {
+            return joined_tags.is_empty();
         }
 
-        for i in 0..tags.len() {
-            let cow = &tags[i];
-
-            let tag = cow.as_ref();
-            let cmp = compare[i].as_ref();
-            if tag != cmp {
+        let joined = joined_tags.as_bytes();
+        let mut offset = 0usize;
+        let last_index = compare.len() - 1;
+        for (index, tag) in compare.iter().enumerate() {
+            let tag_bytes = tag.as_ref().as_bytes();
+            let next_offset = offset + tag_bytes.len();
+            if next_offset > joined.len() || joined[offset..next_offset] != *tag_bytes {
                 return false;
+            }
+            offset = next_offset;
+
+            if index < last_index {
+                if offset >= joined.len() || joined[offset] != b',' {
+                    return false;
+                }
+                offset += 1;
             }
         }
 
-        true
+        offset == joined.len()
+    }
+
+    fn joined_tags_len(tags: &[RylvStr<'_>]) -> usize {
+        if tags.is_empty() {
+            return 0;
+        }
+        tags.iter().map(|tag| tag.as_ref().len()).sum::<usize>() + tags.len() - 1
     }
 }
 
@@ -219,6 +238,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dogstats::RylvStr;
+    use std::borrow::Cow;
 
     #[test]
     fn test_sig_fig_new_valid() {
@@ -233,5 +254,80 @@ mod tests {
         for v in 6..=255 {
             assert!(SigFig::new(v).is_err());
         }
+    }
+
+    #[test]
+    fn test_lookup_key_compare_false_when_joined_len_differs() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("bb:2")];
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&entry_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(!lookup.compare(&entry));
+    }
+
+    #[test]
+    fn test_lookup_key_compare_false_when_tag_count_differs() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry_tags = [RylvStr::from_static("a:1")];
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&entry_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(!lookup.compare(&entry));
+    }
+
+    #[test]
+    fn test_lookup_key_compare_false_when_same_len_different_content() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("c:2")];
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&entry_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(!lookup.compare(&entry));
+    }
+
+    #[test]
+    fn test_lookup_key_compare_true_for_matching_tags() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&lookup_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(lookup.compare(&entry));
     }
 }

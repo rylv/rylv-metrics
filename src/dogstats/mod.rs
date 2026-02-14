@@ -14,6 +14,7 @@ mod net;
 pub mod writer;
 mod writer_utils;
 
+pub use aggregator::{AggregatorEntryKey, LookupKey};
 pub use aggregator::SigFig;
 
 /// A flexible string type that can hold static references, borrowed references, or owned values.

@@ -43,6 +43,11 @@ name = "sync_collector"
 path = "benches/sync_collector.rs"
 harness = false
 
+[[bench]]
+name = "lookup_compare"
+path = "benches/lookup_compare.rs"
+harness = false
+
 [features]
 default = []
 
