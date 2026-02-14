@@ -55,17 +55,41 @@ fn benchmark_compare_algorithms(c: &mut Criterion) {
     let joined_content_miss_same_len = "tag:value,env:stag,service:api";
 
     c.bench_function("alg_old_match", |b| {
-        b.iter(|| black_box(compare_tags_old(black_box(&tags), black_box(joined_match), 3)));
+        b.iter(|| {
+            black_box(compare_tags_old(
+                black_box(&tags),
+                black_box(joined_match),
+                3,
+            ))
+        });
     });
     c.bench_function("alg_new_match", |b| {
-        b.iter(|| black_box(compare_tags_new(black_box(&tags), black_box(joined_match), 3)));
+        b.iter(|| {
+            black_box(compare_tags_new(
+                black_box(&tags),
+                black_box(joined_match),
+                3,
+            ))
+        });
     });
 
     c.bench_function("alg_old_miss_joined_len", |b| {
-        b.iter(|| black_box(compare_tags_old(black_box(&tags), black_box(joined_len_miss), 3)));
+        b.iter(|| {
+            black_box(compare_tags_old(
+                black_box(&tags),
+                black_box(joined_len_miss),
+                3,
+            ))
+        });
     });
     c.bench_function("alg_new_miss_joined_len", |b| {
-        b.iter(|| black_box(compare_tags_new(black_box(&tags), black_box(joined_len_miss), 3)));
+        b.iter(|| {
+            black_box(compare_tags_new(
+                black_box(&tags),
+                black_box(joined_len_miss),
+                3,
+            ))
+        });
     });
 
     c.bench_function("alg_old_miss_same_len_diff_content", |b| {
@@ -132,5 +156,9 @@ fn benchmark_lookup_compare(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, benchmark_lookup_compare, benchmark_compare_algorithms);
+criterion_group!(
+    benches,
+    benchmark_lookup_compare,
+    benchmark_compare_algorithms
+);
 criterion_main!(benches);
