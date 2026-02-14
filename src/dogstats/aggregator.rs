@@ -1,12 +1,15 @@
 use super::Tags;
 use super::{materialize_tags, GaugeState, RylvStr};
-use crate::{create_metric_hasher, HashMap, MetricsError};
+use crate::{DefaultMetricHasher, HistogramConfig, MetricsError};
 use crossbeam::queue::SegQueue;
+use dashmap::DashMap;
 use hdrhistogram::Histogram;
 use std::borrow::Cow;
 use std::cmp::{max, min};
+use std::hash::BuildHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -66,29 +69,48 @@ impl LookupKey<'_> {
     pub fn compare(&self, c: &AggregatorEntryKey) -> bool {
         c.hash == self.hash
             && c.metric.as_ref().eq(self.metric.as_ref())
-            && self.compare_tags(c.tags.tags.as_slice())
+            && self.compare_tags_joined(c.tags.joined_tags.as_ref(), c.tags.tags.len())
     }
 
-    fn compare_tags(&self, tags: &'_ [Cow<'_, str>]) -> bool {
+    fn compare_tags_joined(&self, joined_tags: &str, tag_count: usize) -> bool {
         let compare = self.tags;
-        if tags.len() != compare.len() {
+        if tag_count != compare.len() {
             return false;
         }
-        if tags.is_empty() {
-            return true;
+        if joined_tags.len() != Self::joined_tags_len(compare) {
+            return false;
+        }
+        if compare.is_empty() {
+            return joined_tags.is_empty();
         }
 
-        for i in 0..tags.len() {
-            let cow = &tags[i];
-
-            let tag = cow.as_ref();
-            let cmp = compare[i].as_ref();
-            if tag != cmp {
+        let joined = joined_tags.as_bytes();
+        let mut offset = 0usize;
+        let last_index = compare.len() - 1;
+        for (index, tag) in compare.iter().enumerate() {
+            let tag_bytes = tag.as_ref().as_bytes();
+            let next_offset = offset + tag_bytes.len();
+            if next_offset > joined.len() || joined[offset..next_offset] != *tag_bytes {
                 return false;
+            }
+            offset = next_offset;
+
+            if index < last_index {
+                if offset >= joined.len() || joined[offset] != b',' {
+                    return false;
+                }
+                offset += 1;
             }
         }
 
-        true
+        offset == joined.len()
+    }
+
+    fn joined_tags_len(tags: &[RylvStr<'_>]) -> usize {
+        if tags.is_empty() {
+            return 0;
+        }
+        tags.iter().map(|tag| tag.as_ref().len()).sum::<usize>() + tags.len() - 1
     }
 }
 
@@ -97,6 +119,8 @@ pub struct HistogramWrapper {
     pub max: u64,
     pub histogram: Histogram<u64>,
     pub sig_fig: SigFig,
+    pub percentiles: Arc<[f64]>,
+    pub emit_base_metrics: [bool; 4],
 }
 
 impl HistogramWrapper {
@@ -118,13 +142,10 @@ const _: () = assert!(SIG_FIG_DEF <= SIG_FIG_MAX);
 /// Number of pool buckets: one per valid `SigFig` value (0..=5).
 pub const POOL_COUNT: usize = SIG_FIG_MAX as usize + 1;
 
-/// Default number of significant figures (3) for histogram recording.
-pub const DEFAULT_SIG_FIG: SigFig = SigFig { value: SIG_FIG_DEF };
-
 /// Number of significant figures for histogram precision (0..=5).
 ///
 /// Higher values increase precision but also memory usage.
-/// Use [`DEFAULT_SIG_FIG`] for the default value of 3.
+/// Use [`SigFig::default()`] for the default value of 3.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct SigFig {
@@ -151,43 +172,30 @@ impl SigFig {
     }
 }
 
-pub struct Aggregator {
-    pub histograms: HashMap<AggregatorEntryKey, HistogramWrapper>,
-    pub count: HashMap<AggregatorEntryKey, AtomicU64>,
-    pub gauge: HashMap<AggregatorEntryKey, GaugeState>,
+impl Default for SigFig {
+    fn default() -> Self {
+        Self { value: SIG_FIG_DEF }
+    }
+}
+
+pub struct Aggregator<S = DefaultMetricHasher> {
+    pub histograms: DashMap<AggregatorEntryKey, HistogramWrapper, S>,
+    pub count: DashMap<AggregatorEntryKey, AtomicU64, S>,
+    pub gauge: DashMap<AggregatorEntryKey, GaugeState, S>,
 
     // TODO: reuse cross Aggregators
     pub pool_histograms: [SegQueue<HistogramWrapper>; POOL_COUNT],
 }
 
-impl Aggregator {
-    pub(crate) fn get_histogram(&self, sig_fig: SigFig) -> Option<HistogramWrapper> {
-        if let Some(h) =
-            unsafe { self.pool_histograms.get_unchecked(sig_fig.value() as usize) }.pop()
-        {
-            return Some(h);
-        }
-
-        // TODO: parameterize bounds
-        if let Ok(histo) = Histogram::new_with_bounds(1, u64::MAX, sig_fig.value()) {
-            return Some(HistogramWrapper {
-                histogram: histo,
-                min: u64::MAX,
-                max: u64::MIN,
-                sig_fig,
-            });
-        }
-
-        None
-    }
-}
-
-impl Default for Aggregator {
-    fn default() -> Self {
+impl<S> Aggregator<S>
+where
+    S: BuildHasher + Clone,
+{
+    pub(crate) fn with_hasher_builder(hasher_builder: S) -> Self {
         Self {
-            histograms: HashMap::with_hasher(create_metric_hasher()),
-            count: HashMap::with_hasher(create_metric_hasher()),
-            gauge: HashMap::with_hasher(create_metric_hasher()),
+            histograms: DashMap::with_hasher(hasher_builder.clone()),
+            count: DashMap::with_hasher(hasher_builder.clone()),
+            gauge: DashMap::with_hasher(hasher_builder),
             pool_histograms: [
                 SegQueue::new(),
                 SegQueue::new(),
@@ -198,11 +206,40 @@ impl Default for Aggregator {
             ],
         }
     }
+
+    pub(crate) fn get_histogram(&self, config: &HistogramConfig) -> Option<HistogramWrapper> {
+        let sig_fig = config.sig_fig();
+        let percentiles = config.percentiles();
+        let emit_base_metrics = config.emit_base_metrics();
+        if let Some(mut h) =
+            unsafe { self.pool_histograms.get_unchecked(sig_fig.value() as usize) }.pop()
+        {
+            h.percentiles = percentiles;
+            h.emit_base_metrics = emit_base_metrics;
+            return Some(h);
+        }
+
+        // TODO: parameterize bounds
+        if let Ok(histo) = Histogram::new_with_bounds(1, u64::MAX, sig_fig.value()) {
+            return Some(HistogramWrapper {
+                histogram: histo,
+                min: u64::MAX,
+                max: u64::MIN,
+                sig_fig,
+                percentiles,
+                emit_base_metrics,
+            });
+        }
+
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dogstats::RylvStr;
+    use std::borrow::Cow;
 
     #[test]
     fn test_sig_fig_new_valid() {
@@ -217,5 +254,80 @@ mod tests {
         for v in 6..=255 {
             assert!(SigFig::new(v).is_err());
         }
+    }
+
+    #[test]
+    fn test_lookup_key_compare_false_when_joined_len_differs() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("bb:2")];
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&entry_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(!lookup.compare(&entry));
+    }
+
+    #[test]
+    fn test_lookup_key_compare_false_when_tag_count_differs() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry_tags = [RylvStr::from_static("a:1")];
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&entry_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(!lookup.compare(&entry));
+    }
+
+    #[test]
+    fn test_lookup_key_compare_false_when_same_len_different_content() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("c:2")];
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&entry_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(!lookup.compare(&entry));
+    }
+
+    #[test]
+    fn test_lookup_key_compare_true_for_matching_tags() {
+        let lookup_tags = [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("test.metric"),
+            tags: &lookup_tags,
+            hash: 7,
+        };
+        let entry = AggregatorEntryKey {
+            metric: Cow::Borrowed("test.metric"),
+            tags: materialize_tags(&lookup_tags),
+            hash: 7,
+            id: 1,
+        };
+
+        assert!(lookup.compare(&entry));
     }
 }

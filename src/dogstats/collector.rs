@@ -5,13 +5,13 @@ use std::thread::{spawn, JoinHandle};
 use std::{mem, net::SocketAddr, time::Duration};
 
 use super::job::initialize_job;
-use crate::dogstats::aggregator::{AggregatorEntryKey, LookupKey, SigFig, DEFAULT_SIG_FIG};
+use crate::dogstats::aggregator::{AggregatorEntryKey, LookupKey, SigFig};
 use crate::dogstats::writer::StatsWriterTrait;
 use crate::dogstats::{Aggregator, GaugeState, RylvStr};
-use crate::{HashMap, MetricResult};
+use crate::{DefaultMetricHasher, MetricResult};
 use arc_swap::ArcSwap;
 use crossbeam::channel::{unbounded, Sender};
-use dashmap::SharedValue;
+use dashmap::{DashMap, SharedValue};
 use tracing::error;
 
 /// Trait defining the interface for metric collection.
@@ -69,19 +69,85 @@ pub trait MetricCollectorTrait {
 ///
 /// ```ignore
 /// use rylv_metrics::collector::HistogramConfig;
-/// let config = HistogramConfig::new(SigFig::new(2).unwrap());
+/// let config = HistogramConfig::new(SigFig::new(2).unwrap(), vec![0.95, 0.99]).unwrap();
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct HistogramConfig {
     sig_fig: SigFig,
+    percentiles: Arc<[f64]>,
+    emit_base_metrics: [bool; 4],
     // TODO: add bounds configs
 }
 
 impl HistogramConfig {
-    /// Creates a new histogram configuration with the given significant figures.
+    /// Creates a new histogram configuration with the given significant figures and percentiles.
+    ///
+    /// # Errors
+    /// Returns an error if any percentile is NaN/inf or outside `[0.0, 1.0)`.
+    pub fn new(sig_fig: SigFig, percentiles: Vec<f64>) -> MetricResult<Self> {
+        for percentile in &percentiles {
+            if !percentile.is_finite() || *percentile < 0.0 || *percentile >= 1.0 {
+                return Err("Invalid percentile: must be finite and in range [0.0, 1.0)".into());
+            }
+        }
+
+        Ok(Self {
+            sig_fig,
+            percentiles: percentiles.into(),
+            emit_base_metrics: [true; 4],
+        })
+    }
+
+    /// Enables or disables the `.count` histogram metric.
     #[must_use]
-    pub const fn new(sig_fig: SigFig) -> Self {
-        Self { sig_fig }
+    pub const fn with_count(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[0] = emit;
+        self
+    }
+
+    /// Enables or disables the `.min` histogram metric.
+    #[must_use]
+    pub const fn with_min(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[1] = emit;
+        self
+    }
+
+    /// Enables or disables the `.avg` histogram metric.
+    ///
+    /// Note: `.avg` currently reflects p50 behavior for compatibility.
+    #[must_use]
+    pub const fn with_avg(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[2] = emit;
+        self
+    }
+
+    /// Enables or disables the `.max` histogram metric.
+    #[must_use]
+    pub const fn with_max(mut self, emit: bool) -> Self {
+        self.emit_base_metrics[3] = emit;
+        self
+    }
+
+    pub(crate) const fn sig_fig(&self) -> SigFig {
+        self.sig_fig
+    }
+
+    pub(crate) fn percentiles(&self) -> Arc<[f64]> {
+        self.percentiles.clone()
+    }
+
+    pub(crate) const fn emit_base_metrics(&self) -> [bool; 4] {
+        self.emit_base_metrics
+    }
+}
+
+impl Default for HistogramConfig {
+    fn default() -> Self {
+        Self {
+            sig_fig: SigFig::default(),
+            percentiles: vec![0.95, 0.99].into(),
+            emit_base_metrics: [true; 4],
+        }
     }
 }
 
@@ -108,6 +174,8 @@ impl HistogramConfig {
 ///     stats_prefix: "myapp.".to_string(),
 ///     writer_type: rylv_metrics::DEFAULT_STATS_WRITER_TYPE,
 ///     histogram_configs: Default::default(),
+///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
+///     hasher_builder: std::hash::RandomState::new(),
 /// };
 ///
 /// let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
@@ -126,8 +194,13 @@ impl HistogramConfig {
 /// count_add!(collector, "bytes.sent", 1024, "endpoint:api");
 /// gauge!(collector, "connections", 100, "pool:main");
 /// ```
-pub struct MetricCollector {
-    aggregator: Arc<ArcSwap<Aggregator>>,
+pub struct MetricCollector<S = DefaultMetricHasher>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    aggregator: Arc<ArcSwap<Aggregator<S>>>,
+    _hasher_builder: S,
+    default_histogram_config: HistogramConfig,
     sender: Option<Sender<()>>,
     histogram_configs: std::collections::HashMap<String, HistogramConfig>,
     // only used in cold path
@@ -171,7 +244,10 @@ pub const DEFAULT_STATS_WRITER_TYPE: StatsWriterType = StatsWriterType::Simple;
 ///
 /// Controls UDP packet sizes, flush intervals, and writer backend selection.
 #[derive(Debug)]
-pub struct MetricCollectorOptions {
+pub struct MetricCollectorOptions<S = DefaultMetricHasher>
+where
+    S: BuildHasher + Clone,
+{
     // TODO: add support for this metric, if value = 1 -> no aggregation at all -> queue of MetricLines
     // pub max_metrics_per_packet: u16,
     /// Maximum size of a single UDP packet in bytes. Recommended: 1432 for safe MTU.
@@ -186,9 +262,13 @@ pub struct MetricCollectorOptions {
     pub writer_type: StatsWriterType,
     /// Per-metric histogram configuration for custom precision settings.
     pub histogram_configs: std::collections::HashMap<String, HistogramConfig>,
+    /// Default histogram configuration when metric-specific config is absent.
+    pub default_histogram_config: HistogramConfig,
+    /// Hasher builder used by internal aggregation maps.
+    pub hasher_builder: S,
 }
 
-impl Default for MetricCollectorOptions {
+impl Default for MetricCollectorOptions<DefaultMetricHasher> {
     fn default() -> Self {
         Self {
             max_udp_packet_size: 1432,
@@ -197,11 +277,16 @@ impl Default for MetricCollectorOptions {
             stats_prefix: String::new(),
             writer_type: DEFAULT_STATS_WRITER_TYPE,
             histogram_configs: std::collections::HashMap::new(),
+            default_histogram_config: HistogramConfig::default(),
+            hasher_builder: DefaultMetricHasher::new(),
         }
     }
 }
 
-impl MetricCollector {
+impl<S> MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     /// Creates a new metric collector that sends aggregated metrics to `dst_addr`.
     ///
     /// Binds a UDP socket to `bind_addr` and spawns a background flush thread.
@@ -209,11 +294,15 @@ impl MetricCollector {
     pub fn new(
         bind_addr: SocketAddr,
         dst_addr: SocketAddr,
-        mut options: MetricCollectorOptions,
+        mut options: MetricCollectorOptions<S>,
     ) -> Self {
         let (sender, receiver) = unbounded::<()>();
+        let hasher_builder = options.hasher_builder.clone();
+        let default_histogram_config = options.default_histogram_config.clone();
 
-        let alloc_aggregator = Arc::new(ArcSwap::new(Arc::new(Aggregator::default())));
+        let alloc_aggregator = Arc::new(ArcSwap::new(Arc::new(Aggregator::with_hasher_builder(
+            hasher_builder.clone(),
+        ))));
         let alloc_clone = alloc_aggregator.clone();
         let mut histogram_configs = std::collections::HashMap::new();
         mem::swap(&mut options.histogram_configs, &mut histogram_configs);
@@ -222,6 +311,8 @@ impl MetricCollector {
 
         Self {
             aggregator: alloc_aggregator,
+            _hasher_builder: hasher_builder,
+            default_histogram_config,
             sender: Some(sender),
             job_handle: Some(job_handle),
             histogram_configs,
@@ -229,15 +320,18 @@ impl MetricCollector {
     }
 }
 
-impl MetricCollector {
+impl<S> MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     fn add_or_insert_entry_write<V>(
         &self,
         metric: RylvStr<'_>,
         tags: &[RylvStr<'_>],
         value: u64,
-        hashmap: &HashMap<AggregatorEntryKey, V>,
+        hashmap: &DashMap<AggregatorEntryKey, V, S>,
         record_fn: impl FnOnce(&mut V, u64) -> Result<(), String>,
-        new_fn: impl FnOnce(SigFig) -> Option<V>,
+        new_fn: impl FnOnce(&HistogramConfig) -> Option<V>,
     ) {
         let lookup_key = build_lookup_key(metric, tags, hashmap);
 
@@ -259,11 +353,11 @@ impl MetricCollector {
                 }
             }
             Err(insert_slot) => {
-                let sig_fig = self
+                let histogram_config = self
                     .histogram_configs
                     .get(lookup_key.metric.as_ref())
-                    .map_or(DEFAULT_SIG_FIG, |config| config.sig_fig);
-                if let Some(mut v) = new_fn(sig_fig) {
+                    .unwrap_or(&self.default_histogram_config);
+                if let Some(mut v) = new_fn(histogram_config) {
                     if let Err(err) = record_fn(&mut v, value) {
                         error!("Fail to record: {err}");
                     }
@@ -286,7 +380,7 @@ fn add_or_insert_entry_read_first<V>(
     metric: RylvStr<'_>,
     tags: &[RylvStr<'_>],
     value: u64,
-    hashmap: &HashMap<AggregatorEntryKey, V>,
+    hashmap: &DashMap<AggregatorEntryKey, V, impl BuildHasher + Clone>,
     record_fn: impl FnOnce(&V, u64) -> Result<(), String>,
     new_fn: impl FnOnce() -> Option<V>,
 ) {
@@ -349,7 +443,7 @@ fn add_or_insert_entry_read_first<V>(
 fn build_lookup_key<'a, V>(
     metric: RylvStr<'a>,
     tags: &'a [RylvStr<'a>],
-    hashmap: &HashMap<AggregatorEntryKey, V>,
+    hashmap: &DashMap<AggregatorEntryKey, V, impl BuildHasher + Clone>,
 ) -> LookupKey<'a> {
     let mut hasher = hashmap.hasher().build_hasher();
     metric.as_ref().hash(&mut hasher);
@@ -363,7 +457,10 @@ fn build_lookup_key<'a, V>(
         hash: hasher.finish(),
     }
 }
-impl MetricCollectorTrait for MetricCollector {
+impl<S> MetricCollectorTrait for MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -380,7 +477,7 @@ impl MetricCollectorTrait for MetricCollector {
             value,
             hashmap,
             |v, value| v.record(value).map_err(|err| err.to_string()),
-            |sig_fig| aggregator.get_histogram(sig_fig),
+            |config| aggregator.get_histogram(config),
         );
     }
 
@@ -448,7 +545,10 @@ impl MetricCollectorTrait for MetricCollector {
     }
 }
 
-impl Drop for MetricCollector {
+impl<S> Drop for MetricCollector<S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     fn drop(&mut self) {
         // Drop the sender to signal the background job to stop.
         // When the sender is dropped, the receiver in the background job
@@ -458,6 +558,26 @@ impl Drop for MetricCollector {
         // Wait for the background job to finish gracefully
         if let Some(handle) = self.job_handle.take() {
             let _ = handle.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HistogramConfig, SigFig};
+
+    #[test]
+    fn histogram_config_allows_empty_percentiles() {
+        let config = HistogramConfig::new(SigFig::default(), vec![]);
+        assert!(config.is_ok());
+    }
+
+    #[test]
+    fn histogram_config_rejects_invalid_percentiles() {
+        let invalid = [f64::NAN, f64::INFINITY, -0.1, 1.0];
+        for percentile in invalid {
+            let config = HistogramConfig::new(SigFig::default(), vec![percentile]);
+            assert!(config.is_err());
         }
     }
 }

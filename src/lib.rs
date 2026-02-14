@@ -24,6 +24,8 @@
 //!     stats_prefix: "myapp.".to_string(),
 //!     writer_type: rylv_metrics::DEFAULT_STATS_WRITER_TYPE,
 //!     histogram_configs: Default::default(),
+//!     default_histogram_config: rylv_metrics::HistogramConfig::default(),
+//!     hasher_builder: std::hash::RandomState::new(),
 //! };
 //!
 //! let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
@@ -71,7 +73,7 @@ pub use dogstats::collector::{
     StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
 pub use dogstats::writer::StatsWriterTrait;
-pub use dogstats::{RylvStr, SigFig, DEFAULT_SIG_FIG};
+pub use dogstats::{RylvStr, SigFig};
 pub use error::MetricsError;
 
 /// Result type for metric operations.
@@ -79,38 +81,62 @@ pub use error::MetricsError;
 /// Wraps errors that can occur during metric collection and transmission.
 pub type MetricResult<T> = Result<T, MetricsError>;
 
-// Exactly one hasher feature must be enabled
-#[cfg(all(feature = "ahash", feature = "gxhash"))]
-compile_error!("Features `ahash` and `gxhash` are mutually exclusive");
-#[cfg(all(feature = "ahash", feature = "std"))]
-compile_error!("Features `ahash` and `std` are mutually exclusive");
-#[cfg(all(feature = "gxhash", feature = "std"))]
-compile_error!("Features `gxhash` and `std` are mutually exclusive");
-#[cfg(not(any(feature = "ahash", feature = "gxhash", feature = "std")))]
-compile_error!("One of `ahash`, `gxhash`, or `std` features must be enabled");
+/// Default hasher builder used by metric aggregation maps.
+pub(crate) type DefaultMetricHasher = std::hash::RandomState;
 
-#[cfg(feature = "ahash")]
-type MetricHasher = ahash::RandomState;
+/// Internal exports used by benchmarks to measure hot paths directly.
+#[doc(hidden)]
+pub mod __bench {
+    use crate::dogstats::{materialize_tags, AggregatorEntryKey, LookupKey, RylvStr};
+    use std::borrow::Cow;
 
-#[cfg(feature = "ahash")]
-pub(crate) fn create_metric_hasher() -> MetricHasher {
-    ahash::RandomState::new()
+    /// Fixture that benchmarks `LookupKey::compare` without exposing internal key types.
+    pub struct CompareFixture {
+        metric: RylvStr<'static>,
+        tags: Box<[RylvStr<'static>]>,
+        hash: u64,
+        entry: AggregatorEntryKey,
+    }
+
+    impl CompareFixture {
+        /// Creates a reusable compare fixture from lookup and entry tag sets.
+        #[must_use]
+        pub fn new(metric: &str, lookup_tags: &[&str], entry_tags: &[&str], hash: u64) -> Self {
+            let metric_owned = RylvStr::from(metric.to_owned());
+            let lookup_tags_owned: Box<[RylvStr<'static>]> = lookup_tags
+                .iter()
+                .map(|tag| RylvStr::from((*tag).to_owned()))
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let entry_tags_owned: Vec<RylvStr<'static>> = entry_tags
+                .iter()
+                .map(|tag| RylvStr::from((*tag).to_owned()))
+                .collect();
+
+            let entry = AggregatorEntryKey {
+                metric: Cow::Owned(metric.to_owned()),
+                tags: materialize_tags(&entry_tags_owned),
+                hash,
+                id: 1,
+            };
+
+            Self {
+                metric: metric_owned,
+                tags: lookup_tags_owned,
+                hash,
+                entry,
+            }
+        }
+
+        /// Runs one `LookupKey::compare` operation against the prepared entry.
+        #[must_use]
+        pub fn compare(&self) -> bool {
+            let lookup = LookupKey {
+                metric: self.metric.clone(),
+                tags: &self.tags,
+                hash: self.hash,
+            };
+            lookup.compare(&self.entry)
+        }
+    }
 }
-
-#[cfg(feature = "gxhash")]
-type MetricHasher = gxhash::GxBuildHasher;
-
-#[cfg(feature = "gxhash")]
-pub(crate) fn create_metric_hasher() -> MetricHasher {
-    gxhash::GxBuildHasher::default()
-}
-
-#[cfg(feature = "std")]
-type MetricHasher = std::hash::RandomState;
-
-#[cfg(feature = "std")]
-pub(crate) fn create_metric_hasher() -> MetricHasher {
-    std::hash::RandomState::new()
-}
-
-type HashMap<K, V> = dashmap::DashMap<K, V, MetricHasher>;

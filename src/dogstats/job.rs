@@ -1,5 +1,5 @@
 use crate::dogstats::writer::{StatsWriterHolder, StatsWriterTrait, UdpSocketWriter};
-use crate::{HashMap, MetricResult};
+use crate::{DefaultMetricHasher, MetricResult};
 
 use super::aggregator::{AggregatorEntryKey, HistogramWrapper, POOL_COUNT};
 use super::collector::MetricCollectorOptions;
@@ -9,9 +9,11 @@ use bumpalo::Bump;
 use crossbeam::channel::{tick, Receiver};
 use crossbeam::queue::SegQueue;
 use crossbeam::select;
+use dashmap::DashMap;
 use itoa::Buffer;
 #[cfg(target_os = "linux")]
 use rustix::net::SocketAddrAny;
+use std::hash::BuildHasher;
 use std::mem::transmute;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,10 +23,14 @@ use tracing::{error, warn};
 
 use super::aggregator::RemoveKey;
 
-struct MetricCollectorJob {
-    current_aggregator: Arc<ArcSwap<Aggregator>>,
-    pending_to_process_aggregator: Option<Arc<Aggregator>>,
-    available_aggregator: Option<Aggregator>,
+struct MetricCollectorJob<S = DefaultMetricHasher>
+where
+    S: BuildHasher + Clone,
+{
+    current_aggregator: Arc<ArcSwap<Aggregator<S>>>,
+    pending_to_process_aggregator: Option<Arc<Aggregator<S>>>,
+    available_aggregator: Option<Aggregator<S>>,
+    hasher_builder: S,
 
     buffer: Buffer,
     keys: Vec<RemoveKey>,
@@ -37,7 +43,10 @@ enum SendResult {
     WouldBlock,
 }
 
-impl MetricCollectorJob {
+impl<S> MetricCollectorJob<S>
+where
+    S: BuildHasher + Clone,
+{
     fn send_metrics(&mut self) -> SendResult {
         let mut alloc_agg = if let Some(alloc_agg) = self.pending_to_process_aggregator.take() {
             match Arc::try_unwrap(alloc_agg) {
@@ -48,7 +57,10 @@ impl MetricCollectorJob {
                 }
             }
         } else {
-            let agg = self.available_aggregator.take().unwrap_or_default();
+            let agg = self
+                .available_aggregator
+                .take()
+                .unwrap_or_else(|| Aggregator::with_hasher_builder(self.hasher_builder.clone()));
             self.pending_to_process_aggregator = Some(self.current_aggregator.swap(Arc::new(agg)));
             return SendResult::WouldBlock;
         };
@@ -59,7 +71,7 @@ impl MetricCollectorJob {
         SendResult::Ok
     }
 
-    fn process_data(&mut self, aggregator: &mut Aggregator) {
+    fn process_data(&mut self, aggregator: &mut Aggregator<S>) {
         let buffer = &mut self.buffer;
         let keys_to_remove = &mut self.keys;
         let values = &self.bump;
@@ -104,12 +116,27 @@ impl MetricCollectorJob {
         bump.alloc_str(value)
     }
 
+    fn get_percentile_suffix(percentile: f64, bump: &Bump) -> &str {
+        let mut percentile_number = (percentile * 100.0).to_string();
+        if percentile_number.contains('.') {
+            while percentile_number.ends_with('0') {
+                percentile_number.pop();
+            }
+            if percentile_number.ends_with('.') {
+                percentile_number.pop();
+            }
+        }
+
+        let suffix = format!(".{percentile_number}percentile");
+        bump.alloc_str(&suffix)
+    }
+
     fn process_histogram<'data, 'bump: 'data, 'w>(
         stats_writer: &'w mut dyn StatsWriterTrait,
         keys_to_remove: &mut Vec<RemoveKey>,
         buffer: &mut Buffer,
         bump: &'bump Bump,
-        map: &'data mut HashMap<AggregatorEntryKey, HistogramWrapper>,
+        map: &'data mut DashMap<AggregatorEntryKey, HistogramWrapper, S>,
         pool_histograms: &[SegQueue<HistogramWrapper>; POOL_COUNT],
     ) {
         let can_use_stack = stats_writer.metric_copied();
@@ -128,68 +155,79 @@ impl MetricCollectorJob {
 
                 let min = histogram_entry.min;
                 let p50 = histogram_entry.histogram.value_at_quantile(0.50);
-                let p99 = histogram_entry.histogram.value_at_quantile(0.99);
                 let max = histogram_entry.max;
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".count"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(count)
-                    } else {
-                        Self::get_value(count, bump, buffer)
-                    },
-                    MetricType::Count,
-                );
+                if histogram_entry.emit_base_metrics[0] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".count"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(count)
+                        } else {
+                            Self::get_value(count, bump, buffer)
+                        },
+                        MetricType::Count,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".min"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(min)
-                    } else {
-                        Self::get_value(min, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                if histogram_entry.emit_base_metrics[1] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".min"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(min)
+                        } else {
+                            Self::get_value(min, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".avg"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(p50)
-                    } else {
-                        Self::get_value(p50, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                if histogram_entry.emit_base_metrics[2] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".avg"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(p50)
+                        } else {
+                            Self::get_value(p50, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".99percentile"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(p99)
-                    } else {
-                        Self::get_value(p99, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                for percentile in histogram_entry.percentiles.iter() {
+                    let percentile_value = histogram_entry.histogram.value_at_quantile(*percentile);
+                    let percentile_metric_suffix = Self::get_percentile_suffix(*percentile, bump);
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, percentile_metric_suffix],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(percentile_value)
+                        } else {
+                            Self::get_value(percentile_value, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
-                Self::send_metric(
-                    stats_writer,
-                    &[metric_str, ".max"],
-                    joined_tags,
-                    if can_use_stack {
-                        buffer.format(max)
-                    } else {
-                        Self::get_value(max, bump, buffer)
-                    },
-                    MetricType::Gauge,
-                );
+                if histogram_entry.emit_base_metrics[3] {
+                    Self::send_metric(
+                        stats_writer,
+                        &[metric_str, ".max"],
+                        joined_tags,
+                        if can_use_stack {
+                            buffer.format(max)
+                        } else {
+                            Self::get_value(max, bump, buffer)
+                        },
+                        MetricType::Gauge,
+                    );
+                }
 
                 histogram_entry.reset();
             } else {
@@ -204,11 +242,13 @@ impl MetricCollectorJob {
         keys_to_remove.clear();
     }
 
-    fn remove_from_map<V>(
-        map: &mut HashMap<AggregatorEntryKey, V>,
+    fn remove_from_map<V, SH>(
+        map: &mut DashMap<AggregatorEntryKey, V, SH>,
         key: &RemoveKey,
         mut f: impl FnMut(V),
-    ) {
+    ) where
+        SH: BuildHasher + Clone,
+    {
         #[allow(clippy::cast_possible_truncation)]
         let shard = map.determine_shard(key.hash as usize);
         let shard_lock = unsafe { map.shards().get_unchecked(shard) };
@@ -225,7 +265,7 @@ impl MetricCollectorJob {
         buffer: &mut Buffer,
         keys_to_remove: &mut Vec<RemoveKey>,
         bump: &'bump Bump,
-        map: &'data mut HashMap<AggregatorEntryKey, GaugeState>,
+        map: &'data mut DashMap<AggregatorEntryKey, GaugeState, S>,
     ) {
         let can_use_stack = stats_writer.metric_copied();
         for entry in map.iter() {
@@ -269,7 +309,7 @@ impl MetricCollectorJob {
         buffer: &mut Buffer,
         keys_to_remove: &mut Vec<RemoveKey>,
         bump: &'bump Bump,
-        map: &'data mut HashMap<AggregatorEntryKey, AtomicU64>,
+        map: &'data mut DashMap<AggregatorEntryKey, AtomicU64, S>,
     ) {
         let can_use_stack = stats_writer.metric_copied();
         for entry in map.iter() {
@@ -326,13 +366,16 @@ impl MetricCollectorJob {
     }
 }
 
-pub fn initialize_job(
+pub fn initialize_job<S>(
     bind_addr: SocketAddr,
     stats_dst: SocketAddr,
-    options: MetricCollectorOptions,
+    options: MetricCollectorOptions<S>,
     receiver: &Receiver<()>,
-    aggregtor: Arc<ArcSwap<Aggregator>>,
-) -> MetricResult<()> {
+    aggregtor: Arc<ArcSwap<Aggregator<S>>>,
+) -> MetricResult<()>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     let flush_interval = options.flush_interval;
     let writer = UdpSocketWriter {
         sock: UdpSocket::bind(bind_addr)?,
@@ -351,6 +394,7 @@ pub fn initialize_job(
         ),
 
         current_aggregator: aggregtor,
+        hasher_builder: options.hasher_builder,
         // When send_metrics is activated, the current aggregator is moved from current_aggregator
         // is replaced with the available aggregator or with a new one if none is available.
         // After an aggregator is processed, it is moved to available_aggregator.

@@ -1,7 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rylv_metrics::{MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+use rylv_metrics::{
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    StatsWriterType,
+};
 use std::time::Duration;
 
 // Fuzz target focusing on packet size limits and edge cases
@@ -31,6 +34,8 @@ fuzz_target!(|data: &[u8]| {
         stats_prefix: String::new(),
         writer_type,
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
@@ -42,15 +47,23 @@ fuzz_target!(|data: &[u8]| {
     let metric_name = format!("test.metric.{}", metric_base);
 
     // Create many tags
-    let mut tags: Vec<String> = (0..20)
+    let tags: Vec<String> = (0..20)
         .map(|i| format!("tag{}:value{}", i, metric_base))
         .collect();
 
     // Send multiple metrics to test batching and packet limits
     for i in 0..10 {
-        collector.increment_by_one(format!("{}.{}", metric_name, i), &mut tags);
-        collector.gauge(format!("{}.gauge.{}", metric_name, i), i as u64, &mut tags);
-        collector.histogram(format!("{}.hist.{}", metric_name, i), i as u64 * 100, &mut tags);
+        let metric_count = format!("{}.{}", metric_name, i);
+        let metric_gauge = format!("{}.gauge.{}", metric_name, i);
+        let metric_hist = format!("{}.hist.{}", metric_name, i);
+        let mut tag_refs: Vec<RylvStr<'_>> = tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
+        collector.count(RylvStr::from(metric_count.as_str()), &mut tag_refs);
+        collector.gauge(RylvStr::from(metric_gauge.as_str()), i as u64, &mut tag_refs);
+        collector.histogram(
+            RylvStr::from(metric_hist.as_str()),
+            i as u64 * 100,
+            &mut tag_refs,
+        );
     }
 
     drop(collector);

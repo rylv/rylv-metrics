@@ -1,6 +1,6 @@
 use rylv_metrics::{
-    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricResult, RylvStr,
-    StatsWriterTrait, StatsWriterType,
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricResult,
+    RylvStr, SigFig, StatsWriterTrait, StatsWriterType,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -106,6 +106,11 @@ impl StatsWriterTrait for TestStatsWriter {
     }
 }
 
+fn random_datadog_addr() -> std::net::SocketAddr {
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.local_addr().unwrap()
+}
+
 // ============================================================================
 // Tests for Custom Writer
 // ============================================================================
@@ -122,10 +127,12 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: rylv_metrics::HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -155,7 +162,7 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     );
 
     // Wait for flush
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -209,10 +216,12 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: rylv_metrics::HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -225,7 +234,7 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
         &mut empty_tags,
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -268,10 +277,12 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
         stats_prefix: "app.".to_string(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: rylv_metrics::HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -290,7 +301,7 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
         &mut [RylvStr::from_static("service:api")],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -327,10 +338,12 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: rylv_metrics::HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -387,7 +400,7 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
         &mut [RylvStr::from_static("endpoint:/users")],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -432,10 +445,12 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
         stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
         histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: rylv_metrics::HistogramConfig::default(),
+        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = "127.0.0.1:9999".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
 
     let collector = MetricCollector::new(bind_addr, datadog_addr, options);
 
@@ -449,7 +464,7 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
         ],
     );
 
-    std::thread::sleep(Duration::from_millis(150));
+    collector.shutdown();
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -457,6 +472,139 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
     assert!(
         metrics.contains("multi.tag.metric:1|c|#tag1:value1,tag2:value2,tag3:value3\n"),
         "RylvStrs should be sorted alphabetically in wire format"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
+    let writer = TestStatsWriter::new(1024, String::new());
+    let writer_clone = writer.clone();
+
+    let options = MetricCollectorOptions {
+        max_udp_packet_size: 1024,
+        max_udp_batch_size: 100,
+        flush_interval: Duration::from_millis(100),
+        stats_prefix: String::new(),
+        writer_type: StatsWriterType::Custom(Box::new(writer)),
+        histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: HistogramConfig::default()
+            .with_count(false)
+            .with_min(false)
+            .with_avg(false)
+            .with_max(false),
+        hasher_builder: std::hash::RandomState::new(),
+    };
+
+    let bind_addr = "0.0.0.0:0".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+
+    collector.histogram(
+        RylvStr::from_static("configurable.histogram"),
+        123,
+        &mut [RylvStr::from_static("scope:test")],
+    );
+
+    collector.shutdown();
+
+    let metrics = writer_clone.get_all_metrics_as_text();
+
+    assert!(
+        !metrics.contains("configurable.histogram.count:"),
+        "count metric should be skipped"
+    );
+    assert!(
+        !metrics.contains("configurable.histogram.min:"),
+        "min metric should be skipped"
+    );
+    assert!(
+        !metrics.contains("configurable.histogram.avg:"),
+        "avg metric should be skipped"
+    );
+    assert!(
+        !metrics.contains("configurable.histogram.max:"),
+        "max metric should be skipped"
+    );
+    assert!(
+        metrics.contains("configurable.histogram.95percentile:123|g|#scope:test\n"),
+        "95 percentile should still be emitted"
+    );
+    assert!(
+        metrics.contains("configurable.histogram.99percentile:123|g|#scope:test\n"),
+        "99 percentile should still be emitted"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()> {
+    let writer = TestStatsWriter::new(1024, String::new());
+    let writer_clone = writer.clone();
+
+    let custom_histogram_config = HistogramConfig::new(SigFig::default(), vec![0.75, 0.9])
+        .unwrap()
+        .with_count(false)
+        .with_min(false);
+
+    let options = MetricCollectorOptions {
+        max_udp_packet_size: 1024,
+        max_udp_batch_size: 100,
+        flush_interval: Duration::from_millis(100),
+        stats_prefix: String::new(),
+        writer_type: StatsWriterType::Custom(Box::new(writer)),
+        histogram_configs: std::collections::HashMap::new(),
+        default_histogram_config: custom_histogram_config,
+        hasher_builder: std::hash::RandomState::new(),
+    };
+
+    let bind_addr = "0.0.0.0:0".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+
+    collector.histogram(
+        RylvStr::from_static("custom.percentiles.histogram"),
+        100,
+        &mut [RylvStr::from_static("scope:test")],
+    );
+
+    collector.shutdown();
+
+    let metrics = writer_clone.get_all_metrics_as_text();
+
+    assert!(
+        !metrics.contains("custom.percentiles.histogram.count:"),
+        "count metric should be skipped"
+    );
+    assert!(
+        !metrics.contains("custom.percentiles.histogram.min:"),
+        "min metric should be skipped"
+    );
+    assert!(
+        metrics.contains("custom.percentiles.histogram.avg:100|g|#scope:test\n"),
+        "avg metric should still be emitted"
+    );
+    assert!(
+        metrics.contains("custom.percentiles.histogram.max:100|g|#scope:test\n"),
+        "max metric should still be emitted"
+    );
+    assert!(
+        metrics.contains("custom.percentiles.histogram.75percentile:100|g|#scope:test\n"),
+        "75 percentile should be emitted"
+    );
+    assert!(
+        metrics.contains("custom.percentiles.histogram.90percentile:100|g|#scope:test\n"),
+        "90 percentile should be emitted"
+    );
+    assert!(
+        !metrics.contains("custom.percentiles.histogram.95percentile:"),
+        "95 percentile should not be emitted for custom percentiles"
+    );
+    assert!(
+        !metrics.contains("custom.percentiles.histogram.99percentile:"),
+        "99 percentile should not be emitted for custom percentiles"
     );
 
     Ok(())
