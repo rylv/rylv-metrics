@@ -17,7 +17,13 @@ impl StatsWriterTrait for MiriCustomWriter {
         true
     }
 
-    fn write(&mut self, metrics: &[&str], tags: &str, value: &str, metric_type: &str) -> MetricResult<()> {
+    fn write(
+        &mut self,
+        metrics: &[&str],
+        tags: &str,
+        value: &str,
+        metric_type: &str,
+    ) -> MetricResult<()> {
         for metric in metrics {
             self.current.push_str(metric);
         }

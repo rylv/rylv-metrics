@@ -7,6 +7,35 @@ clippy:
 	@echo "=> Executing cargo clippy"
 	@cargo clippy --color auto --all-targets -- -D warnings
 
+.PHONY: fmt
+fmt:
+	@echo "=> Formatting code"
+	@cargo fmt --all
+
+.PHONY: test
+test:
+	@echo "=> Running tests"
+	@cargo test
+
+.PHONY: prepare-commit
+prepare-commit:
+	@echo "=> Preparing commit"
+	@cargo fmt --all
+	@cargo clippy --all-targets --all-features -- -D warnings
+	@cargo test
+	@git add -A
+	@MSG_FINAL="$(MSG)"; \
+	if [ -z "$$MSG_FINAL" ]; then \
+		FILES=$$(git diff --cached --name-only | head -n 3 | paste -sd ", " -); \
+		if [ -n "$$FILES" ]; then \
+			MSG_FINAL="chore: update $$FILES"; \
+		else \
+			MSG_FINAL="chore: update code"; \
+		fi; \
+	fi; \
+	echo "=> Commit message: $$MSG_FINAL"; \
+	git commit -m "$$MSG_FINAL"
+
 .PHONY: release
 release:
 	RUSTFLAGS="-C target-cpu=native -C force-frame-pointers=yes" cargo build --release
