@@ -13,7 +13,7 @@ A high-performance DogStatsD metrics client for Rust with support for client-sid
   - `Custom`: Bring your own writer implementation
 - **Metric Types**: Histograms, Counters, and Gauges
 - **Flexible Tags**: Support for static and owned string tags
-- **Configurable Histograms**: Adjustable significant figures for histogram precision
+- **Configurable Histograms**: Adjustable significant figures, custom percentile lists, and optional base metrics (`count`, `min`, `avg`, `max`)
 
 ## Installation
 
@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rylv-metrics = "0.1"
+rylv-metrics = "0.2"
 ```
 
 ## Quick Start
@@ -82,11 +82,14 @@ fn main() {
 
 ### Histogram
 
-Records distribution of values with configurable precision:
+Records distribution of values with configurable precision and percentiles:
 
 ```rust
 histogram!(collector, "response.time", 150, "service:api");
 ```
+
+You can configure per-metric or default histogram behavior with `HistogramConfig`
+(significant figures, percentile list, and base metric toggles).
 
 ### Counter
 
@@ -154,3 +157,13 @@ at your option.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Release Workflow
+
+Before publishing, run:
+
+```bash
+make prepare-publish
+```
+
+This runs `prepare-commit`, package/doc checks, and `cargo publish --dry-run`.
