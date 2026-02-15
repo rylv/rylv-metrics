@@ -111,6 +111,7 @@ where
             error!("Error sending metrics: {err}");
         }
 
+        drop(percentile_suffix_cache);
         self.bump.reset();
     }
 
