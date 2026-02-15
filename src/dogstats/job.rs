@@ -13,6 +13,7 @@ use dashmap::DashMap;
 use itoa::Buffer;
 #[cfg(target_os = "linux")]
 use rustix::net::SocketAddrAny;
+use std::collections::HashMap;
 use std::hash::BuildHasher;
 use std::mem::transmute;
 use std::net::{SocketAddr, UdpSocket};
@@ -75,6 +76,7 @@ where
         let buffer = &mut self.buffer;
         let keys_to_remove = &mut self.keys;
         let values = &self.bump;
+        let mut percentile_suffix_cache = HashMap::new();
 
         // get a guard to stats_writer
         // The guard will be dropped at the end of the function and the drop implementation
@@ -100,6 +102,7 @@ where
             keys_to_remove,
             buffer,
             values,
+            &mut percentile_suffix_cache,
             &mut aggregator.histograms,
             &aggregator.pool_histograms,
         );
@@ -108,6 +111,7 @@ where
             error!("Error sending metrics: {err}");
         }
 
+        drop(percentile_suffix_cache);
         self.bump.reset();
     }
 
@@ -131,11 +135,27 @@ where
         bump.alloc_str(&suffix)
     }
 
+    fn get_percentile_suffix_cached<'a>(
+        percentile: f64,
+        bump: &'a Bump,
+        cache: &mut HashMap<u64, &'a str>,
+    ) -> &'a str {
+        let key = percentile.to_bits();
+        if let Some(suffix) = cache.get(&key) {
+            return suffix;
+        }
+
+        let suffix = Self::get_percentile_suffix(percentile, bump);
+        cache.insert(key, suffix);
+        suffix
+    }
+
     fn process_histogram<'data, 'bump: 'data, 'w>(
         stats_writer: &'w mut dyn StatsWriterTrait,
         keys_to_remove: &mut Vec<RemoveKey>,
         buffer: &mut Buffer,
         bump: &'bump Bump,
+        percentile_suffix_cache: &mut HashMap<u64, &'bump str>,
         map: &'data mut DashMap<AggregatorEntryKey, HistogramWrapper, S>,
         pool_histograms: &[SegQueue<HistogramWrapper>; POOL_COUNT],
     ) {
@@ -201,7 +221,11 @@ where
 
                 for percentile in histogram_entry.percentiles.iter() {
                     let percentile_value = histogram_entry.histogram.value_at_quantile(*percentile);
-                    let percentile_metric_suffix = Self::get_percentile_suffix(*percentile, bump);
+                    let percentile_metric_suffix = Self::get_percentile_suffix_cached(
+                        *percentile,
+                        bump,
+                        percentile_suffix_cache,
+                    );
                     Self::send_metric(
                         stats_writer,
                         &[metric_str, percentile_metric_suffix],
