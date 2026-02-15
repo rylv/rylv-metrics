@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rylv-metrics = "0.2"
+rylv-metrics = "0.2.1"
 ```
 
 ## Quick Start

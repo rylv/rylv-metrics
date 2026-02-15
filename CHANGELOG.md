@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-15
+
+### Changed
+- Optimized histogram percentile metric suffix generation with a per-flush cache in `job.rs`
+- Added explicit cache drop before bump reset to make arena-lifetime intent clear and safer for future refactors
+
+### Fixed
+- Improved stability and predictability of internal percentile suffix handling during flush cycles
+
 ## [0.2.0] - 2026-02-14
 
 ### Added
