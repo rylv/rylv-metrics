@@ -117,8 +117,16 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   miri:
-    name: Miri (memory safety check)
+    name: Miri (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: drains
+            features: "shared-collector tls-collector"
+          - name: drains+custom-writer
+            features: "custom_writer shared-collector tls-collector"
 
     steps:
       - name: Checkout code
@@ -159,7 +167,7 @@ jobs:
         run: cargo miri setup
 
       - name: Run Miri tests
-        run: cargo miri test --test miri_test --features "custom_writer shared-collector tls-collector"
+        run: cargo miri test --test miri_test --features "${{ matrix.features }}"
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
 
