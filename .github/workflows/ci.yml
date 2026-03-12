@@ -292,6 +292,9 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+      - name: Run doctests
+        run: cargo test --doc --all-features
+
   bench:
     name: Benchmark regression check
     runs-on: ubuntu-latest
@@ -336,17 +339,22 @@ jobs:
       - name: Checkout base branch
         run: git fetch origin ${{ github.base_ref }} --depth=1
 
+      - name: Create benchmark worktrees
+        run: |
+          git worktree add ../bench-base FETCH_HEAD
+          git worktree add ../bench-pr HEAD
+
       - name: Run benchmarks on base branch
         run: |
-          git stash
-          git checkout FETCH_HEAD
-          cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
-          git checkout -
+          cd ../bench-base
+          CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
+            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
 
       - name: Run benchmarks on PR branch
         run: |
-          git stash pop || true
-          cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
+          cd ../bench-pr
+          CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
+            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
 
       - name: Compare benchmarks
         run: |
@@ -356,6 +364,12 @@ jobs:
             echo "::warning::Benchmark regression detected (>15%). Review the comparison above."
             exit 1
           }
+
+      - name: Cleanup benchmark worktrees
+        if: always()
+        run: |
+          git worktree remove ../bench-base --force
+          git worktree remove ../bench-pr --force
 
   fmt:
     name: Format check
