@@ -11,11 +11,16 @@ use std::time::Duration;
 // Helper functions to reduce test code duplication
 // ============================================================================
 
+/// Binds a UDP socket to an ephemeral port and returns the socket and port.
+fn ephemeral_socket() -> (UdpSocket, u16) {
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("couldn't bind to ephemeral port");
+    let port = socket.local_addr().expect("no local addr").port();
+    (socket, port)
+}
+
 /// Creates a UDP receiver thread that collects all messages until timeout
-fn spawn_udp_receiver(port: u16) -> JoinHandle<Vec<String>> {
+fn spawn_udp_receiver(socket: UdpSocket) -> JoinHandle<Vec<String>> {
     std::thread::spawn(move || {
-        let socket =
-            UdpSocket::bind(format!("127.0.0.1:{}", port)).expect("couldn't bind to address");
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("set_read_timeout failed");
@@ -32,10 +37,11 @@ fn spawn_udp_receiver(port: u16) -> JoinHandle<Vec<String>> {
 }
 
 /// Creates a UDP receiver thread that expects exactly N messages (for deterministic tests)
-fn spawn_udp_receiver_exact(port: u16, expected_count: usize) -> JoinHandle<HashSet<String>> {
+fn spawn_udp_receiver_exact(
+    socket: UdpSocket,
+    expected_count: usize,
+) -> JoinHandle<HashSet<String>> {
     std::thread::spawn(move || {
-        let socket =
-            UdpSocket::bind(format!("127.0.0.1:{}", port)).expect("couldn't bind to address");
         let mut buf = [0; 10000];
         let mut received = HashSet::<String>::new();
         let mut counter = 0;
@@ -94,10 +100,11 @@ fn wait_and_collect_exact(receiver: JoinHandle<HashSet<String>>) -> HashSet<Stri
 
 #[test]
 fn test_build_collector() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver_exact(9090, 2);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver_exact(socket, 2);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9090, DEFAULT_STATS_WRITER_TYPE, String::new(), 284);
+    let collector = create_collector(port, DEFAULT_STATS_WRITER_TYPE, String::new(), 284);
 
     collector.histogram(
         RylvStr::from_static("some.metric"),
@@ -156,10 +163,11 @@ fn test_collector_new_fails_when_bind_addr_is_in_use() {
 
 #[test]
 fn test_simple_writer() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9091);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9091, StatsWriterType::Simple, String::new(), 261);
+    let collector = create_collector(port, StatsWriterType::Simple, String::new(), 261);
 
     collector.histogram(
         RylvStr::from_static("test.simple.writer"),
@@ -182,10 +190,11 @@ fn test_simple_writer() -> std::io::Result<()> {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_batch_writer() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9092);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9092, StatsWriterType::LinuxBatch, String::new(), 261);
+    let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 261);
 
     collector.histogram(
         RylvStr::from_static("test.linux.batch"),
@@ -208,10 +217,11 @@ fn test_linux_batch_writer() -> std::io::Result<()> {
 #[test]
 #[cfg(target_vendor = "apple")]
 fn test_apple_batch_writer() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9093);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9093, StatsWriterType::AppleBatch, String::new(), 261);
+    let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 261);
 
     collector.histogram(
         RylvStr::from_static("test.apple.batch"),
@@ -237,10 +247,11 @@ fn test_apple_batch_writer() -> std::io::Result<()> {
 
 #[test]
 fn test_simple_writer_counter_methods() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9094);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9094, StatsWriterType::Simple, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
     collector.count(
         RylvStr::from_static("requests.total"),
@@ -268,10 +279,11 @@ fn test_simple_writer_counter_methods() -> std::io::Result<()> {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_batch_counter_methods() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9095);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9095, StatsWriterType::LinuxBatch, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 512);
 
     collector.count(
         RylvStr::from_static("linux.requests"),
@@ -299,10 +311,11 @@ fn test_linux_batch_counter_methods() -> std::io::Result<()> {
 #[test]
 #[cfg(target_vendor = "apple")]
 fn test_apple_batch_counter_methods() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9096);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9096, StatsWriterType::AppleBatch, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 512);
 
     collector.count(
         RylvStr::from_static("macos.events"),
@@ -333,10 +346,11 @@ fn test_apple_batch_counter_methods() -> std::io::Result<()> {
 
 #[test]
 fn test_simple_writer_mixed_methods() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9097);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9097, StatsWriterType::Simple, "app.".to_string(), 1024);
+    let collector = create_collector(port, StatsWriterType::Simple, "app.".to_string(), 1024);
 
     collector.histogram(
         RylvStr::from_static("latency"),
@@ -370,11 +384,12 @@ fn test_simple_writer_mixed_methods() -> std::io::Result<()> {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_batch_mixed_methods() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9098);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
     let collector = create_collector(
-        9098,
+        port,
         StatsWriterType::LinuxBatch,
         "linux.".to_string(),
         1024,
@@ -412,11 +427,12 @@ fn test_linux_batch_mixed_methods() -> std::io::Result<()> {
 #[test]
 #[cfg(target_vendor = "apple")]
 fn test_apple_batch_mixed_methods() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9099);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
     let collector = create_collector(
-        9099,
+        port,
         StatsWriterType::AppleBatch,
         "macos.".to_string(),
         1024,
@@ -457,10 +473,11 @@ fn test_apple_batch_mixed_methods() -> std::io::Result<()> {
 
 #[test]
 fn test_simple_writer_counter_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9100);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9100, StatsWriterType::Simple, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
     collector.count(
         RylvStr::from_static("page.views"),
@@ -500,10 +517,11 @@ fn test_simple_writer_counter_aggregation() -> std::io::Result<()> {
 
 #[test]
 fn test_simple_writer_gauge_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9101);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9101, StatsWriterType::Simple, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
     collector.gauge(
         RylvStr::from_static("cpu.usage"),
@@ -532,10 +550,11 @@ fn test_simple_writer_gauge_aggregation() -> std::io::Result<()> {
 
 #[test]
 fn test_simple_writer_histogram_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9102);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9102, StatsWriterType::Simple, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
     collector.histogram(
         RylvStr::from_static("request.duration"),
@@ -569,10 +588,11 @@ fn test_simple_writer_histogram_aggregation() -> std::io::Result<()> {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_batch_counter_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9103);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9103, StatsWriterType::LinuxBatch, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 512);
 
     for _ in 0..5 {
         collector.count(
@@ -607,10 +627,11 @@ fn test_linux_batch_counter_aggregation() -> std::io::Result<()> {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_batch_histogram_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9104);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9104, StatsWriterType::LinuxBatch, String::new(), 1024);
+    let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 1024);
 
     let values = [50, 75, 125, 200, 100];
     for &val in &values {
@@ -632,10 +653,11 @@ fn test_linux_batch_histogram_aggregation() -> std::io::Result<()> {
 #[test]
 #[cfg(target_vendor = "apple")]
 fn test_apple_batch_counter_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9105);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9105, StatsWriterType::AppleBatch, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 512);
 
     for _ in 0..6 {
         collector.count(
@@ -670,10 +692,11 @@ fn test_apple_batch_counter_aggregation() -> std::io::Result<()> {
 #[test]
 #[cfg(target_vendor = "apple")]
 fn test_apple_batch_histogram_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9106);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9106, StatsWriterType::AppleBatch, String::new(), 1024);
+    let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 1024);
 
     let values = [30, 60, 45, 55, 58, 62];
     for &val in &values {
@@ -698,10 +721,11 @@ fn test_apple_batch_histogram_aggregation() -> std::io::Result<()> {
 
 #[test]
 fn test_simple_writer_heavy_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9107);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9107, StatsWriterType::Simple, String::new(), 1024);
+    let collector = create_collector(port, StatsWriterType::Simple, String::new(), 1024);
 
     for i in 1..=50 {
         collector.count(
@@ -727,10 +751,11 @@ fn test_simple_writer_heavy_aggregation() -> std::io::Result<()> {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_batch_heavy_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9108);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9108, StatsWriterType::LinuxBatch, String::new(), 1024);
+    let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 1024);
 
     for i in 1..=100 {
         collector.count(
@@ -756,10 +781,11 @@ fn test_linux_batch_heavy_aggregation() -> std::io::Result<()> {
 #[test]
 #[cfg(target_vendor = "apple")]
 fn test_apple_batch_heavy_aggregation() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9109);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9109, StatsWriterType::AppleBatch, String::new(), 1024);
+    let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 1024);
 
     for i in 1..=100 {
         collector.count(
@@ -788,10 +814,11 @@ fn test_apple_batch_heavy_aggregation() -> std::io::Result<()> {
 
 #[test]
 fn test_simple_writer_no_tags() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9110);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9110, StatsWriterType::Simple, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
     let mut empty_tags: [RylvStr<'_>; 0] = [];
     collector.count(RylvStr::from_static("notags.counter"), &mut empty_tags);
@@ -824,10 +851,11 @@ fn test_simple_writer_no_tags() -> std::io::Result<()> {
 #[test]
 #[cfg(target_os = "linux")]
 fn test_linux_batch_no_tags() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9111);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9111, StatsWriterType::LinuxBatch, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 512);
 
     let mut empty_tags: [RylvStr<'_>; 0] = [];
     collector.count(
@@ -865,10 +893,11 @@ fn test_linux_batch_no_tags() -> std::io::Result<()> {
 #[test]
 #[cfg(target_vendor = "apple")]
 fn test_apple_batch_no_tags() -> std::io::Result<()> {
-    let receiver = spawn_udp_receiver(9112);
+    let (socket, port) = ephemeral_socket();
+    let receiver = spawn_udp_receiver(socket);
     std::thread::sleep(Duration::from_millis(100));
 
-    let collector = create_collector(9112, StatsWriterType::AppleBatch, String::new(), 512);
+    let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 512);
 
     let mut empty_tags: [RylvStr<'_>; 0] = [];
     collector.count(RylvStr::from_static("macos.notags.events"), &mut empty_tags);

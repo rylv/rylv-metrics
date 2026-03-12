@@ -6,7 +6,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() {
     let collector = SharedCollector::new(rylv_metrics::SharedCollectorOptions {
-        default_histogram_config: HistogramConfig::new(SigFig::new(3).unwrap(), Vec::new())
+        default_histogram_config: HistogramConfig::new(SigFig::THREE, Vec::new())
             .unwrap(),
         ..Default::default()
     });

@@ -88,7 +88,7 @@ impl FromIterator<HistogramBaseMetric> for HistogramBaseMetrics {
 ///
 /// ```ignore
 /// use rylv_metrics::{HistogramConfig, SigFig};
-/// let config = HistogramConfig::new(SigFig::new(2).unwrap(), vec![0.95, 0.99]).unwrap();
+/// let config = HistogramConfig::new(SigFig::TWO, vec![0.95, 0.99]).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct HistogramConfig {
@@ -418,7 +418,7 @@ mod tests {
     fn resolve_histogram_configs_reuses_pool_ids_for_matching_specs() {
         let default_config = HistogramConfig::default();
         let shared = HistogramConfig::new(SigFig::default(), vec![0.95]).unwrap();
-        let distinct = HistogramConfig::new(SigFig::new(2).unwrap(), vec![0.95]).unwrap();
+        let distinct = HistogramConfig::new(SigFig::TWO, vec![0.95]).unwrap();
         let mut configs = HashMap::new();
         configs.insert("metric.a".to_string(), shared.clone());
         configs.insert("metric.b".to_string(), shared);

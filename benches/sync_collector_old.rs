@@ -47,7 +47,7 @@ fn benchmark_record_histogram(c: &mut Criterion) {
     let inner = TLSCollector::new(TLSCollectorOptions {
         stats_prefix: String::new(),
         histogram_configs: std::collections::HashMap::with_hasher(ahash::RandomState::new()),
-        default_histogram_config: HistogramConfig::new(SigFig::new(0).unwrap(), vec![])
+        default_histogram_config: HistogramConfig::new(SigFig::ZERO, vec![])
             .unwrap()
             .with_bounds(100, 2_000_000)
             .unwrap(),
@@ -57,7 +57,7 @@ fn benchmark_record_histogram(c: &mut Criterion) {
     // let inner = SharedCollector::new(SharedCollectorOptions {
     //     stats_prefix: String::new(),
     //     histogram_configs: std::collections::HashMap::with_hasher(ahash::RandomState::new()),
-    //     default_histogram_config: HistogramConfig::new(SigFig::new(0).unwrap(), vec![])
+    //     default_histogram_config: HistogramConfig::new(SigFig::ZERO, vec![])
     //         .unwrap()
     //         .with_bounds(100, 2_000_000)
     //         .unwrap(),

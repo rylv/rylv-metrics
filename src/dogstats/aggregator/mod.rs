@@ -222,6 +222,12 @@ const _: () = assert!(SIG_FIG_DEF <= SIG_FIG_MAX);
 ///
 /// Higher values increase precision but also memory usage.
 /// Use [`SigFig::default()`] for the default value of 3.
+///
+/// For compile-time validated constants, use the associated constants:
+/// ```
+/// use rylv_metrics::SigFig;
+/// const MY_SIG_FIG: SigFig = SigFig::THREE;
+/// ```
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct SigFig {
@@ -229,18 +235,18 @@ pub struct SigFig {
 }
 
 impl SigFig {
-    /// Creates a new `SigFig` with the given number of significant figures (0..=5).
-    ///
-    /// # Errors
-    /// Returns [`MetricsError`] if `value` exceeds 5.
-    pub fn new(value: u8) -> Result<Self, MetricsError> {
-        if value > SIG_FIG_MAX {
-            return Err(MetricsError::from(
-                "Invalid sig fig: must be 0, 1, 2, 3, 4 or 5",
-            ));
-        }
-        Ok(Self { value })
-    }
+    /// 0 significant figures.
+    pub const ZERO: Self = Self { value: 0 };
+    /// 1 significant figure.
+    pub const ONE: Self = Self { value: 1 };
+    /// 2 significant figures.
+    pub const TWO: Self = Self { value: 2 };
+    /// 3 significant figures (default).
+    pub const THREE: Self = Self { value: 3 };
+    /// 4 significant figures.
+    pub const FOUR: Self = Self { value: 4 };
+    /// 5 significant figures (maximum).
+    pub const FIVE: Self = Self { value: 5 };
 
     /// Returns the number of significant figures.
     #[must_use]
@@ -251,7 +257,7 @@ impl SigFig {
 
 impl Default for SigFig {
     fn default() -> Self {
-        Self { value: SIG_FIG_DEF }
+        Self::THREE
     }
 }
 
@@ -449,8 +455,8 @@ mod tests {
 
     #[test]
     fn sig_fig_validates_range() {
-        assert_eq!(SigFig::new(0).unwrap().value(), 0);
-        assert_eq!(SigFig::new(5).unwrap().value(), 5);
-        assert!(SigFig::new(6).is_err());
+        assert_eq!(SigFig::ZERO.value(), 0);
+        assert_eq!(SigFig::FIVE.value(), 5);
+        assert_eq!(SigFig::default().value(), 3);
     }
 }
