@@ -227,13 +227,19 @@ impl HistogramConfig {
         self.emit_base_metrics
     }
 
+    const fn with_bounds_checked(mut self, bounds: Bounds) -> Self {
+        self.bounds = bounds;
+        self
+    }
+
     /// Sets histogram recording bounds.
     ///
     /// These bounds determine the compatible pool and the histogram allocation shape.
-    #[must_use]
-    pub const fn with_bounds(mut self, bounds: Bounds) -> Self {
-        self.bounds = bounds;
-        self
+    ///
+    /// # Errors
+    /// Returns an error if `min < 1` or `max < min`.
+    pub fn with_bounds(self, min: u64, max: u64) -> MetricResult<Self> {
+        Ok(self.with_bounds_checked(Bounds::new(min, max)?))
     }
 }
 

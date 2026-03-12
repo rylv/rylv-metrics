@@ -970,8 +970,10 @@ where
     pending_histogram: Option<PendingHistogram<'a, S>>,
 
     // SAFETY:
-    // Last item, because this is a self referential struct, so this field is convenient to be the last one
-    // this way in drop, all fields are valid in its drop because the real memory is released last.
+    // `TLSDrain` is self-referential: the iterators and borrowed slices above point into this
+    // heap-allocated `GlobalAggregatorHb`. Keeping the raw pointer as the final field ensures all
+    // other fields are dropped before we reconstruct and free the box in `Drop`, so those borrows
+    // never outlive the backing aggregator allocation.
     aggregator: Option<*mut GlobalAggregatorHb<S>>,
 }
 
@@ -1009,8 +1011,11 @@ where
                     continue;
                 }
 
-                // SAFETY: key metric/tags are stored in `Cow<'static, str>`. Entries with
-                // value > 0 are not removed in this drain cycle, so references remain valid.
+                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
+                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
+                // lifetime of `TLSDrain`. Non-empty count entries are not removed until the
+                // current count stage finishes, and the backing `GlobalAggregatorHb` is owned by
+                // `TLSDrain`, so the borrowed strings remain valid for the yielded frame.
                 let (metric, tags) = unsafe {
                     (
                         std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
@@ -1049,8 +1054,11 @@ where
                 }
 
                 let value = gauge.sum / count;
-                // SAFETY: key metric/tags are stored in `Cow<'static, str>`. Entries with
-                // count > 0 are not removed in this drain cycle, so references remain valid.
+                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
+                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
+                // lifetime of `TLSDrain`. Non-empty gauge entries are reset in place but are not
+                // removed until after the gauge stage, and the backing aggregator allocation stays
+                // owned by `TLSDrain`, so the borrowed strings remain valid for the yielded frame.
                 let (metric, tags) = unsafe {
                     (
                         std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
@@ -1090,8 +1098,13 @@ where
                     continue;
                 }
 
-                // SAFETY: key metric/tags are stored in `Cow<'static, str>`. Entries with
-                // count > 0 are not removed in this drain cycle, so references remain valid.
+                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
+                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
+                // lifetime of `TLSDrain`. Non-empty histogram entries are not removed until the
+                // histogram stage completes, and the backing `GlobalAggregatorHb` is owned by
+                // `TLSDrain`, so the borrowed strings remain valid across all percentile/base
+                // metric frames emitted from `pending_histogram`. The Miri TLS-drain test covers
+                // this invariant by reading borrowed frame fields across iteration.
                 let (metric, tags) = unsafe {
                     (
                         std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
@@ -1244,6 +1257,10 @@ impl<T> MyIterMut<'_, T> {
     fn new(table_ptr: *mut HashTable<T>) -> Self {
         let iter_mut = unsafe { (*table_ptr).iter_mut() };
         let static_iter = unsafe {
+            // SAFETY: `iter_mut` only gets stored inside `MyIterMut`, which itself is embedded in
+            // `TLSDrain<'a, _>`. `TLSDrain` owns the pointed-to table allocation through
+            // `aggregator`, so the table outlives the iterator for `'a`. `Drop` clears all
+            // iterators before freeing the backing `GlobalAggregatorHb`.
             std::mem::transmute::<
                 hashbrown::hash_table::IterMut<'_, T>,
                 hashbrown::hash_table::IterMut<'_, T>,

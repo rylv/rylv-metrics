@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rylv_metrics::{
-    Bounds, HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
-    RylvStr, SigFig, TLSCollector, TLSCollectorOptions, DEFAULT_STATS_WRITER_TYPE,
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    SigFig, TLSCollector, TLSCollectorOptions, DEFAULT_STATS_WRITER_TYPE,
 };
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,7 +49,8 @@ fn benchmark_record_histogram(c: &mut Criterion) {
         histogram_configs: std::collections::HashMap::with_hasher(ahash::RandomState::new()),
         default_histogram_config: HistogramConfig::new(SigFig::new(0).unwrap(), vec![])
             .unwrap()
-            .with_bounds(Bounds::new(100, 2000000).unwrap()),
+            .with_bounds(100, 2_000_000)
+            .unwrap(),
         hasher_builder: ahash::RandomState::new(),
     });
 
@@ -58,7 +59,8 @@ fn benchmark_record_histogram(c: &mut Criterion) {
     //     histogram_configs: std::collections::HashMap::with_hasher(ahash::RandomState::new()),
     //     default_histogram_config: HistogramConfig::new(SigFig::new(0).unwrap(), vec![])
     //         .unwrap()
-    //         .with_bounds(Bounds::new(100, 2000000).unwrap()),
+    //         .with_bounds(100, 2_000_000)
+    //         .unwrap(),
     //     hasher_builder: ahash::RandomState::new(),
     // });
     let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)

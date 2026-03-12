@@ -33,7 +33,7 @@ pub use collector::{TLSCollector, TLSCollectorOptions};
 pub use collector_udp::{
     MetricCollector, MetricCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
-pub use histogram_config::{Bounds, HistogramBaseMetric, HistogramConfig};
+pub use histogram_config::{HistogramBaseMetric, HistogramConfig};
 pub use sorted_tags::{PreparedMetric, SortedTags};
 
 /// A flexible string type that can hold static references, borrowed references, or owned values.
