@@ -1,6 +1,6 @@
 use rylv_metrics::{
-    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, StatsWriterType,
-    DEFAULT_STATS_WRITER_TYPE,
+    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SharedCollector,
+    SharedCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
 use std::collections::HashSet;
 use std::net::UdpSocket;
@@ -56,22 +56,23 @@ fn create_collector(
     writer_type: StatsWriterType,
     stats_prefix: String,
     max_udp_packet_size: u16,
-) -> MetricCollector {
+) -> MetricCollector<SharedCollector> {
     let options = MetricCollectorOptions {
         max_udp_packet_size,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix,
         writer_type,
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = format!("127.0.0.1:{}", port).parse().unwrap();
 
-    MetricCollector::new(bind_addr, datadog_addr, options)
+    let inner = SharedCollector::new(SharedCollectorOptions {
+        stats_prefix,
+        ..Default::default()
+    });
+    MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector")
 }
 
 /// Waits for metrics to be flushed and collects results
@@ -126,6 +127,31 @@ fn test_build_collector() -> std::io::Result<()> {
     assert_eq!(received, expected_set);
 
     Ok(())
+}
+
+#[test]
+fn test_collector_new_fails_when_bind_addr_is_in_use() {
+    let occupied = UdpSocket::bind("127.0.0.1:0").expect("failed to reserve test bind addr");
+    let bind_addr = occupied.local_addr().expect("failed to get reserved addr");
+    let destination = UdpSocket::bind("127.0.0.1:0").expect("failed to create destination socket");
+    let datadog_addr = destination
+        .local_addr()
+        .expect("failed to get destination address");
+
+    let options = MetricCollectorOptions {
+        max_udp_packet_size: 512,
+        max_udp_batch_size: 10,
+        flush_interval: Duration::from_millis(100),
+        writer_type: StatsWriterType::Simple,
+    };
+
+    let collector =
+        MetricCollector::new(bind_addr, datadog_addr, options, SharedCollector::default());
+
+    assert!(
+        collector.is_err(),
+        "constructor should fail when bind addr is already in use"
+    );
 }
 
 #[test]

@@ -17,20 +17,25 @@ exclude = [".github/", "fuzz/", "Makefile", ".gitignore"]
 crate-type = ["rlib"]
 
 [dependencies]
-crossbeam = { version = "0.8.4", features = ["std", "crossbeam-queue"], default-features = false }
+crossbeam = { version = "0.8.4", default-features = false, features = ["std", "crossbeam-queue"] }
 hdrhistogram = { version = "7.5.4", default-features = false}
 thiserror = { version = "1.0.59", default-features = false }
-arc-swap = { version = "1.7.1", default-features = false }
+arc-swap = { version = "1.7.1", default-features = false, optional=true }
 itoa = { version = "1.0.15", default-features = false }
-dashmap = { version = "6.1.0", default-features = false, features=["raw-api"] }
+dashmap = { version = "6.1.0", default-features = false, features=["raw-api"], optional=true }
+hashbrown = { version = "0.15", default-features = false, features = ["raw-entry"], optional=true }
 tracing = { version = "0.1", default-features = false }
+parking_lot = { version = "0.12", default-features = false, optional=true }
+thread_local = { version = "1.1.9", default-features = false, optional = true }
 
-rustix = { version = "1.1.2", features = ["net"] }
-libc = "0.2"
-bumpalo = { version = "3.19.0" , features = ["collections"], default-features = false}
-dhat = {version="0.3.3", optional=true, default-features = false}
+rustix = { version = "1.1.2", default-features = false, features = ["std", "net"], optional = true }
+libc = { version = "0.2", default-features=false, optional = true }
+bumpalo = { version = "3.19.0", default-features = false}
 
-allocation-counter = { version = "0", optional = true }
+# Used in benchmarks for profiling
+dhat = {version="0.3.3", default-features = false, optional=true}
+allocation-counter = { version = "0", default-features = false, optional = true }
+
 [dev-dependencies]
 criterion = "0.5.1"
 ahash = "0.8.12"
@@ -38,18 +43,102 @@ ahash = "0.8.12"
 [profile.release]
 debug = true
 
+[[bin]]
+name = "shared_dhat_single"
+path = "src/bins/shared_dhat_single.rs"
+required-features = ["shared-collector", "dhat-heap"]
+
+[[bin]]
+name = "shared_dhat_multi"
+path = "src/bins/shared_dhat_multi.rs"
+required-features = ["shared-collector", "dhat-heap"]
+
 [[bench]]
 name = "sync_collector"
 path = "benches/sync_collector.rs"
 harness = false
+required-features = ["udp", "shared-collector"]
+
+[[bench]]
+name = "sync_collector_old"
+path = "benches/sync_collector_old.rs"
+harness = false
+required-features = ["udp", "tls-collector", "shared-collector"]
 
 [[bench]]
 name = "lookup_compare"
 path = "benches/lookup_compare.rs"
 harness = false
+required-features = ["__bench-internals"]
+
+[[bench]]
+name = "thread_local_compare"
+path = "benches/thread_local_compare.rs"
+harness = false
+required-features = ["udp", "tls-collector", "custom_writer", "shared-collector"]
+
+[[bench]]
+name = "collector_compare"
+path = "benches/collector_compare.rs"
+harness = false
+required-features = ["tls-collector", "shared-collector"]
+
+[[example]]
+name = "basic"
+required-features = ["udp"]
+
+[[example]]
+name = "counters"
+required-features = ["udp"]
+
+[[example]]
+name = "custom_writer"
+required-features = ["custom_writer"]
+
+[[example]]
+name = "gauges"
+required-features = ["udp"]
+
+[[example]]
+name = "histogram_macro"
+required-features = ["udp"]
+
+[[example]]
+name = "multithreaded"
+required-features = ["udp"]
+
+[[example]]
+name = "prepared_metric_shared"
+required-features = ["shared-collector"]
+
+[[example]]
+name = "shared_basic"
+required-features = ["shared-collector"]
+
+[[example]]
+name = "shared_runtime_retry"
+required-features = ["shared-collector"]
+
+[[example]]
+name = "sorted_tags"
+required-features = ["shared-collector"]
+
+[[example]]
+name = "sorted_tags_tls"
+required-features = ["tls-collector", "shared-collector"]
+
+[[example]]
+name = "sorted_tags_udp"
+required-features = ["udp"]
 
 [features]
 default = []
+custom_writer = []
+shared-collector = ["dep:dashmap", "dep:arc-swap"]
+tls-collector = ["dep:thread_local", "dep:hashbrown", "dep:parking_lot"]
+udp = ["dep:rustix", "dep:libc"]
 
-dhat-heap = ["dep:dhat"]    # if you are doing heap profiling
+# For profiling
+dhat-heap = ["dep:dhat"]
 allocationcounter = ["dep:allocation-counter"]
+__bench-internals = []

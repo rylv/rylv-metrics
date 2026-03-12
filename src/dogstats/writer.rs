@@ -6,7 +6,7 @@ use std::os::fd::AsFd;
 use std::io::IoSlice;
 use std::net::{SocketAddr, UdpSocket};
 
-use crate::{MetricResult, StatsWriterType};
+use crate::{MetricKind, MetricResult, StatsWriterType};
 
 // Apple-specific imports for sendmmsg_x
 use std::mem::transmute;
@@ -70,11 +70,7 @@ pub struct UdpSocketWriter {
 
 impl Writer for UdpSocketWriter {
     fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
-        let r = self.sock.send_to(buf, self.destination_addr);
-        if let Err(ref err) = r {
-            tracing::warn!("UDP send error: {err}");
-        }
-        r
+        self.sock.send_to(buf, self.destination_addr)
     }
 
     #[cfg(target_os = "linux")]
@@ -131,7 +127,11 @@ impl Writer for UdpSocketWriter {
 /// to add custom formatting/batching logic.
 pub trait StatsWriterTrait {
     /// Returns whether metrics are copied to an internal buffer before sending.
+    /// If the return is false, then this library allocate space to keep it safe
+    /// if the return is true, then this library can pass reference to stack values
+    /// This method is probably the most polemic hint in this project, needs to be improved.
     fn metric_copied(&self) -> bool;
+
     /// Writes metrics to the underlying writer.
     ///
     /// # Errors
@@ -141,7 +141,7 @@ pub trait StatsWriterTrait {
         metrics: &[&str],
         tags: &str,
         value: &str,
-        metric_type: &str,
+        metric_type: MetricKind,
     ) -> MetricResult<()>;
 
     /// Flushes the writer.
@@ -159,24 +159,22 @@ pub struct StatsWriterHolder {
 }
 
 impl StatsWriterHolder {
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new<T: Writer + 'static>(
         writer: T,
         writer_type: StatsWriterType,
-        stats_prefix: String,
         max_udp_packet_size: u16,
         max_udp_batch_size: u32,
     ) -> Self {
         let stats_writer = match writer_type {
-            StatsWriterType::Simple => Box::new(StatsWriterSimple::new(
-                writer,
-                stats_prefix,
-                max_udp_packet_size,
-            )) as Box<dyn StatsWriterTrait>,
+            StatsWriterType::Simple => {
+                Box::new(StatsWriterSimple::new(writer, max_udp_packet_size))
+                    as Box<dyn StatsWriterTrait>
+            }
 
             #[cfg(target_os = "linux")]
             StatsWriterType::LinuxBatch => Box::new(StatsWriterLinux::new(
                 writer,
-                stats_prefix,
                 max_udp_batch_size,
                 max_udp_packet_size,
             )) as Box<dyn StatsWriterTrait>,
@@ -184,11 +182,11 @@ impl StatsWriterHolder {
             #[cfg(target_vendor = "apple")]
             StatsWriterType::AppleBatch => Box::new(StatsWriterApple::new(
                 writer,
-                stats_prefix,
                 max_udp_batch_size,
                 max_udp_packet_size,
             )) as Box<dyn StatsWriterTrait>,
 
+            #[cfg(feature = "custom_writer")]
             StatsWriterType::Custom(writer) => writer,
         };
 
@@ -224,7 +222,7 @@ impl StatsWriterTrait for StatsGuard<'_> {
         metrics: &[&'data str],
         tags: &'data str,
         value: &'data str,
-        metric_type: &'data str,
+        metric_type: MetricKind,
     ) -> MetricResult<()> {
         self.writer.write(metrics, tags, value, metric_type)
     }
@@ -242,7 +240,6 @@ impl StatsWriterTrait for StatsGuard<'_> {
 pub struct StatsWriterLinux<T> {
     max_udp_packet_size: u16,
     writer: T,
-    stats_prefix: String,
 
     // current state
     queued_transmits: Vec<super::writer_utils::Transmit<'static>>,
@@ -255,17 +252,11 @@ pub struct StatsWriterLinux<T> {
 
 #[cfg(target_os = "linux")]
 impl<T: Writer> StatsWriterLinux<T> {
-    pub fn new(
-        writer: T,
-        stats_prefix: String,
-        max_udp_batch_size: u32,
-        max_udp_packet_size: u16,
-    ) -> Self {
+    pub fn new(writer: T, max_udp_batch_size: u32, max_udp_packet_size: u16) -> Self {
         let max_udp_batch_size = max_udp_batch_size as usize;
         Self {
             max_udp_packet_size,
             writer,
-            stats_prefix,
 
             queued_transmits: Vec::with_capacity(max_udp_batch_size),
             current_transmit: super::writer_utils::Transmit::new(max_udp_packet_size),
@@ -335,18 +326,17 @@ impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
         metrics: &[&str],
         tags: &str,
         value: &str,
-        metric_type: &str,
+        metric_type: MetricKind,
     ) -> MetricResult<()> {
+        let metric_type = metric_str(metric_type);
+
         // Manually build this line
         // format!("{}:{}|{}|#{}\n", metric, value, metric_type, tags);
-        let metric_len = metric_len(
-            self.stats_prefix.as_str(),
-            metrics,
-            tags,
-            value,
-            metric_type,
-        );
+        let metric_len = metric_len(metrics, tags, value, metric_type);
 
+        // SAFETY: this value is not copied in this method (false in return of metric_copied method), so in
+        // caller side must allocate and retain the correct value with a lifetime greater than the execution
+        // of this method because here we only use a reference.
         let (metrics, tags, value, metric_type): (
             &[&'static str],
             &'static str,
@@ -360,7 +350,6 @@ impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
                 transmute::<&str, &str>(metric_type),
             )
         };
-        let stats_prefix: &'static str = unsafe { transmute(self.stats_prefix.as_str()) };
 
         if metric_len > self.max_udp_packet_size as usize {
             return Err(format!("Metric is larger than {}", self.max_udp_packet_size).into());
@@ -370,9 +359,6 @@ impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
         if !self.current_transmit.enough_space_for(metric_len as u16) {
             self.queue_current_transmit();
         }
-
-        self.current_transmit
-            .push(IoSlice::new(stats_prefix.as_bytes()));
 
         for metric in metrics {
             self.current_transmit.push(IoSlice::new(metric.as_bytes()));
@@ -390,7 +376,6 @@ impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
         self.current_transmit.push(IoSlice::new(b"\n"));
 
         if self.queued_transmits.len() == self.queued_transmits.capacity() {
-            tracing::warn!("queued transmits len: {}", self.queued_transmits.len());
             self.flush_queued_transmits()?;
         }
         Ok(())
@@ -413,7 +398,6 @@ impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
 pub struct StatsWriterApple<T> {
     max_udp_packet_size: u16,
     writer: T,
-    stats_prefix: String,
 
     // Used in processing time
     // This way we can reuse the same transmit multiples times using 'static lifetime
@@ -432,10 +416,10 @@ pub struct StatsWriterApple<T> {
 }
 
 #[inline]
-fn metric_len(prefix: &str, metrics: &[&str], tags: &str, value: &str, metric_type: &str) -> usize {
+fn metric_len(metrics: &[&str], tags: &str, value: &str, metric_type: &str) -> usize {
     // format!("{}:{}|{}\n", metric, value, metric_type) when tags is empty
     // format!("{}:{}|{}|#{}\n", metric, value, metric_type, tags) when tags is not empty
-    let mut metric_len = prefix.len() + value.len() + metric_type.len() + tags.len() + 3; // ':' + '|' + '\n'
+    let mut metric_len = value.len() + metric_type.len() + tags.len() + 3; // ':' + '|' + '\n'
 
     if !tags.is_empty() {
         metric_len += 2; // '|#'
@@ -449,17 +433,11 @@ fn metric_len(prefix: &str, metrics: &[&str], tags: &str, value: &str, metric_ty
 
 #[cfg(target_vendor = "apple")]
 impl<T: Writer> StatsWriterApple<T> {
-    pub fn new(
-        writer: T,
-        stats_prefix: String,
-        max_udp_batch_size: u32,
-        max_udp_packet_size: u16,
-    ) -> Self {
+    pub fn new(writer: T, max_udp_batch_size: u32, max_udp_packet_size: u16) -> Self {
         let max_udp_batch_size = max_udp_batch_size as usize;
         Self {
             max_udp_packet_size,
             writer,
-            stats_prefix,
             queued_transmits: Vec::with_capacity(max_udp_batch_size),
             pool_transmits: Vec::with_capacity(max_udp_batch_size),
             tmp_mmsghdrs: Vec::with_capacity(max_udp_batch_size),
@@ -545,6 +523,13 @@ impl<T: Writer> StatsWriterApple<T> {
     }
 }
 
+const fn metric_str(metric_type: MetricKind) -> &'static str {
+    match metric_type {
+        MetricKind::Count => "c",
+        MetricKind::Gauge => "g",
+    }
+}
+
 #[cfg(target_vendor = "apple")]
 impl<T: Writer> StatsWriterTrait for StatsWriterApple<T> {
     fn metric_copied(&self) -> bool {
@@ -556,25 +541,21 @@ impl<T: Writer> StatsWriterTrait for StatsWriterApple<T> {
         metrics: &[&'data str],
         tags: &'data str,
         value: &'data str,
-        metric_type: &'data str,
+        metric_type: MetricKind,
     ) -> MetricResult<()> {
+        // SAFETY: this value is not copied in this method (false in return of metric_copied method), so in
+        // caller side must allocate and retain the correct value with a lifetime greater than the execution
+        // of this method because here we only use a reference.
         let (metrics, tags, value, metric_type) = unsafe {
             (
                 transmute::<&[&str], &[&str]>(metrics),
                 transmute::<&str, &str>(tags),
                 transmute::<&str, &str>(value),
-                transmute::<&str, &str>(metric_type),
+                transmute::<&str, &str>(metric_str(metric_type)),
             )
         };
-        let stats_prefix: &'static str = unsafe { transmute(self.stats_prefix.as_str()) };
 
-        let metric_len = metric_len(
-            self.stats_prefix.as_str(),
-            metrics,
-            tags,
-            value,
-            metric_type,
-        );
+        let metric_len = metric_len(metrics, tags, value, metric_type);
 
         if metric_len > self.max_udp_packet_size as usize {
             return Err(format!("Metric is larger than {}", self.max_udp_packet_size).into());
@@ -585,8 +566,6 @@ impl<T: Writer> StatsWriterTrait for StatsWriterApple<T> {
             self.queue_current_transmit();
         }
 
-        self.current_transmit
-            .push(IoSlice::new(stats_prefix.as_bytes()));
         for metric in metrics {
             self.current_transmit.push(IoSlice::new(metric.as_bytes()));
         }
@@ -625,16 +604,14 @@ impl<T: Writer> StatsWriterTrait for StatsWriterApple<T> {
 pub struct StatsWriterSimple<T> {
     max_udp_packet_size: u16,
     writer: T,
-    stats_prefix: String,
     current_transmit: String,
 }
 
 impl<T: Writer> StatsWriterSimple<T> {
-    pub fn new(writer: T, stats_prefix: String, max_udp_packet_size: u16) -> Self {
+    pub fn new(writer: T, max_udp_packet_size: u16) -> Self {
         Self {
             max_udp_packet_size,
             writer,
-            stats_prefix,
             current_transmit: String::with_capacity(max_udp_packet_size as usize),
         }
     }
@@ -660,16 +637,12 @@ impl<T: Writer> StatsWriterTrait for StatsWriterSimple<T> {
         metrics: &[&'data str],
         tags: &'data str,
         value: &'data str,
-        metric_type: &'data str,
+        metric_type: MetricKind,
     ) -> MetricResult<()> {
+        let metric_type = metric_str(metric_type);
+
         // Calculate the metric length
-        let metric_len = metric_len(
-            self.stats_prefix.as_str(),
-            metrics,
-            tags,
-            value,
-            metric_type,
-        );
+        let metric_len = metric_len(metrics, tags, value, metric_type);
 
         if metric_len > self.max_udp_packet_size as usize {
             return Err(format!("Metric is larger than {}", self.max_udp_packet_size).into());
@@ -681,7 +654,6 @@ impl<T: Writer> StatsWriterTrait for StatsWriterSimple<T> {
         }
 
         // Build the metric string
-        self.current_transmit.push_str(self.stats_prefix.as_str());
         for metric in metrics {
             self.current_transmit.push_str(metric);
         }

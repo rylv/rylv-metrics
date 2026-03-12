@@ -3,7 +3,8 @@
 //! Run with: `cargo run --example multithreaded`
 
 use rylv_metrics::{
-    count, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, StatsWriterType,
+    count, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SharedCollector,
+    SharedCollectorOptions, StatsWriterType,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,16 +14,20 @@ fn main() {
         max_udp_packet_size: 1432,
         max_udp_batch_size: 10,
         flush_interval: Duration::from_secs(10),
-        stats_prefix: "myapp.".to_string(),
         writer_type: StatsWriterType::Simple,
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
+    };
+    let inner_options = SharedCollectorOptions {
+        stats_prefix: "myapp.".to_string(),
+        ..Default::default()
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = "127.0.0.1:8125".parse().unwrap();
-    let collector = Arc::new(MetricCollector::new(bind_addr, datadog_addr, options));
+    let inner = SharedCollector::new(inner_options);
+    let collector = Arc::new(
+        MetricCollector::new(bind_addr, datadog_addr, options, inner)
+            .expect("failed to create collector"),
+    );
 
     let mut handles = Vec::new();
 
@@ -52,10 +57,10 @@ fn main() {
         handle.join().unwrap();
     }
 
-    // shutdown() requires ownership — unwrap the Arc
+    // Dropping requires ownership — unwrap the Arc
     // (only succeeds when no other Arc references remain)
     match Arc::try_unwrap(collector) {
-        Ok(c) => c.shutdown(),
+        Ok(c) => drop(c),
         Err(_) => eprintln!("Warning: other Arc references still alive, cannot shutdown cleanly"),
     }
 

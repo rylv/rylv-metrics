@@ -1,21 +1,40 @@
-use std::{
-    borrow::Cow,
-    cmp::Ordering,
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::{borrow::Cow, cmp::Ordering, sync::Arc};
 
-use crate::dogstats::aggregator::Aggregator;
+#[cfg(feature = "shared-collector")]
+pub use aggregator::Aggregator;
 
 mod aggregator;
 pub mod collector;
+#[cfg(feature = "udp")]
+mod collector_udp;
+mod histogram_config;
+#[cfg(feature = "udp")]
 mod job;
 pub mod macros;
+#[cfg(feature = "udp")]
 mod net;
+mod slice_utils;
+mod sorted_tags;
+#[cfg(feature = "udp")]
 pub mod writer;
+#[cfg(feature = "udp")]
 mod writer_utils;
-
 pub use aggregator::SigFig;
+#[cfg(feature = "__bench-internals")]
 pub use aggregator::{AggregatorEntryKey, LookupKey};
+pub use collector::DrainMetricCollectorTrait;
+pub use collector::MetricCollectorTrait;
+pub use collector::{MetricFrameRef, MetricKind, MetricSuffix};
+#[cfg(feature = "shared-collector")]
+pub use collector::{SharedCollector, SharedCollectorOptions};
+#[cfg(feature = "tls-collector")]
+pub use collector::{TLSCollector, TLSCollectorOptions};
+#[cfg(feature = "udp")]
+pub use collector_udp::{
+    MetricCollector, MetricCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
+};
+pub use histogram_config::{Bounds, HistogramBaseMetric, HistogramConfig};
+pub use sorted_tags::{PreparedMetric, SortedTags};
 
 /// A flexible string type that can hold static references, borrowed references, or owned values.
 /// Used for metric names and tags.
@@ -45,16 +64,6 @@ impl RylvStr<'_> {
     #[must_use]
     pub const fn from_static(s: &'static str) -> RylvStr<'static> {
         RylvStr::Static(s)
-    }
-
-    /// Converts this value into a `Cow<'static, str>`.
-    #[must_use]
-    pub fn to_cow(&self) -> Cow<'static, str> {
-        match self {
-            RylvStr::Static(s) => Cow::Borrowed(s),
-            RylvStr::Borrowed(s) => Cow::Owned((*s).to_owned()),
-            RylvStr::Owned(s) => Cow::Owned(s.as_ref().to_owned()),
-        }
     }
 }
 
@@ -111,68 +120,5 @@ impl<'a> From<Cow<'a, str>> for RylvStr<'a> {
             Cow::Borrowed(s) => RylvStr::Borrowed(s),
             Cow::Owned(s) => RylvStr::Owned(Arc::from(s)),
         }
-    }
-}
-
-#[derive(Hash, Eq, PartialEq, Debug)]
-pub struct Tags {
-    pub tags: Vec<Cow<'static, str>>,
-
-    // TODO: check if needed this and can be replaced with iovec with separators with self reference
-    pub joined_tags: Cow<'static, str>,
-}
-
-#[derive(Copy, Clone)]
-pub enum MetricType {
-    Count,
-    Gauge,
-}
-
-pub struct GaugeState {
-    pub sum: AtomicU64,
-    pub count: AtomicU64,
-}
-
-pub fn materialize_tags(tags: &[RylvStr<'_>]) -> Tags {
-    if tags.is_empty() {
-        return Tags {
-            tags: Vec::new(),
-            joined_tags: Cow::Borrowed(""),
-        };
-    }
-
-    if tags.len() == 1 {
-        let tag = tags[0].to_cow();
-        return Tags {
-            joined_tags: tag.clone(),
-            tags: vec![tag],
-        };
-    }
-
-    let mut vec = Vec::with_capacity(tags.len());
-    let mut tags_len_bytes = 0;
-    for tag in tags {
-        let cow_tag = tag.to_cow();
-        tags_len_bytes += cow_tag.len();
-        vec.push(cow_tag);
-    }
-
-    let vec_len = vec.len();
-    let joined_tags_len = tags_len_bytes + vec_len - 1;
-    let mut buffer = String::with_capacity(joined_tags_len);
-
-    let mut iter = vec.iter();
-    if let Some(tag) = iter.next() {
-        buffer.push_str(tag.as_ref());
-    }
-
-    for tag in iter {
-        buffer.push(',');
-        buffer.push_str(tag.as_ref());
-    }
-
-    Tags {
-        tags: vec,
-        joined_tags: Cow::Owned(buffer),
     }
 }

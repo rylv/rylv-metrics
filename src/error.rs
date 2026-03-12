@@ -1,4 +1,5 @@
 use hdrhistogram::errors::{CreationError, RecordError};
+#[cfg(feature = "udp")]
 use rustix::io::Errno;
 use thiserror::Error;
 
@@ -14,6 +15,7 @@ pub enum MetricsError {
     StdIo(#[from] std::io::Error),
 
     /// A low-level system errno.
+    #[cfg(feature = "udp")]
     #[error("Errno error: {0}")]
     Errno(#[from] Errno),
 

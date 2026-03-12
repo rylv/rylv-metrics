@@ -23,20 +23,22 @@
 /// # Examples
 ///
 /// ```
-/// use rylv_metrics::{histogram, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+/// # #[cfg(feature = "udp")] {
+/// use rylv_metrics::{
+///     histogram, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
+///     SharedCollector, StatsWriterType,
+/// };
 /// use std::time::Duration;
 ///
 /// let options = MetricCollectorOptions {
 ///     max_udp_packet_size: 1500,
 ///     max_udp_batch_size: 100,
 ///     flush_interval: Duration::from_millis(100),
-///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
-///     histogram_configs: std::collections::HashMap::new(),
-///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
-///     hasher_builder: std::hash::RandomState::new(),
+///     ..Default::default()
 /// };
-/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);
+/// let inner = SharedCollector::default();
+/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options, inner).unwrap();
 ///
 /// // With static string tags
 /// histogram!(collector, "request.duration", 100, "endpoint:api", "method:get");
@@ -46,6 +48,7 @@
 ///
 /// // With no tags
 /// histogram!(collector, "memory.usage", 512);
+/// # }
 /// ```
 #[macro_export]
 macro_rules! histogram {
@@ -92,23 +95,26 @@ macro_rules! histogram {
 /// # Examples
 ///
 /// ```
-/// use rylv_metrics::{count, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+/// # #[cfg(feature = "udp")] {
+/// use rylv_metrics::{
+///     count, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
+///     SharedCollector, StatsWriterType,
+/// };
 /// use std::time::Duration;
 ///
 /// let options = MetricCollectorOptions {
 ///     max_udp_packet_size: 1500,
 ///     max_udp_batch_size: 100,
 ///     flush_interval: Duration::from_millis(100),
-///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
-///     histogram_configs: std::collections::HashMap::new(),
-///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
-///     hasher_builder: std::hash::RandomState::new(),
+///     ..Default::default()
 /// };
-/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);
+/// let inner = SharedCollector::default();
+/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options, inner).unwrap();
 ///
 /// count!(collector, "requests.total", "endpoint:api", "method:get");
 /// count!(collector, "errors.total");
+/// # }
 /// ```
 #[macro_export]
 macro_rules! count {
@@ -155,23 +161,26 @@ macro_rules! count {
 /// # Examples
 ///
 /// ```
-/// use rylv_metrics::{count_add, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+/// # #[cfg(feature = "udp")] {
+/// use rylv_metrics::{
+///     count_add, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
+///     SharedCollector, StatsWriterType,
+/// };
 /// use std::time::Duration;
 ///
 /// let options = MetricCollectorOptions {
 ///     max_udp_packet_size: 1500,
 ///     max_udp_batch_size: 100,
 ///     flush_interval: Duration::from_millis(100),
-///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
-///     histogram_configs: std::collections::HashMap::new(),
-///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
-///     hasher_builder: std::hash::RandomState::new(),
+///     ..Default::default()
 /// };
-/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);
+/// let inner = SharedCollector::default();
+/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options, inner).unwrap();
 ///
 /// count_add!(collector, "bytes.sent", 1024, "endpoint:api");
 /// count_add!(collector, "events.total", 5);
+/// # }
 /// ```
 #[macro_export]
 macro_rules! count_add {
@@ -218,23 +227,26 @@ macro_rules! count_add {
 /// # Examples
 ///
 /// ```
-/// use rylv_metrics::{gauge, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, StatsWriterType};
+/// # #[cfg(feature = "udp")] {
+/// use rylv_metrics::{
+///     gauge, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
+///     SharedCollector, SharedCollectorOptions, StatsWriterType,
+/// };
 /// use std::time::Duration;
 ///
 /// let options = MetricCollectorOptions {
 ///     max_udp_packet_size: 1500,
 ///     max_udp_batch_size: 100,
 ///     flush_interval: Duration::from_millis(100),
-///     stats_prefix: String::new(),
 ///     writer_type: StatsWriterType::Simple,
-///     histogram_configs: std::collections::HashMap::new(),
-///     default_histogram_config: rylv_metrics::HistogramConfig::default(),
-///     hasher_builder: std::hash::RandomState::new(),
+///     ..Default::default()
 /// };
-/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options);
+/// let inner = SharedCollector::default();
+/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options, inner).unwrap();
 ///
 /// gauge!(collector, "connections.active", 42, "pool:main");
 /// gauge!(collector, "memory.usage", 512);
+/// # }
 /// ```
 #[macro_export]
 macro_rules! gauge {
@@ -254,4 +266,89 @@ macro_rules! gauge {
             $collector.gauge($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
+}
+
+/// Macro for building reusable [`SortedTags`](crate::SortedTags) bound to a collector's hasher.
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "shared-collector")]
+/// # {
+/// use rylv_metrics::{sorted_tags, MetricCollectorTrait, SharedCollector, SharedCollectorOptions};
+///
+/// let collector = SharedCollector::default();
+/// let tags = sorted_tags!(collector, "env:prod", "service:web", "route:/users");
+/// assert_eq!(tags.joined_tags(), "env:prod,route:/users,service:web");
+/// # }
+/// ```
+#[macro_export]
+macro_rules! sorted_tags {
+    ($collector:expr, $($tag:expr),* $(,)?) => {{
+        $collector.prepare_sorted_tags([$($crate::RylvStr::from($tag)),*])
+    }};
+}
+
+/// Macro for recording histogram values with pre-sorted tags.
+#[macro_export]
+macro_rules! histogram_sorted {
+    ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
+        $collector.histogram_sorted($crate::RylvStr::from($metric), $value, $tags)
+    }};
+}
+
+/// Macro for incrementing a counter by one with pre-sorted tags.
+#[macro_export]
+macro_rules! count_sorted {
+    ($collector:expr, $metric:expr, $tags:expr) => {{
+        $collector.count_sorted($crate::RylvStr::from($metric), $tags)
+    }};
+}
+
+/// Macro for incrementing a counter by value with pre-sorted tags.
+#[macro_export]
+macro_rules! count_add_sorted {
+    ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
+        $collector.count_add_sorted($crate::RylvStr::from($metric), $value, $tags)
+    }};
+}
+
+/// Macro for recording a gauge value with pre-sorted tags.
+#[macro_export]
+macro_rules! gauge_sorted {
+    ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
+        $collector.gauge_sorted($crate::RylvStr::from($metric), $value, $tags)
+    }};
+}
+
+/// Macro for recording histogram values with a prepared metric key.
+#[macro_export]
+macro_rules! histogram_prepared {
+    ($collector:expr, $prepared:expr, $value:expr) => {{
+        $collector.histogram_prepared($prepared, $value)
+    }};
+}
+
+/// Macro for incrementing a counter by one with a prepared metric key.
+#[macro_export]
+macro_rules! count_prepared {
+    ($collector:expr, $prepared:expr) => {{
+        $collector.count_prepared($prepared)
+    }};
+}
+
+/// Macro for incrementing a counter by value with a prepared metric key.
+#[macro_export]
+macro_rules! count_add_prepared {
+    ($collector:expr, $prepared:expr, $value:expr) => {{
+        $collector.count_add_prepared($prepared, $value)
+    }};
+}
+
+/// Macro for recording a gauge value with a prepared metric key.
+#[macro_export]
+macro_rules! gauge_prepared {
+    ($collector:expr, $prepared:expr, $value:expr) => {{
+        $collector.gauge_prepared($prepared, $value)
+    }};
 }

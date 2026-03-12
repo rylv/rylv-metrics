@@ -12,7 +12,10 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use rylv_metrics::{MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr};
+//! # #[cfg(feature = "udp")] {
+//! use rylv_metrics::{
+//!     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SharedCollector,
+//! };
 //! use rylv_metrics::{histogram, count, count_add, gauge};
 //! use std::net::SocketAddr;
 //! use std::time::Duration;
@@ -21,16 +24,14 @@
 //!     max_udp_packet_size: 1432,
 //!     max_udp_batch_size: 10,
 //!     flush_interval: Duration::from_secs(10),
-//!     stats_prefix: "myapp.".to_string(),
 //!     writer_type: rylv_metrics::DEFAULT_STATS_WRITER_TYPE,
-//!     histogram_configs: Default::default(),
-//!     default_histogram_config: rylv_metrics::HistogramConfig::default(),
-//!     hasher_builder: std::hash::RandomState::new(),
+//!     ..Default::default()
 //! };
 //!
 //! let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
 //! let dst_addr: SocketAddr = "127.0.0.1:8125".parse().unwrap();
-//! let collector = MetricCollector::new(bind_addr, dst_addr, options);
+//! let inner = SharedCollector::default();
+//! let collector = MetricCollector::new(bind_addr, dst_addr, options, inner).unwrap();
 //!
 //! // Direct API — use RylvStr::from_static() for zero-copy aggregation keys
 //! collector.histogram(RylvStr::from_static("request.latency"), 42, &mut [RylvStr::from_static("endpoint:api")]);
@@ -43,6 +44,7 @@
 //! count!(collector, "request.count", "endpoint:api");
 //! count_add!(collector, "bytes.sent", 1024, "endpoint:api");
 //! gauge!(collector, "connections.active", 100, "pool:main");
+//! # }
 //! ```
 
 // #![deny(unsafe_code)]
@@ -55,7 +57,8 @@
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
 // Disabled because it reports false duplicate-crate errors from dev-dependencies
-//#![warn(clippy::cargo)]
+#![warn(clippy::cargo)]
+#![allow(clippy::multiple_crate_versions)]
 #![warn(missing_docs)]
 #![warn(clippy::missing_errors_doc)]
 #![warn(clippy::missing_panics_doc)]
@@ -68,12 +71,21 @@
 mod dogstats;
 mod error;
 
-pub use dogstats::collector::{
-    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
-    StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
-};
+#[cfg(feature = "custom_writer")]
 pub use dogstats::writer::StatsWriterTrait;
+pub use dogstats::{
+    Bounds, DrainMetricCollectorTrait, HistogramBaseMetric, HistogramConfig, MetricCollectorTrait,
+    MetricFrameRef, MetricKind, MetricSuffix, PreparedMetric, SortedTags,
+};
+#[cfg(feature = "udp")]
+pub use dogstats::{
+    MetricCollector, MetricCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
+};
 pub use dogstats::{RylvStr, SigFig};
+#[cfg(feature = "shared-collector")]
+pub use dogstats::{SharedCollector, SharedCollectorOptions};
+#[cfg(feature = "tls-collector")]
+pub use dogstats::{TLSCollector, TLSCollectorOptions};
 pub use error::MetricsError;
 
 /// Result type for metric operations.
@@ -84,59 +96,41 @@ pub type MetricResult<T> = Result<T, MetricsError>;
 /// Default hasher builder used by metric aggregation maps.
 pub(crate) type DefaultMetricHasher = std::hash::RandomState;
 
-/// Internal exports used by benchmarks to measure hot paths directly.
+/// Internal benchmark hook for measuring lookup-key comparison behavior.
+#[cfg(feature = "__bench-internals")]
 #[doc(hidden)]
-pub mod __bench {
-    use crate::dogstats::{materialize_tags, AggregatorEntryKey, LookupKey, RylvStr};
-    use std::borrow::Cow;
+#[must_use]
+pub fn benchmark_lookup_compare(
+    metric: &str,
+    lookup_tags: &[&str],
+    entry_tags: &[&str],
+    hash: u64,
+) -> bool {
+    use crate::dogstats::{AggregatorEntryKey, LookupKey};
 
-    /// Fixture that benchmarks `LookupKey::compare` without exposing internal key types.
-    pub struct CompareFixture {
-        metric: RylvStr<'static>,
-        tags: Box<[RylvStr<'static>]>,
-        hash: u64,
-        entry: AggregatorEntryKey,
-    }
+    let lookup_tags_owned: Box<[RylvStr<'static>]> = lookup_tags
+        .iter()
+        .map(|tag| RylvStr::from((*tag).to_owned()))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let entry_tags_owned: Vec<RylvStr<'static>> = entry_tags
+        .iter()
+        .map(|tag| RylvStr::from((*tag).to_owned()))
+        .collect();
 
-    impl CompareFixture {
-        /// Creates a reusable compare fixture from lookup and entry tag sets.
-        #[must_use]
-        pub fn new(metric: &str, lookup_tags: &[&str], entry_tags: &[&str], hash: u64) -> Self {
-            let metric_owned = RylvStr::from(metric.to_owned());
-            let lookup_tags_owned: Box<[RylvStr<'static>]> = lookup_tags
-                .iter()
-                .map(|tag| RylvStr::from((*tag).to_owned()))
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
-            let entry_tags_owned: Vec<RylvStr<'static>> = entry_tags
-                .iter()
-                .map(|tag| RylvStr::from((*tag).to_owned()))
-                .collect();
+    let entry = AggregatorEntryKey {
+        metric: RylvStr::from(metric.to_owned()),
+        tags: SortedTags::new(entry_tags_owned, &std::hash::RandomState::default()),
+        hash,
+        fingerprint: 0,
+        id: 1,
+    };
 
-            let entry = AggregatorEntryKey {
-                metric: Cow::Owned(metric.to_owned()),
-                tags: materialize_tags(&entry_tags_owned),
-                hash,
-                id: 1,
-            };
-
-            Self {
-                metric: metric_owned,
-                tags: lookup_tags_owned,
-                hash,
-                entry,
-            }
-        }
-
-        /// Runs one `LookupKey::compare` operation against the prepared entry.
-        #[must_use]
-        pub fn compare(&self) -> bool {
-            let lookup = LookupKey {
-                metric: self.metric.clone(),
-                tags: &self.tags,
-                hash: self.hash,
-            };
-            lookup.compare(&self.entry)
-        }
-    }
+    let lookup = LookupKey {
+        metric: RylvStr::from(metric.to_owned()),
+        tags: &lookup_tags_owned,
+        tags_hash: 0,
+        hash,
+    };
+    lookup.compare(&entry)
 }

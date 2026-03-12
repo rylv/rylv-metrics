@@ -5,7 +5,7 @@ clean:
 .PHONY: clippy
 clippy:
 	@echo "=> Executing cargo clippy"
-	@cargo clippy --color auto --all-targets -- -D warnings
+	@cargo clippy --all-features --color auto --all-targets -- -D warnings
 
 .PHONY: fmt
 fmt:
@@ -22,7 +22,7 @@ prepare-commit:
 	@echo "=> Preparing commit"
 	@cargo fmt --all
 	@cargo clippy --all-targets --all-features -- -D warnings
-	@cargo test
+	@cargo test --all-features
 	@git add -A
 	@MSG_FINAL="$(MSG)"; \
 	if [ -z "$$MSG_FINAL" ]; then \
@@ -55,41 +55,45 @@ build:
 
 .PHONY: docker-build
 docker-build:
-	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 cargo build
+	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 cargo build --all-features
 
 .PHONY: docker-check
 docker-check:
-	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 cargo check
+	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 cargo check --all-features
 
 .PHONY: docker-test
 docker-test:
-	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 cargo test
+	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 cargo test --all-features
 
 .PHONY: coverage
 coverage:
-	cargo llvm-cov --workspace --html
+	cargo llvm-cov --workspace --html --ignore-filename-regex 'bins/'
 	@echo "Coverage report generated at target/llvm-cov/html/index.html"
 
 .PHONY: coverage-open
 coverage-open:
-	cargo llvm-cov --workspace --open
+	cargo llvm-cov --workspace --open --ignore-filename-regex 'bins/'
 
 .PHONY: coverage-all
 coverage-all:
 	@echo "Running coverage with default features..."
-	cargo llvm-cov --workspace --html
+	cargo llvm-cov --workspace --html --ignore-filename-regex 'bins/'
 	@echo "Running coverage with no-default-features..."
-	cargo llvm-cov --no-default-features --workspace --html
+	cargo llvm-cov --no-default-features --workspace --html --ignore-filename-regex 'bins/'
 	@echo "All coverage reports generated at target/llvm-cov/html/index.html"
 
 .PHONY: docker-coverage
 docker-coverage:
-	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 sh -c "cargo install cargo-llvm-cov && cargo llvm-cov --workspace --html"
+	docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(PWD)/target-docker:/app/target -e CARGO_TARGET_DIR=/app/target -w /app rust:1.91.0 sh -c "cargo install cargo-llvm-cov && cargo llvm-cov --workspace --html --ignore-filename-regex 'bins/'"
 	@echo "Coverage report generated at target-docker/llvm-cov/html/index.html"
 
 .PHONY: bench
 bench:
 	RUSTFLAGS="-C force-frame-pointers=yes" cargo bench --bench sync_collector
+
+.PHONY: bench-shared
+bench-shared:
+	RUSTFLAGS="-C force-frame-pointers=yes" cargo bench --bench collector_compare --features "tls-collector shared-collector"
 
 .PHONY: bench-dhat
 bench-dhat:
@@ -104,11 +108,132 @@ bench-flamegraph:
 
 .PHONY: bench-samply
 bench-samply:
-	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp"
+
+# Sorted/Prepared profiling targets (Criterion filters)
+.PHONY: bench-samply-single-regular
+bench-samply-single-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_compare/count_add_regular_tags"
+
+.PHONY: bench-samply-single-sorted
+bench-samply-single-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_compare/count_add_sorted_tags"
+
+.PHONY: bench-samply-single-prepared
+bench-samply-single-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_compare/count_add_prepared_metric"
+
+.PHONY: bench-samply-parallel-udp-regular
+bench-samply-parallel-udp-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_parallel_compare/udp_regular_parallel"
+
+.PHONY: bench-samply-parallel-udp-sorted
+bench-samply-parallel-udp-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_parallel_compare/udp_sorted_parallel"
+
+.PHONY: bench-samply-parallel-udp-prepared
+bench-samply-parallel-udp-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_parallel_compare/udp_prepared_parallel"
+
+.PHONY: bench-samply-parallel-tls-regular
+bench-samply-parallel-tls-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_parallel_compare/tls_regular_parallel"
+
+.PHONY: bench-samply-parallel-tls-sorted
+bench-samply-parallel-tls-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_parallel_compare/tls_sorted_parallel"
+
+.PHONY: bench-samply-parallel-tls-prepared
+bench-samply-parallel-tls-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "sorted_tags_parallel_compare/tls_prepared_parallel"
+
+.PHONY: bench-samply-hist-single-regular
+bench-samply-hist-single-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_compare/histogram_regular_tags"
+
+.PHONY: bench-samply-hist-single-sorted
+bench-samply-hist-single-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_compare/histogram_sorted_tags"
+
+.PHONY: bench-samply-hist-single-prepared
+bench-samply-hist-single-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_compare/histogram_prepared_metric"
+
+.PHONY: bench-samply-hist-parallel-udp-regular
+bench-samply-hist-parallel-udp-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_parallel_compare/udp_regular_parallel"
+
+.PHONY: bench-samply-hist-parallel-udp-sorted
+bench-samply-hist-parallel-udp-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_parallel_compare/udp_sorted_parallel"
+
+.PHONY: bench-samply-hist-parallel-udp-prepared
+bench-samply-hist-parallel-udp-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_parallel_compare/udp_prepared_parallel"
+
+.PHONY: bench-samply-hist-parallel-tls-regular
+bench-samply-hist-parallel-tls-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_parallel_compare/tls_regular_parallel"
+
+.PHONY: bench-samply-hist-parallel-tls-sorted
+bench-samply-hist-parallel-tls-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_parallel_compare/tls_sorted_parallel"
+
+.PHONY: bench-samply-hist-parallel-tls-prepared
+bench-samply-hist-parallel-tls-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench thread_local_compare --features "udp-tls custom_writer" "histogram_sorted_parallel_compare/tls_prepared_parallel"
+
+.PHONY: bench-samply-sync-hist-single-regular
+bench-samply-sync-hist-single-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_single_compare/regular_tags"
+
+.PHONY: bench-samply-sync-hist-single-sorted
+bench-samply-sync-hist-single-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_single_compare/sorted_tags"
+
+.PHONY: bench-samply-sync-hist-single-prepared
+bench-samply-sync-hist-single-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_single_compare/prepared_metric"
+
+.PHONY: bench-samply-sync-hist-parallel-udp-regular
+bench-samply-sync-hist-parallel-udp-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_parallel_udp_compare/regular_parallel"
+
+.PHONY: bench-samply-sync-hist-parallel-udp-sorted
+bench-samply-sync-hist-parallel-udp-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_parallel_udp_compare/sorted_parallel"
+
+.PHONY: bench-samply-sync-hist-parallel-udp-prepared
+bench-samply-sync-hist-parallel-udp-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_parallel_udp_compare/prepared_parallel"
+
+.PHONY: bench-samply-sync-hist-parallel-tls-regular
+bench-samply-sync-hist-parallel-tls-regular:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_parallel_tls_compare/regular_parallel"
+
+.PHONY: bench-samply-sync-hist-parallel-tls-sorted
+bench-samply-sync-hist-parallel-tls-sorted:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_parallel_tls_compare/sorted_parallel"
+
+.PHONY: bench-samply-sync-hist-parallel-tls-prepared
+bench-samply-sync-hist-parallel-tls-prepared:
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp-tls" "sync_histogram_parallel_tls_compare/prepared_parallel"
 
 .PHONY: bench-heaptrack
 bench-heaptrack:
 	RUSTFLAGS="-C force-frame-pointers=yes" heaptrack ./target/release/deps/sync_collector-d96b58080677933f --bench
+
+.PHONY: main-dhat-single
+main-dhat-single:
+	RUST_BACKTRACE=1 cargo run --release --bin shared_dhat_single --features "shared-collector dhat-heap"
+	dhat-to-flamegraph dhat-heap.json > dhat.svg
+	firefox dhat.svg || open dhat.svg
+
+.PHONY: main-dhat-multi
+main-dhat-multi:
+	RUST_BACKTRACE=1 cargo run --release --bin shared_dhat_multi --features "shared-collector dhat-heap"
+	dhat-to-flamegraph dhat-heap.json > dhat.svg
+	firefox dhat.svg || open dhat.svg
 
 .PHONY: main-flamegraph
 main-flamegraph:
