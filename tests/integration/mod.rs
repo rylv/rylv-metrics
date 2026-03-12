@@ -10,3 +10,5 @@ mod shared_collector;
 mod sync_collector;
 #[cfg(feature = "tls-collector")]
 mod tls_hashbrown;
+#[cfg(all(feature = "udp", feature = "shared-collector"))]
+mod failure_scenarios;

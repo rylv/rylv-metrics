@@ -292,6 +292,71 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  bench:
+    name: Benchmark regression check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-bench-
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-bench-
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-bench-
+
+      - name: Install critcmp
+        run: cargo install critcmp --locked || true
+
+      - name: Checkout base branch
+        run: git fetch origin ${{ github.base_ref }} --depth=1
+
+      - name: Run benchmarks on base branch
+        run: |
+          git stash
+          git checkout FETCH_HEAD
+          cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
+          git checkout -
+
+      - name: Run benchmarks on PR branch
+        run: |
+          git stash pop || true
+          cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
+
+      - name: Compare benchmarks
+        run: |
+          critcmp base pr
+          # Fail if any benchmark regressed more than 15%
+          critcmp base pr --threshold 15 || {
+            echo "::warning::Benchmark regression detected (>15%). Review the comparison above."
+            exit 1
+          }
+
   fmt:
     name: Format check
     runs-on: ubuntu-latest

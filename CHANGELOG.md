@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `TLSCollector` — thread-local storage collector using `hashbrown::HashTable` and `parking_lot` for high-concurrency scenarios
+- `SharedCollector` drain API with `MetricFrameRef` borrowed iteration via `DrainMetricCollectorTrait`
+- `PreparedMetric` for pre-computed metric keys on hot paths
+- `SortedTags` for reusable pre-sorted tag sets that skip per-call sorting
+- `MetricCollector` now generic over any `DrainMetricCollectorTrait` inner collector
+- Batch UDP writers: `LinuxBatch` (sendmmsg) and `AppleBatch` (sendmsg_x)
+- Convenience macros: `histogram!`, `count!`, `count_add!`, `gauge!`
+- `HistogramConfig::with_count()`, `with_min()`, `with_avg()`, `with_max()` base metric toggles
+- `Bounds` for inclusive min/max histogram value clamping
+- Miri tests for `SharedCollector` and `TLSCollector` drain lifetime safety
+- Integration tests for failure scenarios: unreachable destination, mid-stream socket close, cardinality explosion, graceful shutdown under load
+- Automated release workflow (`.github/workflows/release.yml`) with tag-driven publish to crates.io and GitHub Releases
+- Benchmark regression detection in CI for pull requests (critcmp with 15% threshold)
+- `cargo check --all-features --all-targets` and `cargo test --all-features` CI steps
+- New benchmarks: `collector_compare`, `thread_local_compare`, `sync_collector`
+- New examples: `prepared_metric_shared`, `shared_basic`, `shared_runtime_retry`, `sorted_tags`, `sorted_tags_tls`, `sorted_tags_udp`
+
+### Changed
+- Reduced public API surface — cleaner re-exports from `lib.rs`
+- `StatsWriterTrait::write()` now takes `MetricKind` instead of `&str` for metric type
+- Miri CI now runs with `shared-collector` and `tls-collector` features enabled
+- SAFETY comments expanded for all `unsafe` blocks in drain and writer paths
+
+### Internal
+- Reorganized aggregator module structure (`aggregator/mod.rs`, `aggregator/shared.rs`)
+- Collector module split into `shared_collector.rs` and `tls_collector.rs`
+
 ## [0.2.1] - 2026-02-15
 
 ### Changed
