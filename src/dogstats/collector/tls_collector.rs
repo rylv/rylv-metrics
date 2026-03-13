@@ -206,6 +206,7 @@ where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
     /// Creates a hashbrown-based TLS collector from the provided options.
+    #[cold]
     #[must_use]
     pub fn new(options: TLSCollectorOptions<S>) -> Self {
         let ResolvedHistogramConfigs {
@@ -245,6 +246,7 @@ where
         })
     }
 
+    #[cold]
     fn flush_all_to_global(&self) -> GlobalAggregatorHb<S> {
         // Lock global only to swap the active generation with a fresh recycled one.
         let mut global_to_merge = {
@@ -282,14 +284,17 @@ where
         global_to_merge
     }
 
+    #[cold]
     fn recycle(&self, local: LocalAggregatorHb<S>) {
         self.recycled_local_aggregators.lock().push(local);
     }
 
+    #[cold]
     fn recycle_global(&self, global: GlobalAggregatorHb<S>) {
         self.recycled_global_aggregators.lock().push(global);
     }
 
+    #[cold]
     fn begin_drain(&self) -> TLSDrain<'_, S> {
         let global = self.flush_all_to_global();
         TLSDrain::new(self, global)
@@ -669,6 +674,7 @@ where
         self.record_gauge_sorted(metric, value, tags);
     }
 
+    #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
         tags: impl IntoIterator<Item = RylvStr<'a>>,
@@ -676,6 +682,7 @@ where
         SortedTags::new(tags, &self.hasher_builder)
     }
 
+    #[cold]
     fn prepare_metric(
         &self,
         metric: RylvStr<'_>,
@@ -746,6 +753,7 @@ where
         (*self).gauge_sorted(metric, value, tags);
     }
 
+    #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
         tags: impl IntoIterator<Item = RylvStr<'a>>,
@@ -753,6 +761,7 @@ where
         (*self).prepare_sorted_tags(tags)
     }
 
+    #[cold]
     fn prepare_metric(
         &self,
         metric: RylvStr<'_>,
@@ -783,6 +792,7 @@ where
     where
         Self: 'a;
 
+    #[cold]
     fn try_begin_drain(&self) -> Option<Self::Drain<'_>> {
         Some(self.begin_drain())
     }
@@ -797,6 +807,7 @@ where
     where
         Self: 'a;
 
+    #[cold]
     fn try_begin_drain(&self) -> Option<Self::Drain<'_>> {
         Some((*self).begin_drain())
     }
@@ -1224,6 +1235,7 @@ impl<S> Drop for TLSDrain<'_, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
+    #[cold]
     fn drop(&mut self) {
         self.count_iter = None;
         self.gauge_iter = None;

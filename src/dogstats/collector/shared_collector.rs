@@ -155,6 +155,7 @@ where
     S: BuildHasher + Clone,
 {
     /// Creates a shared in-memory collector from the provided options.
+    #[cold]
     #[must_use]
     pub fn new(options: SharedCollectorOptions<S>) -> Self {
         let hasher_builder = options.hasher_builder.clone();
@@ -183,6 +184,7 @@ where
         }
     }
 
+    #[cold]
     fn begin_drain(&self) -> Option<SharedDrain<'_, S>> {
         let mut pending = self.pending_to_process_aggregator.try_lock().ok()?;
         let alloc_agg = if let Some(alloc_agg) = pending.take() {
@@ -233,6 +235,7 @@ impl<S> Drop for SharedDrain<'_, S>
 where
     S: BuildHasher + Clone,
 {
+    #[cold]
     fn drop(&mut self) {
         // SAFETY: because we only add not mutable alias,
         // There is no order in drop issues here
@@ -744,6 +747,7 @@ where
     }
 }
 
+#[cold]
 pub fn drain_aggregator_frames<'a, S>(
     aggregator: &'a Aggregator<S>,
     prefix: &'a str,
@@ -834,6 +838,7 @@ where
         record_gauge_in_aggregator_sorted(&aggregator, metric, value, tags);
     }
 
+    #[cold]
     fn prepare_metric(&self, metric: RylvStr<'_>, tags: SortedTags<S>) -> PreparedMetric<S> {
         let metric = crate::dogstats::sorted_tags::to_static_metric(metric);
         let hash =
@@ -841,6 +846,7 @@ where
         PreparedMetric::new(metric, tags, hash)
     }
 
+    #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
         tags: impl IntoIterator<Item = RylvStr<'a>>,
@@ -916,6 +922,7 @@ where
         (*self).gauge_sorted(metric, value, tags);
     }
 
+    #[cold]
     fn prepare_metric(
         &self,
         metric: RylvStr<'_>,
@@ -924,6 +931,7 @@ where
         (*self).prepare_metric(metric, tags)
     }
 
+    #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
         tags: impl IntoIterator<Item = RylvStr<'a>>,
@@ -953,6 +961,7 @@ where
     where
         Self: 'a;
 
+    #[cold]
     fn try_begin_drain(&self) -> Option<Self::Drain<'_>> {
         (*self).begin_drain()
     }
@@ -967,6 +976,7 @@ where
     where
         Self: 'a;
 
+    #[cold]
     fn try_begin_drain(&self) -> Option<Self::Drain<'_>> {
         self.begin_drain()
     }

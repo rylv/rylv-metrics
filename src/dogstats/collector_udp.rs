@@ -113,6 +113,7 @@ where
     /// # Errors
     /// Returns an error if the UDP socket cannot be created or the runtime
     /// worker cannot be started successfully.
+    #[cold]
     pub fn new(
         bind_addr: SocketAddr,
         dst_addr: SocketAddr,
@@ -155,6 +156,7 @@ where
     MC: DrainMetricCollectorTrait + Send + Sync + 'static,
     MC::Hasher: BuildHasher + Clone + Send + Sync + 'static,
 {
+    #[cold]
     fn drop(&mut self) {
         drop(self.sender.take());
 
@@ -215,6 +217,7 @@ where
         self.inner.gauge_sorted(metric, value, tags);
     }
 
+    #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
         tags: impl IntoIterator<Item = RylvStr<'a>>,
@@ -222,6 +225,7 @@ where
         self.inner.prepare_sorted_tags(tags)
     }
 
+    #[cold]
     fn prepare_metric(
         &self,
         metric: RylvStr<'_>,

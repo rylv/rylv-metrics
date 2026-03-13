@@ -10,7 +10,9 @@ use std::sync::atomic::AtomicU64;
 
 impl<S: BuildHasher + Clone> Hash for AggregatorEntryKey<S> {
     fn hash<H: Hasher>(&self, _state: &mut H) {
-        unreachable!();
+        // SAFETY: DashMap uses the raw hash stored in `AggregatorEntryKey::hash`
+        // via `determine_shard`; this `Hash` impl is never called.
+        unsafe { std::hint::unreachable_unchecked() }
     }
 }
 
