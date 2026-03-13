@@ -1,3 +1,5 @@
+[![CI](https://github.com/rylv/rylv-metrics/actions/workflows/ci.yml/badge.svg)](https://github.com/rylv/rylv-metrics/actions/workflows/ci.yml)
+
 # rylv-metrics
 
 A high-performance DogStatsD metrics client for Rust with support for client-side aggregation.
