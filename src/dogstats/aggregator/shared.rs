@@ -42,8 +42,11 @@ where
         pool_id: usize,
         config: &ResolvedHistogramConfig,
     ) -> Option<HistogramWrapper> {
+        debug_assert!(pool_id < self.pool_histograms.len());
+        // SAFETY: pool_id is produced by `resolve_histogram_configs` which assigns
+        // sequential IDs matching `pool_histograms.len()`.
         if let Some(mut h) = unsafe { self.pool_histograms.get_unchecked(pool_id) }.pop() {
-            h.percentiles = config.percentiles();
+            h.percentiles = config.percentiles().clone();
             h.emit_base_metrics = config.emit_base_metrics();
             return Some(h);
         }
@@ -57,7 +60,7 @@ where
                 histogram: histo,
                 min: u64::MAX,
                 max: u64::MIN,
-                percentiles: config.percentiles(),
+                percentiles: config.percentiles().clone(),
                 emit_base_metrics: config.emit_base_metrics(),
             });
         }

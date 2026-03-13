@@ -12,10 +12,12 @@ pub struct Transmit<'data> {
 
 impl<'data> Transmit<'data> {
     pub fn new(max_udp_package_size: u16) -> Self {
-        // TODO: derive this capacity from expected datagram packing so we don't keep an
-        // arbitrary 1000-entry IoSlice allocation in production writer instances.
+        // A typical DogStatsD line is ~80-120 bytes and uses 4-5 IoSlice parts
+        // (metric, value, type, tags, newline). Estimate capacity from packet size.
+        let estimated_parts = (max_udp_package_size as usize / 80) * 5;
+        let capacity = estimated_parts.max(32);
         Self {
-            parts: Vec::with_capacity(1000),
+            parts: Vec::with_capacity(capacity),
             #[cfg(target_os = "linux")]
             ancilliary: rustix::net::SendAncillaryBuffer::default(),
             len: 0,
@@ -28,6 +30,10 @@ impl<'data> Transmit<'data> {
     }
 
     pub fn push(&mut self, part: IoSlice<'data>) {
+        debug_assert!(
+            u16::try_from(part.len()).is_ok(),
+            "IoSlice exceeds u16 capacity"
+        );
         #[allow(clippy::cast_possible_truncation)]
         {
             self.len += part.len() as u16;

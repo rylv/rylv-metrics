@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 /// Fast secondary fingerprint over metric + joined tags.
 #[must_use]
+#[inline]
 pub fn metric_tags_fingerprint(metric: &str, joined_tags: &str) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0100_0000_01b3;
@@ -27,6 +28,7 @@ pub fn metric_tags_fingerprint(metric: &str, joined_tags: &str) -> u64 {
 
 /// Fast secondary fingerprint over metric + sorted tags slice.
 #[must_use]
+#[inline]
 pub fn metric_tags_fingerprint_from_tags(metric: &str, tags: &[RylvStr<'_>]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0100_0000_01b3;
@@ -58,6 +60,7 @@ pub fn metric_tags_fingerprint_from_tags(metric: &str, tags: &[RylvStr<'_>]) -> 
 
 /// Compute a hash over a sorted tag slice.
 #[must_use]
+#[inline]
 pub fn hash_tags<S: BuildHasher>(hasher_builder: &S, tags: &[RylvStr<'_>]) -> u64 {
     let mut hasher = hasher_builder.build_hasher();
     for tag in tags {
@@ -68,6 +71,7 @@ pub fn hash_tags<S: BuildHasher>(hasher_builder: &S, tags: &[RylvStr<'_>]) -> u6
 
 /// Combine a metric name with a precomputed tags hash into a single lookup hash.
 #[must_use]
+#[inline]
 pub fn combine_metric_tags_hash<S: BuildHasher>(
     hasher_builder: &S,
     metric: &str,

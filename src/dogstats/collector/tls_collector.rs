@@ -134,7 +134,7 @@ fn get_histogram_from_pool_config(
         config.pool_id(),
         config.sig_fig(),
         config.bounds(),
-        config.percentiles(),
+        config.percentiles().clone(),
         config.emit_base_metrics(),
     )
 }
@@ -929,6 +929,7 @@ fn merge_local_aggregator_into_global_hashbrown<S>(
 
     remove_from_table_callback(&mut local.histograms, to_remove, |histogram_wrapper| {
         let index = histogram_wrapper.pool_id;
+        debug_assert!(index < local.pool_histograms.len());
         unsafe { local.pool_histograms.get_unchecked_mut(index) }.push(histogram_wrapper);
     });
 }
@@ -1310,6 +1311,7 @@ where
                                 self.keys_to_remove,
                                 |v: HistogramWrapper| {
                                     let index = v.pool_id;
+                                    debug_assert!(index < self.pool_histograms.len());
                                     unsafe { self.pool_histograms.get_unchecked_mut(index) }
                                         .push(v);
                                 },

@@ -5,7 +5,7 @@ use super::sorted_tags::{
     SortedTags,
 };
 use super::RylvStr;
-use crate::{DefaultMetricHasher, MetricsError, PreparedMetric};
+use crate::{DefaultMetricHasher, PreparedMetric};
 use hdrhistogram::Histogram;
 use std::cmp::{max, min};
 use std::hash::BuildHasher;

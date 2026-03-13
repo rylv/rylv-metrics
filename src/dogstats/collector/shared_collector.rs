@@ -725,6 +725,7 @@ where
                         for key in &self.keys_to_remove {
                             remove_from_map(self.histogram, key, |v: HistogramWrapper| {
                                 let index = v.pool_id;
+                                debug_assert!(index < self.pool_histograms.len());
                                 unsafe { self.pool_histograms.get_unchecked(index) }.push(v);
                             });
                         }

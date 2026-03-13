@@ -215,8 +215,8 @@ impl HistogramConfig {
         self.sig_fig
     }
 
-    pub(crate) fn percentiles(&self) -> Arc<[f64]> {
-        self.percentiles.clone()
+    pub(crate) const fn percentiles(&self) -> &Arc<[f64]> {
+        &self.percentiles
     }
 
     pub(crate) const fn bounds(&self) -> Bounds {
@@ -292,7 +292,7 @@ impl ResolvedHistogramConfig {
         self.config.bounds()
     }
 
-    pub(crate) fn percentiles(&self) -> Arc<[f64]> {
+    pub(crate) const fn percentiles(&self) -> &Arc<[f64]> {
         self.config.percentiles()
     }
 
