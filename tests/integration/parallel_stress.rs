@@ -1,7 +1,8 @@
 use rylv_metrics::{
-    histogram, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
-    StatsWriterType,
+    histogram, DrainMetricCollectorTrait, MetricCollector, MetricCollectorOptions,
+    MetricCollectorTrait, RylvStr, SharedCollector, StatsWriterType,
 };
+use std::hash::BuildHasher;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -11,22 +12,19 @@ fn random_datadog_addr() -> std::net::SocketAddr {
     socket.local_addr().unwrap()
 }
 
-fn create_test_collector() -> MetricCollector {
+fn create_test_collector() -> MetricCollector<SharedCollector> {
     let options = MetricCollectorOptions {
         max_udp_packet_size: 1500,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type: StatsWriterType::Simple,
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = random_datadog_addr();
 
-    MetricCollector::new(bind_addr, datadog_addr, options)
+    MetricCollector::new(bind_addr, datadog_addr, options, SharedCollector::default())
+        .expect("failed to create collector")
 }
 
 #[test]
@@ -83,13 +81,17 @@ fn test_parallel_histogram_stress() {
     wait_and_shutdown(collector);
 }
 
-fn wait_and_shutdown(collector: Arc<MetricCollector>) {
+fn wait_and_shutdown<MC>(collector: Arc<MetricCollector<MC>>)
+where
+    MC: DrainMetricCollectorTrait + Send + Sync + 'static,
+    MC::Hasher: BuildHasher + Clone + Send + Sync + 'static,
+{
     // Wait for all Arc clones to be dropped, then call shutdown
     let mut holder = Some(collector);
     loop {
         match Arc::try_unwrap(holder.take().unwrap()) {
             Ok(collector) => {
-                collector.shutdown();
+                drop(collector);
                 break;
             }
             Err(c) => {

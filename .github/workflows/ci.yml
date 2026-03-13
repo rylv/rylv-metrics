@@ -63,11 +63,17 @@ jobs:
       - name: Run cargo check
         run: cargo check --verbose
 
+      - name: Run cargo check (all features, all targets)
+        run: cargo check --all-features --all-targets --verbose
+
       - name: Run cargo build
         run: cargo build --verbose
 
       - name: Run cargo test
         run: cargo test --verbose
+
+      - name: Run cargo test (all features)
+        run: cargo test --all-features --verbose
 
       - name: Run cargo test (no default features)
         run: cargo test --no-default-features --verbose
@@ -110,9 +116,32 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  miri:
-    name: Miri (memory safety check)
+  semver:
+    name: Semver checks
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run cargo-semver-checks
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          feature-group: all-features
+
+  miri:
+    name: Miri (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: drains
+            features: "shared-collector tls-collector"
+          - name: drains+custom-writer
+            features: "custom_writer shared-collector tls-collector"
 
     steps:
       - name: Checkout code
@@ -153,7 +182,7 @@ jobs:
         run: cargo miri setup
 
       - name: Run Miri tests
-        run: cargo miri test --test miri_test
+        run: cargo miri test --test miri_test --features "${{ matrix.features }}"
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
 
@@ -285,6 +314,85 @@ jobs:
         run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+      - name: Run doctests
+        run: cargo test --doc --all-features
+
+  bench:
+    name: Benchmark regression check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-bench-
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-bench-
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-bench-
+
+      - name: Install critcmp
+        run: cargo install critcmp --locked || true
+
+      - name: Checkout base branch
+        run: git fetch origin ${{ github.base_ref }} --depth=1
+
+      - name: Create benchmark worktrees
+        run: |
+          git worktree add ../bench-base FETCH_HEAD
+          git worktree add ../bench-pr HEAD
+
+      - name: Run benchmarks on base branch
+        run: |
+          cd ../bench-base
+          CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
+            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
+
+      - name: Run benchmarks on PR branch
+        run: |
+          cd ../bench-pr
+          CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
+            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
+
+      - name: Compare benchmarks
+        run: |
+          critcmp base pr
+          # Fail if any benchmark regressed more than 15%
+          critcmp base pr --threshold 15 || {
+            echo "::warning::Benchmark regression detected (>15%). Review the comparison above."
+            exit 1
+          }
+
+      - name: Cleanup benchmark worktrees
+        if: always()
+        run: |
+          git worktree remove ../bench-base --force
+          git worktree remove ../bench-pr --force
 
   fmt:
     name: Format check

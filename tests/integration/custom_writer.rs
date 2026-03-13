@@ -1,6 +1,7 @@
 use rylv_metrics::{
-    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricResult,
-    RylvStr, SigFig, StatsWriterTrait, StatsWriterType,
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricKind,
+    MetricResult, RylvStr, SharedCollector, SharedCollectorOptions, SigFig, StatsWriterTrait,
+    StatsWriterType,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -11,16 +12,14 @@ pub struct TestStatsWriter {
     /// Stores metrics in datadog wire format
     metrics: Arc<Mutex<Vec<String>>>,
     max_udp_packet_size: u16,
-    stats_prefix: String,
     current_buffer: Arc<Mutex<String>>,
 }
 
 impl TestStatsWriter {
-    pub fn new(max_udp_packet_size: u16, stats_prefix: String) -> Self {
+    pub fn new(max_udp_packet_size: u16) -> Self {
         Self {
             metrics: Arc::new(Mutex::new(Vec::new())),
             max_udp_packet_size,
-            stats_prefix,
             current_buffer: Arc::new(Mutex::new(String::with_capacity(
                 max_udp_packet_size as usize,
             ))),
@@ -42,8 +41,12 @@ impl StatsWriterTrait for TestStatsWriter {
         metrics: &[&str],
         tags: &str,
         value: &str,
-        metric_type: &str,
+        metric_type: MetricKind,
     ) -> MetricResult<()> {
+        let metric_type = match metric_type {
+            MetricKind::Count => "c",
+            MetricKind::Gauge => "g",
+        };
         let mut buffer = self.current_buffer.lock().unwrap();
 
         // Build the metric in datadog wire format
@@ -51,7 +54,6 @@ impl StatsWriterTrait for TestStatsWriter {
         // or prefix + metric_name:value|type\n (when no tags)
 
         let mut metric_line = String::new();
-        metric_line.push_str(&self.stats_prefix);
 
         for metric in metrics {
             metric_line.push_str(metric);
@@ -117,24 +119,22 @@ fn random_datadog_addr() -> std::net::SocketAddr {
 
 #[test]
 fn test_custom_writer_basic() -> std::io::Result<()> {
-    let writer = TestStatsWriter::new(512, String::new());
+    let writer = TestStatsWriter::new(512);
     let writer_clone = writer.clone();
 
     let options = MetricCollectorOptions {
         max_udp_packet_size: 512,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = random_datadog_addr();
 
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::default();
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     // Test counter
     collector.count(
@@ -162,7 +162,7 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     );
 
     // Wait for flush
-    collector.shutdown();
+    drop(collector);
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -206,24 +206,22 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
 
 #[test]
 fn test_custom_writer_no_tags() -> std::io::Result<()> {
-    let writer = TestStatsWriter::new(512, String::new());
+    let writer = TestStatsWriter::new(512);
     let writer_clone = writer.clone();
 
     let options = MetricCollectorOptions {
         max_udp_packet_size: 512,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = random_datadog_addr();
 
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::default();
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     let mut empty_tags: [RylvStr<'_>; 0] = [];
     collector.count(RylvStr::from_static("notags.counter"), &mut empty_tags);
@@ -234,7 +232,7 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
         &mut empty_tags,
     );
 
-    collector.shutdown();
+    drop(collector);
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -267,24 +265,25 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
 
 #[test]
 fn test_custom_writer_with_prefix() -> std::io::Result<()> {
-    let writer = TestStatsWriter::new(1024, "app.".to_string());
+    let writer = TestStatsWriter::new(1024);
     let writer_clone = writer.clone();
 
     let options = MetricCollectorOptions {
         max_udp_packet_size: 1024,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: "app.".to_string(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = random_datadog_addr();
 
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::new(SharedCollectorOptions {
+        stats_prefix: "app.".to_string(),
+        ..Default::default()
+    });
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     collector.count(
         RylvStr::from_static("requests"),
@@ -301,7 +300,7 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
         &mut [RylvStr::from_static("service:api")],
     );
 
-    collector.shutdown();
+    drop(collector);
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -328,24 +327,22 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
 
 #[test]
 fn test_custom_writer_aggregation() -> std::io::Result<()> {
-    let writer = TestStatsWriter::new(1024, String::new());
+    let writer = TestStatsWriter::new(1024);
     let writer_clone = writer.clone();
 
     let options = MetricCollectorOptions {
         max_udp_packet_size: 1024,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = random_datadog_addr();
 
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::default();
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     // Test counter aggregation
     collector.count(
@@ -400,7 +397,7 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
         &mut [RylvStr::from_static("endpoint:/users")],
     );
 
-    collector.shutdown();
+    drop(collector);
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -435,24 +432,22 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
 
 #[test]
 fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
-    let writer = TestStatsWriter::new(1024, String::new());
+    let writer = TestStatsWriter::new(1024);
     let writer_clone = writer.clone();
 
     let options = MetricCollectorOptions {
         max_udp_packet_size: 1024,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = random_datadog_addr();
 
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::default();
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     // Test with multiple tags (they should be sorted)
     collector.count(
@@ -464,7 +459,7 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
         ],
     );
 
-    collector.shutdown();
+    drop(collector);
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -479,27 +474,28 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
 
 #[test]
 fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
-    let writer = TestStatsWriter::new(1024, String::new());
+    let writer = TestStatsWriter::new(1024);
     let writer_clone = writer.clone();
 
     let options = MetricCollectorOptions {
         max_udp_packet_size: 1024,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
+    };
+
+    let bind_addr = "0.0.0.0:0".parse().unwrap();
+    let datadog_addr = random_datadog_addr();
+    let inner = SharedCollector::new(SharedCollectorOptions {
         default_histogram_config: HistogramConfig::default()
             .with_count(false)
             .with_min(false)
             .with_avg(false)
             .with_max(false),
-        hasher_builder: std::hash::RandomState::new(),
-    };
-
-    let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = random_datadog_addr();
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+        ..Default::default()
+    });
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     collector.histogram(
         RylvStr::from_static("configurable.histogram"),
@@ -507,7 +503,7 @@ fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
         &mut [RylvStr::from_static("scope:test")],
     );
 
-    collector.shutdown();
+    drop(collector);
 
     let metrics = writer_clone.get_all_metrics_as_text();
 
@@ -541,7 +537,7 @@ fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
 
 #[test]
 fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()> {
-    let writer = TestStatsWriter::new(1024, String::new());
+    let writer = TestStatsWriter::new(1024);
     let writer_clone = writer.clone();
 
     let custom_histogram_config = HistogramConfig::new(SigFig::default(), vec![0.75, 0.9])
@@ -553,16 +549,17 @@ fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()>
         max_udp_packet_size: 1024,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: custom_histogram_config,
-        hasher_builder: std::hash::RandomState::new(),
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = random_datadog_addr();
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::new(SharedCollectorOptions {
+        default_histogram_config: custom_histogram_config,
+        ..Default::default()
+    });
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     collector.histogram(
         RylvStr::from_static("custom.percentiles.histogram"),
@@ -570,7 +567,7 @@ fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()>
         &mut [RylvStr::from_static("scope:test")],
     );
 
-    collector.shutdown();
+    drop(collector);
 
     let metrics = writer_clone.get_all_metrics_as_text();
 

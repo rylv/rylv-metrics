@@ -7,3 +7,7 @@ profile.json.gz
 /target-docker
 
 .idea
+.zed
+
+dhat.svg
+dhat-heap.json

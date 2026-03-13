@@ -3,7 +3,7 @@
 use libfuzzer_sys::fuzz_target;
 use rylv_metrics::{
     HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
-    StatsWriterType,
+    SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::time::Duration;
 
@@ -31,8 +31,10 @@ fuzz_target!(|data: &[u8]| {
         max_udp_packet_size: packet_size,
         max_udp_batch_size: 100,
         flush_interval: Duration::from_millis(100),
-        stats_prefix: String::new(),
         writer_type,
+    };
+    let inner_options = SharedCollectorOptions {
+        stats_prefix: String::new(),
         histogram_configs: std::collections::HashMap::new(),
         default_histogram_config: HistogramConfig::default(),
         hasher_builder: std::hash::RandomState::new(),
@@ -40,7 +42,10 @@ fuzz_target!(|data: &[u8]| {
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = "127.0.0.1:9999".parse().unwrap();
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::new(inner_options);
+    let Ok(collector) = MetricCollector::new(bind_addr, datadog_addr, options, inner) else {
+        return;
+    };
 
     // Create a large metric name and many tags to test packet limits
     let metric_base = String::from_utf8_lossy(&data[3..]);
@@ -56,9 +61,14 @@ fuzz_target!(|data: &[u8]| {
         let metric_count = format!("{}.{}", metric_name, i);
         let metric_gauge = format!("{}.gauge.{}", metric_name, i);
         let metric_hist = format!("{}.hist.{}", metric_name, i);
-        let mut tag_refs: Vec<RylvStr<'_>> = tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
+        let mut tag_refs: Vec<RylvStr<'_>> =
+            tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
         collector.count(RylvStr::from(metric_count.as_str()), &mut tag_refs);
-        collector.gauge(RylvStr::from(metric_gauge.as_str()), i as u64, &mut tag_refs);
+        collector.gauge(
+            RylvStr::from(metric_gauge.as_str()),
+            i as u64,
+            &mut tag_refs,
+        );
         collector.histogram(
             RylvStr::from(metric_hist.as_str()),
             i as u64 * 100,

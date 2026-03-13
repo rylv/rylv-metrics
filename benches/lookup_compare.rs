@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rylv_metrics::__bench::CompareFixture;
+use rylv_metrics::benchmark_lookup_compare as bench_lookup_compare_impl;
 
 fn compare_tags_old(compare: &[&str], joined_tags: &str, tag_count: usize) -> bool {
     if tag_count != compare.len() {
@@ -114,45 +114,45 @@ fn benchmark_compare_algorithms(c: &mut Criterion) {
 
 fn benchmark_lookup_compare(c: &mut Criterion) {
     let hash = 42;
-
-    let match_fixture = CompareFixture::new(
-        "metric.lookup",
-        &["tag:value", "env:prod"],
-        &["tag:value", "env:prod"],
-        hash,
-    );
     c.bench_function("lookup_compare_match_2_tags", |b| {
-        b.iter(|| black_box(match_fixture.compare()));
+        b.iter(|| {
+            black_box(bench_lookup_compare_impl(
+                "metric.lookup",
+                &["tag:value", "env:prod"],
+                &["tag:value", "env:prod"],
+                hash,
+            ))
+        });
     });
-
-    let miss_count_fixture = CompareFixture::new(
-        "metric.lookup",
-        &["tag:value", "env:prod"],
-        &["tag:value"],
-        hash,
-    );
     c.bench_function("lookup_compare_miss_tag_count", |b| {
-        b.iter(|| black_box(miss_count_fixture.compare()));
+        b.iter(|| {
+            black_box(bench_lookup_compare_impl(
+                "metric.lookup",
+                &["tag:value", "env:prod"],
+                &["tag:value"],
+                hash,
+            ))
+        });
     });
-
-    let miss_len_fixture = CompareFixture::new(
-        "metric.lookup",
-        &["tag:value", "env:prod"],
-        &["tag:value", "env:prodxx"],
-        hash,
-    );
     c.bench_function("lookup_compare_miss_joined_len", |b| {
-        b.iter(|| black_box(miss_len_fixture.compare()));
+        b.iter(|| {
+            black_box(bench_lookup_compare_impl(
+                "metric.lookup",
+                &["tag:value", "env:prod"],
+                &["tag:value", "env:prodxx"],
+                hash,
+            ))
+        });
     });
-
-    let miss_content_fixture = CompareFixture::new(
-        "metric.lookup",
-        &["tag:value", "env:prod"],
-        &["tag:value", "env:stag"],
-        hash,
-    );
     c.bench_function("lookup_compare_miss_same_len_diff_content", |b| {
-        b.iter(|| black_box(miss_content_fixture.compare()));
+        b.iter(|| {
+            black_box(bench_lookup_compare_impl(
+                "metric.lookup",
+                &["tag:value", "env:prod"],
+                &["tag:value", "env:stag"],
+                hash,
+            ))
+        });
     });
 }
 

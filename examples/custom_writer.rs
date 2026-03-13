@@ -3,8 +3,8 @@
 //! Run with: `cargo run --example custom_writer`
 
 use rylv_metrics::{
-    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricResult, RylvStr,
-    StatsWriterTrait, StatsWriterType,
+    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricKind, MetricResult,
+    RylvStr, SharedCollector, SharedCollectorOptions, StatsWriterTrait, StatsWriterType,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -24,8 +24,12 @@ impl StatsWriterTrait for InMemoryWriter {
         metrics: &[&str],
         tags: &str,
         value: &str,
-        metric_type: &str,
+        metric_type: MetricKind,
     ) -> MetricResult<()> {
+        let metric_type = match metric_type {
+            MetricKind::Count => "c",
+            MetricKind::Gauge => "g",
+        };
         let metric_name: String = metrics.iter().copied().collect();
         let line = if tags.is_empty() {
             format!("{metric_name}:{value}|{metric_type}")
@@ -53,16 +57,18 @@ fn main() {
         max_udp_packet_size: 1432,
         max_udp_batch_size: 10,
         flush_interval: Duration::from_millis(50),
-        stats_prefix: "app.".to_string(),
         writer_type: StatsWriterType::Custom(Box::new(writer)),
-        histogram_configs: std::collections::HashMap::new(),
-        default_histogram_config: rylv_metrics::HistogramConfig::default(),
-        hasher_builder: std::hash::RandomState::new(),
+    };
+    let inner_options = SharedCollectorOptions {
+        stats_prefix: "app.".to_string(),
+        ..Default::default()
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
     let datadog_addr = "127.0.0.1:8125".parse().unwrap();
-    let collector = MetricCollector::new(bind_addr, datadog_addr, options);
+    let inner = SharedCollector::new(inner_options);
+    let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
+        .expect("failed to create collector");
 
     // Record some metrics
     collector.count(
@@ -76,7 +82,7 @@ fn main() {
     );
 
     // Shutdown triggers a final flush
-    collector.shutdown();
+    drop(collector);
 
     // Inspect captured metrics
     let captured = lines.lock().unwrap();
