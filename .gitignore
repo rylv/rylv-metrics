@@ -5,7 +5,7 @@ perf.data*
 profile.json.gz
 
 /target-docker
-
+semver-checks
 .idea
 .zed
 
