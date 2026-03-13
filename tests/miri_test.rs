@@ -1,10 +1,10 @@
-#[cfg(feature = "custom_writer")]
-use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
 #[cfg(feature = "shared-collector")]
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind as FrameMetricKind, MetricSuffix,
     RylvStr, SharedCollector,
 };
+#[cfg(feature = "custom_writer")]
+use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
 #[cfg(feature = "tls-collector")]
 use rylv_metrics::{TLSCollector, TLSCollectorOptions};
 

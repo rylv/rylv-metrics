@@ -225,11 +225,17 @@ fn test_shared_collector_drain_when_empty() {
     for _ in 0..8 {
         if let Some(mut drain) = collector.try_begin_drain() {
             acquired = true;
-            assert!(drain.next().is_none(), "empty collector should yield no frames");
+            assert!(
+                drain.next().is_none(),
+                "empty collector should yield no frames"
+            );
             break;
         }
     }
-    assert!(acquired, "should be able to acquire drain on empty collector");
+    assert!(
+        acquired,
+        "should be able to acquire drain on empty collector"
+    );
 }
 
 // ============================================================================

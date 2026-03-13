@@ -775,6 +775,8 @@ where
     S: BuildHasher + Clone,
 {
     type Hasher = S;
+
+    #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -791,6 +793,7 @@ where
         );
     }
 
+    #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -798,6 +801,7 @@ where
         self.count_add(metric, 1, tags);
     }
 
+    #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -807,6 +811,7 @@ where
         record_count_add_in_aggregator(&aggregator, metric, value, mut_tags);
     }
 
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -816,6 +821,7 @@ where
         record_gauge_in_aggregator(&aggregator, metric, value, mut_tags);
     }
 
+    #[inline]
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_histogram_in_aggregator_sorted(
@@ -828,11 +834,13 @@ where
         );
     }
 
+    #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_count_add_in_aggregator_sorted(&aggregator, metric, value, tags);
     }
 
+    #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator_sorted(&aggregator, metric, value, tags);
@@ -854,6 +862,7 @@ where
         SortedTags::new(tags, &self.hasher_builder)
     }
 
+    #[inline]
     fn histogram_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
         let aggregator = self.current_aggregator.load();
         record_histogram_in_aggregator_prepared(
@@ -865,11 +874,13 @@ where
         );
     }
 
+    #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
         let aggregator = self.current_aggregator.load();
         record_count_add_in_aggregator_prepared(&aggregator, prepared, value);
     }
 
+    #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator_prepared(&aggregator, prepared, value);
@@ -882,6 +893,7 @@ where
 {
     type Hasher = S;
 
+    #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -889,6 +901,7 @@ where
         (*self).histogram(metric, value, tags);
     }
 
+    #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -896,6 +909,7 @@ where
         (*self).count(metric, tags);
     }
 
+    #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -903,6 +917,7 @@ where
         (*self).count_add(metric, value, tags);
     }
 
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -910,14 +925,17 @@ where
         (*self).gauge(metric, value, tags);
     }
 
+    #[inline]
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).histogram_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).count_add_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).gauge_sorted(metric, value, tags);
     }
@@ -939,14 +957,17 @@ where
         (*self).prepare_sorted_tags(tags)
     }
 
+    #[inline]
     fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).histogram_prepared(prepared, value);
     }
 
+    #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).count_add_prepared(prepared, value);
     }
 
+    #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).gauge_prepared(prepared, value);
     }

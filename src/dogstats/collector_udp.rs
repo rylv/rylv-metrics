@@ -177,6 +177,7 @@ where
 {
     type Hasher = MC::Hasher;
 
+    #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -184,6 +185,7 @@ where
         self.inner.histogram(metric, value, tags);
     }
 
+    #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -191,6 +193,7 @@ where
         self.inner.count(metric, tags);
     }
 
+    #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -198,6 +201,7 @@ where
         self.inner.count_add(metric, value, tags);
     }
 
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -205,14 +209,17 @@ where
         self.inner.gauge(metric, value, tags);
     }
 
+    #[inline]
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.histogram_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.count_add_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.gauge_sorted(metric, value, tags);
     }
@@ -234,14 +241,17 @@ where
         self.inner.prepare_metric(metric, tags)
     }
 
+    #[inline]
     fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.inner.histogram_prepared(prepared, value);
     }
 
+    #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.inner.count_add_prepared(prepared, value);
     }
 
+    #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.inner.gauge_prepared(prepared, value);
     }

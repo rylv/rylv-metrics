@@ -634,6 +634,7 @@ where
 {
     type Hasher = S;
 
+    #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -641,6 +642,7 @@ where
         self.record_histogram(metric, value, tags.as_mut());
     }
 
+    #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -648,6 +650,7 @@ where
         self.count_add(metric, 1, tags);
     }
 
+    #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -655,6 +658,7 @@ where
         self.record_count_add(metric, value, tags.as_mut());
     }
 
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -662,14 +666,17 @@ where
         self.record_gauge(metric, value, tags.as_mut());
     }
 
+    #[inline]
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         self.record_histogram_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         self.record_count_add_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         self.record_gauge_sorted(metric, value, tags);
     }
@@ -694,14 +701,17 @@ where
         PreparedMetric::new(metric, tags, hash)
     }
 
+    #[inline]
     fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.record_histogram_prepared(prepared, value);
     }
 
+    #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.record_count_add_prepared(prepared, value);
     }
 
+    #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.record_gauge_prepared(prepared, value);
     }
@@ -713,6 +723,7 @@ where
 {
     type Hasher = S;
 
+    #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -720,6 +731,7 @@ where
         (*self).histogram(metric, value, tags);
     }
 
+    #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -727,6 +739,7 @@ where
         (*self).count(metric, tags);
     }
 
+    #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -734,6 +747,7 @@ where
         (*self).count_add(metric, value, tags);
     }
 
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -741,14 +755,17 @@ where
         (*self).gauge(metric, value, tags);
     }
 
+    #[inline]
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).histogram_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).count_add_sorted(metric, value, tags);
     }
 
+    #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).gauge_sorted(metric, value, tags);
     }
@@ -770,14 +787,17 @@ where
         (*self).prepare_metric(metric, tags)
     }
 
+    #[inline]
     fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).histogram_prepared(prepared, value);
     }
 
+    #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).count_add_prepared(prepared, value);
     }
 
+    #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).gauge_prepared(prepared, value);
     }
@@ -1413,12 +1433,16 @@ mod tests {
     where
         S: std::hash::BuildHasher + Clone + Send + Sync + 'static,
     {
-        let drain = collector.try_begin_drain().into_iter().flatten().map(|frame| unsafe {
-            std::mem::transmute::<
-                crate::dogstats::collector::MetricFrameRef<'_>,
-                crate::dogstats::collector::MetricFrameRef<'static>,
-            >(frame)
-        });
+        let drain = collector
+            .try_begin_drain()
+            .into_iter()
+            .flatten()
+            .map(|frame| unsafe {
+                std::mem::transmute::<
+                    crate::dogstats::collector::MetricFrameRef<'_>,
+                    crate::dogstats::collector::MetricFrameRef<'static>,
+                >(frame)
+            });
         format_drained_lines::<S, _>(drain)
     }
 
