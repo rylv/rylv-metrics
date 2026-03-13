@@ -3,26 +3,26 @@ use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind as FrameMetricKind, MetricSuffix,
     RylvStr, SharedCollector,
 };
-#[cfg(feature = "custom_writer")]
+#[cfg(all(feature = "custom_writer", feature = "udp"))]
 use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
 #[cfg(feature = "tls-collector")]
 use rylv_metrics::{TLSCollector, TLSCollectorOptions};
 
-#[cfg(feature = "custom_writer")]
+#[cfg(all(feature = "custom_writer", feature = "udp"))]
 #[derive(Default)]
 struct MiriCustomWriter {
     chunks: Vec<String>,
     current: String,
 }
 
-#[cfg(feature = "custom_writer")]
+#[cfg(all(feature = "custom_writer", feature = "udp"))]
 impl MiriCustomWriter {
     fn all_text(&self) -> String {
         self.chunks.concat()
     }
 }
 
-#[cfg(feature = "custom_writer")]
+#[cfg(all(feature = "custom_writer", feature = "udp"))]
 impl StatsWriterTrait for MiriCustomWriter {
     fn metric_copied(&self) -> bool {
         true
@@ -69,7 +69,7 @@ impl StatsWriterTrait for MiriCustomWriter {
     }
 }
 
-#[cfg(feature = "custom_writer")]
+#[cfg(all(feature = "custom_writer", feature = "udp"))]
 #[test]
 fn miri_custom_writer_formats_and_flushes() {
     let mut writer = MiriCustomWriter::default();
@@ -89,7 +89,7 @@ fn miri_custom_writer_formats_and_flushes() {
     assert!(text.contains("another.metric:1|g\n"));
 }
 
-#[cfg(feature = "custom_writer")]
+#[cfg(all(feature = "custom_writer", feature = "udp"))]
 #[test]
 fn miri_custom_writer_reset_clears_pending_buffer() {
     let mut writer = MiriCustomWriter::default();
@@ -104,7 +104,7 @@ fn miri_custom_writer_reset_clears_pending_buffer() {
     assert!(writer.all_text().is_empty());
 }
 
-#[cfg(feature = "custom_writer")]
+#[cfg(all(feature = "custom_writer", feature = "udp"))]
 #[test]
 fn miri_custom_writer_can_be_wrapped_in_stats_writer_type() {
     let custom: Box<dyn StatsWriterTrait + Send + Sync> = Box::new(MiriCustomWriter::default());
