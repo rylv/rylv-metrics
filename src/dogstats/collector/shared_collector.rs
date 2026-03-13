@@ -55,9 +55,9 @@ impl Default for SharedCollectorOptions<DefaultMetricHasher> {
 }
 /// A shared metrics collector.
 ///
-/// Unlike [`MetricCollector`], this type does not spawn a background thread and does not
+/// Unlike [`crate::MetricCollector`], this type does not spawn a background thread and does not
 /// perform any network I/O. Metrics are aggregated in-memory and can be emitted by calling
-/// [`SharedCollector::try_begin_drain`].
+/// [`crate::DrainMetricCollectorTrait::try_begin_drain`].
 pub struct SharedCollector<S = DefaultMetricHasher>
 where
     S: BuildHasher + Clone,
