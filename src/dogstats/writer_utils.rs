@@ -12,7 +12,8 @@ pub struct Transmit<'data> {
 
 impl<'data> Transmit<'data> {
     pub fn new(max_udp_package_size: u16) -> Self {
-        // TODO: create with some smart size
+        // TODO: derive this capacity from expected datagram packing so we don't keep an
+        // arbitrary 1000-entry IoSlice allocation in production writer instances.
         Self {
             parts: Vec::with_capacity(1000),
             #[cfg(target_os = "linux")]

@@ -40,9 +40,6 @@ allocation-counter = { version = "0", default-features = false, optional = true 
 criterion = "0.5.1"
 ahash = "0.8.12"
 
-[profile.release]
-debug = true
-
 [[bin]]
 name = "shared_dhat_single"
 path = "src/bins/shared_dhat_single.rs"

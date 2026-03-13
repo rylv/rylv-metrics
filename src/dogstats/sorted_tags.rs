@@ -117,6 +117,8 @@ impl<S: BuildHasher + Clone> SortedTags<S> {
         let mut tags_vec: Vec<RylvStr<'static>> = tags.into_iter().map(to_static_tag).collect();
         tags_vec.sort_unstable();
 
+        // TODO: route this through `build_joined_tags` too, so joined-tag construction lives in
+        // one place before we do any further hot-path tuning here.
         let joined_tags = if tags_vec.is_empty() {
             Arc::<str>::from("")
         } else {
