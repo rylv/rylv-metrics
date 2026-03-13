@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-12
+
 ### Added
 - `TLSCollector` — thread-local storage collector using `hashbrown::HashTable` and `parking_lot` for high-concurrency scenarios
 - `SharedCollector` drain API with `MetricFrameRef` borrowed iteration via `DrainMetricCollectorTrait`
