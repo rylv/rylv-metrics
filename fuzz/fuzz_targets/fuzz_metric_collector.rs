@@ -62,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
     match op {
         0 => collector.count(metric, &mut tag_refs),
         1 => collector.count_add(metric, value, &mut tag_refs),
-        2 => collector.gauge(metric, value, &mut tag_refs),
+        2 => collector.gauge_avg(metric, value, &mut tag_refs),
         3 => collector.histogram(metric, value, &mut tag_refs),
         _ => unreachable!(),
     }

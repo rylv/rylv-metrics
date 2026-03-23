@@ -142,7 +142,7 @@ fn test_parallel_mixed_metrics() {
                         }
                         3 => {
                             // Gauge
-                            collector.gauge(
+                            collector.gauge_avg(
                                 RylvStr::from_static("parallel.mixed.gauge"),
                                 value,
                                 [RylvStr::from(tag.clone())],
@@ -426,7 +426,7 @@ fn test_parallel_all_operations() {
                     );
 
                     // Gauge
-                    collector.gauge(
+                    collector.gauge_avg(
                         RylvStr::from_static("stress.gauge"),
                         value,
                         [RylvStr::from(thread_tag.clone())],

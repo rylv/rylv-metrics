@@ -3,8 +3,8 @@
 //! Run with: `cargo run --example gauges`
 
 use rylv_metrics::{
-    gauge, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SharedCollector,
-    SharedCollectorOptions, StatsWriterType,
+    gauge, gauge_avg, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::time::Duration;
 
@@ -28,13 +28,13 @@ fn main() {
 
     // --- Direct API ---
 
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         42,
         &mut [RylvStr::from_static("pool:main")],
     );
 
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("queue.depth"),
         150,
         &mut [
@@ -44,13 +44,13 @@ fn main() {
     );
 
     // Gauge without tags
-    collector.gauge(RylvStr::from_static("cpu.usage_percent"), 73, &mut []);
+    collector.gauge_avg(RylvStr::from_static("cpu.usage_percent"), 73, &mut []);
 
     // --- Macros ---
 
-    gauge!(collector, "connections.active", 38, "pool:main");
-    gauge!(collector, "disk.free_mb", 20480, "volume:/data");
-    gauge!(collector, "threads.running", 8);
+    gauge_avg!(collector, "connections.active", 38, "pool:main");
+    gauge_avg!(collector, "disk.free_mb", 20480, "volume:/data");
+    gauge_avg!(collector, "threads.running", 8);
 
     // Multiple gauge values for the same metric/tags are averaged on flush.
     // Here, (42 + 38) / 2 = 40 will be sent for connections.active|pool:main

@@ -76,12 +76,12 @@ fn test_shared_drain_basic() {
         &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
     );
 
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory"),
         100,
         &mut [RylvStr::from_static("host:web")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory"),
         300,
         &mut [RylvStr::from_static("host:web")],
@@ -221,22 +221,22 @@ fn test_shared_parity_with_metric_collector_custom_writer() {
         &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
     );
 
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory"),
         100,
         &mut [RylvStr::from_static("host:web")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory"),
         300,
         &mut [RylvStr::from_static("host:web")],
     );
-    shared_collector.gauge(
+    shared_collector.gauge_avg(
         RylvStr::from_static("memory"),
         100,
         &mut [RylvStr::from_static("host:web")],
     );
-    shared_collector.gauge(
+    shared_collector.gauge_avg(
         RylvStr::from_static("memory"),
         300,
         &mut [RylvStr::from_static("host:web")],

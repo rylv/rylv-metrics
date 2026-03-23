@@ -41,6 +41,7 @@ struct GaugeStateHb {
 enum DrainStage {
     Count,
     Gauge,
+    GaugeLast,
     Histogram,
     Done,
 }
@@ -52,6 +53,7 @@ where
     histograms: HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
     count: HashTable<(AggregatorEntryKey<S>, u64)>,
     gauge: HashTable<(AggregatorEntryKey<S>, GaugeStateHb)>,
+    gauge_last: HashTable<(AggregatorEntryKey<S>, Option<u64>)>,
     pool_histograms: Vec<Vec<HistogramWrapper>>,
 }
 
@@ -70,6 +72,7 @@ where
             histograms: HashTable::new(),
             count: HashTable::new(),
             gauge: HashTable::new(),
+            gauge_last: HashTable::new(),
             pool_histograms: (0..pool_count).map(|_| Vec::new()).collect(),
         }
     }
@@ -79,6 +82,7 @@ where
             histograms: HashTable::with_capacity(self.histograms.len()),
             count: HashTable::with_capacity(self.count.len()),
             gauge: HashTable::with_capacity(self.gauge.len()),
+            gauge_last: HashTable::with_capacity(self.gauge_last.len()),
             pool_histograms: self
                 .pool_histograms
                 .iter()
@@ -206,6 +210,7 @@ where
     histograms: HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
     count: HashTable<(AggregatorEntryKey<S>, u64)>,
     gauge: HashTable<(AggregatorEntryKey<S>, GaugeStateHb)>,
+    gauge_last: HashTable<(AggregatorEntryKey<S>, Option<u64>)>,
     pool_histograms: Vec<Vec<HistogramWrapper>>,
     key_to_remove: Vec<RemoveKey>,
 }
@@ -220,6 +225,7 @@ where
             histograms: HashTable::new(),
             count: HashTable::new(),
             gauge: HashTable::new(),
+            gauge_last: HashTable::new(),
             pool_histograms: (0..pool_count).map(|_| Vec::new()).collect(),
             key_to_remove: Vec::new(),
         }
@@ -230,6 +236,7 @@ where
             histograms: HashTable::with_capacity(self.histograms.len()),
             count: HashTable::with_capacity(self.count.len()),
             gauge: HashTable::with_capacity(self.gauge.len()),
+            gauge_last: HashTable::with_capacity(self.gauge_last.len()),
             pool_histograms: self
                 .pool_histograms
                 .iter()
@@ -659,6 +666,81 @@ where
         }
         drop(aggregator);
     }
+
+    fn record_gauge_last(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvStr<'_>]) {
+        if tags.len() > 1 {
+            tags.sort_unstable();
+        }
+        let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
+        let buffer = self.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+
+        match aggregator.gauge_last.entry(
+            lookup.hash,
+            |(key, _)| lookup.compare(key),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                entry.get_mut().1 = Some(value);
+            }
+            Vacant(entry) => {
+                entry.insert((lookup.into_key(), Some(value)));
+            }
+        }
+    }
+
+    fn record_gauge_last_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        let hash =
+            combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
+        let lookup = LookupKeySorted {
+            metric,
+            sorted_tags: tags,
+            hash,
+        };
+
+        let buffer = self.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+
+        match aggregator.gauge_last.entry(
+            lookup.hash,
+            |(key, _)| lookup.compare(key),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                entry.get_mut().1 = Some(value);
+            }
+            Vacant(entry) => {
+                entry.insert((lookup.into_key(), Some(value)));
+            }
+        }
+    }
+
+    fn record_gauge_last_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+        let buffer = self.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+
+        let entry_id = prepared.prepared_id();
+        if let Some((_, gauge)) = aggregator
+            .gauge_last
+            .find_mut(prepared.hash(), |(key, _)| key.id == entry_id)
+        {
+            *gauge = Some(value);
+            return;
+        }
+        match aggregator.gauge_last.entry(
+            prepared.hash(),
+            |(key, _)| match_prepared_agg_key(key, prepared),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                entry.get_mut().1 = Some(value);
+            }
+            Vacant(entry) => {
+                entry.insert((to_agg_entry_key(prepared), Some(value)));
+            }
+        }
+        drop(aggregator);
+    }
 }
 
 /// Configuration options for the hashbrown + mutex TLS collector.
@@ -719,11 +801,19 @@ where
     }
 
     #[inline]
-    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
     {
         self.record_gauge(metric, value, tags.as_mut());
+    }
+
+    #[inline]
+    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>,
+    {
+        self.record_gauge_last(metric, value, tags.as_mut());
     }
 
     #[inline]
@@ -737,8 +827,13 @@ where
     }
 
     #[inline]
-    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         self.record_gauge_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        self.record_gauge_last_sorted(metric, value, tags);
     }
 
     #[cold]
@@ -772,8 +867,13 @@ where
     }
 
     #[inline]
-    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.record_gauge_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.record_gauge_last_prepared(prepared, value);
     }
 }
 
@@ -808,6 +908,14 @@ where
     }
 
     #[inline]
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>,
+    {
+        (*self).gauge_avg(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -823,6 +931,11 @@ where
     #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).count_add_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        (*self).gauge_avg_sorted(metric, value, tags);
     }
 
     #[inline]
@@ -855,6 +968,11 @@ where
     #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).count_add_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        (*self).gauge_avg_prepared(prepared, value);
     }
 
     #[inline]
@@ -979,6 +1097,29 @@ fn merge_local_aggregator_into_global_hashbrown<S>(
 
     remove_from_table(&mut local.gauge, to_remove);
 
+    for (key, value) in &mut local.gauge_last {
+        if value.is_none() {
+            to_remove.push(key.remove_key());
+            continue;
+        }
+
+        match global
+            .gauge_last
+            .entry(key.hash, |(existing, _)| existing == key, |(k, _)| k.hash)
+        {
+            Occupied(mut entry) => {
+                entry.get_mut().1 = *value;
+            }
+            Vacant(entry) => {
+                entry.insert((key.clone(), *value));
+            }
+        }
+
+        *value = None;
+    }
+
+    remove_from_table(&mut local.gauge_last, to_remove);
+
     to_remove.clear();
     for (key, local_histogram) in &mut local.histograms {
         if local_histogram.histogram.is_empty() {
@@ -1053,6 +1194,7 @@ where
     stage: DrainStage,
     count_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, u64)>>,
     gauge_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, GaugeStateHb)>>,
+    gauge_last_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, Option<u64>)>>,
     histogram_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
 
     pool_histograms: &'a mut [Vec<HistogramWrapper>],
@@ -1080,6 +1222,9 @@ where
             stage: DrainStage::Count,
             count_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).count) })),
             gauge_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).gauge) })),
+            gauge_last_iter: Some(MyIterMut::new(unsafe {
+                addr_of_mut!((*global_ptr).gauge_last)
+            })),
             histogram_iter: Some(MyIterMut::new(unsafe {
                 addr_of_mut!((*global_ptr).histograms)
             })),
@@ -1171,6 +1316,46 @@ where
         }
 
         if let Some(table) = self.gauge_iter.take().map(|iter| iter.table) {
+            let table = unsafe { &mut *table };
+            remove_from_table(table, self.keys_to_remove);
+        }
+
+        self.stage = DrainStage::GaugeLast;
+        None
+    }
+
+    fn emit_gauge_last_metric(&mut self) -> Option<MetricFrameRef<'a>> {
+        if let Some(iter) = self.gauge_last_iter.as_mut() {
+            for entry in iter.by_ref() {
+                let key = &mut entry.0;
+                let gauge_val = &mut entry.1;
+                let value = match gauge_val.take() {
+                    Some(v) => v,
+                    None => {
+                        self.keys_to_remove.push(key.remove_key());
+                        continue;
+                    }
+                };
+
+                let (metric, tags) = unsafe {
+                    (
+                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
+                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
+                    )
+                };
+
+                return Some(MetricFrameRef {
+                    prefix: self.prefix,
+                    metric,
+                    suffix: MetricSuffix::None,
+                    tags,
+                    value,
+                    kind: MetricKind::Gauge,
+                });
+            }
+        }
+
+        if let Some(table) = self.gauge_last_iter.take().map(|iter| iter.table) {
             let table = unsafe { &mut *table };
             remove_from_table(table, self.keys_to_remove);
         }
@@ -1390,6 +1575,11 @@ where
                 }
                 DrainStage::Gauge => {
                     if let Some(frame) = self.emit_gauge_metric() {
+                        return Some(frame);
+                    }
+                }
+                DrainStage::GaugeLast => {
+                    if let Some(frame) = self.emit_gauge_last_metric() {
                         return Some(frame);
                     }
                 }
@@ -1791,8 +1981,8 @@ mod tests {
 
         collector.count_add_sorted(RylvStr::from_static("requests"), 2, &sorted);
         collector.count_add_prepared(&prepared_count, 3);
-        collector.gauge_sorted(RylvStr::from_static("load"), 10, &sorted);
-        collector.gauge_prepared(&prepared_gauge, 20);
+        collector.gauge_avg_sorted(RylvStr::from_static("load"), 10, &sorted);
+        collector.gauge_avg_prepared(&prepared_gauge, 20);
         collector.histogram_sorted(RylvStr::from_static("latency"), 40, &sorted);
         collector.histogram_prepared(&prepared_hist, 60);
 
@@ -1915,12 +2105,12 @@ mod tests {
             4,
             &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
         );
-        collector_ref.gauge(
+        collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             10,
             &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
         );
-        collector_ref.gauge(
+        collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             20,
             &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
@@ -2006,6 +2196,101 @@ mod tests {
         assert!(local.gauge.is_empty());
         assert!(local.histograms.is_empty());
         assert_eq!(local.pool_histograms[0].len(), 2);
+    }
+
+    #[test]
+    fn tls_gauge_last_emits_last_value_not_average() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "app.".to_string(),
+            ..Default::default()
+        });
+
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            100,
+            &mut [RylvStr::from_static("pool:main")],
+        );
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            200,
+            &mut [RylvStr::from_static("pool:main")],
+        );
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            50,
+            &mut [RylvStr::from_static("pool:main")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(
+            lines,
+            vec!["app.connections:50|g|#pool:main\n".to_string()]
+        );
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn tls_gauge_last_without_tags() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.gauge(RylvStr::from_static("cpu.usage"), 73, &mut []);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["cpu.usage:73|g\n".to_string()]);
+    }
+
+    #[test]
+    fn tls_gauge_last_sorted_and_prepared() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "s.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let prepared =
+            collector.prepare_metric(RylvStr::from_static("temperature"), sorted.clone());
+
+        collector.gauge_sorted(RylvStr::from_static("temperature"), 10, &sorted);
+        collector.gauge_sorted(RylvStr::from_static("temperature"), 30, &sorted);
+        collector.gauge_prepared(&prepared, 20);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(
+            lines,
+            vec!["s.temperature:20|g|#a:1,b:2\n".to_string()]
+        );
+    }
+
+    #[test]
+    fn tls_gauge_last_and_gauge_avg_are_independent() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.gauge_avg(
+            RylvStr::from_static("load"),
+            10,
+            &mut [RylvStr::from_static("a:1")],
+        );
+        collector.gauge_avg(
+            RylvStr::from_static("load"),
+            20,
+            &mut [RylvStr::from_static("a:1")],
+        );
+        collector.gauge(
+            RylvStr::from_static("load"),
+            10,
+            &mut [RylvStr::from_static("a:1")],
+        );
+        collector.gauge(
+            RylvStr::from_static("load"),
+            20,
+            &mut [RylvStr::from_static("a:1")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines.len(), 2);
+        assert!(lines.contains(&"load:15|g|#a:1\n".to_string()));
+        assert!(lines.contains(&"load:20|g|#a:1\n".to_string()));
     }
 
     #[test]
@@ -2129,5 +2414,43 @@ mod tests {
             recycled.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
             cap
         );
+    }
+
+    #[test]
+    fn tls_merge_gauge_last_local_into_global() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let mut local = LocalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut global =
+            GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut to_remove = Vec::new();
+
+        let tags = [RylvStr::from_static("a:1")];
+        let lookup = build_lookup_key(
+            RylvStr::from_static("temp"),
+            &tags,
+            &hasher,
+        );
+        local.gauge_last.insert_unique(
+            lookup.hash,
+            (lookup.into_key(), Some(42)),
+            |(k, _)| k.hash,
+        );
+
+        merge_local_aggregator_into_global_hashbrown(
+            &mut local,
+            &mut global,
+            &resolved.pool_specs,
+            &mut to_remove,
+        );
+
+        let global_val = &global.gauge_last.iter().next().unwrap().1;
+        assert_eq!(*global_val, Some(42));
+        // local should be reset to None
+        assert!(local.gauge_last.is_empty() || local.gauge_last.iter().next().unwrap().1.is_none());
     }
 }

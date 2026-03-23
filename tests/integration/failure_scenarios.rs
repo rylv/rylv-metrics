@@ -49,7 +49,7 @@ fn test_collector_survives_unreachable_destination() {
     std::thread::sleep(Duration::from_millis(120));
 
     // Recording must still work after failed sends
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("dead.target.gauge"),
         42,
         &mut [RylvStr::from_static("scenario:unreachable")],

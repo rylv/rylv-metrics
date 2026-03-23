@@ -43,7 +43,7 @@ fuzz_target!(|data: &[u8]| {
     // Try all operations with this potentially malformed metric name
     collector.count(metric.clone(), &mut empty_tags);
     collector.count_add(metric.clone(), 42, &mut empty_tags);
-    collector.gauge(metric.clone(), 100, &mut empty_tags);
+    collector.gauge_avg(metric.clone(), 100, &mut empty_tags);
     collector.histogram(metric, 250, &mut empty_tags);
 
     drop(collector);

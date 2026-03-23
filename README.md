@@ -71,7 +71,7 @@ fn main() {
         RylvStr::from_static("request.count"),
         &mut [RylvStr::from_static("endpoint:api")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         100,
         &mut [RylvStr::from_static("pool:main")],
@@ -81,7 +81,7 @@ fn main() {
     histogram!(collector, "request.latency", 42, "endpoint:api", "method:GET");
     count!(collector, "request.count", "endpoint:api");
     count_add!(collector, "bytes.sent", 1024, "endpoint:api");
-    gauge!(collector, "connections.active", 100, "pool:main");
+    gauge_avg!(collector, "connections.active", 100, "pool:main");
 
     // Drop triggers a final best-effort flush
 }
@@ -114,7 +114,7 @@ count_add!(collector, "bytes.sent", 1024, "endpoint:upload");
 Records point-in-time values:
 
 ```rust
-gauge!(collector, "memory.used", 1024000, "host:server1");
+gauge_avg!(collector, "memory.used", 1024000, "host:server1");
 ```
 
 ## Custom Writer

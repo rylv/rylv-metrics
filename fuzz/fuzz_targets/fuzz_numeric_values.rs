@@ -46,7 +46,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Test with potentially extreme values
     collector.count_add(RylvStr::from_static("fuzz.counter"), value1, &mut tag_refs);
-    collector.gauge(RylvStr::from_static("fuzz.gauge"), value2, &mut tag_refs);
+    collector.gauge_avg(RylvStr::from_static("fuzz.gauge"), value2, &mut tag_refs);
     collector.histogram(
         RylvStr::from_static("fuzz.histogram"),
         value1,
@@ -56,7 +56,7 @@ fuzz_target!(|data: &[u8]| {
     // Test common edge cases
     collector.count_add(RylvStr::from_static("fuzz.zero"), 0, &mut tag_refs);
     collector.count_add(RylvStr::from_static("fuzz.max"), u64::MAX, &mut tag_refs);
-    collector.gauge(RylvStr::from_static("fuzz.one"), 1, &mut tag_refs);
+    collector.gauge_avg(RylvStr::from_static("fuzz.one"), 1, &mut tag_refs);
     collector.histogram(
         RylvStr::from_static("fuzz.edge"),
         u64::MAX / 2,

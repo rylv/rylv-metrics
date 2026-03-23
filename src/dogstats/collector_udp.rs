@@ -202,6 +202,14 @@ where
     }
 
     #[inline]
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>,
+    {
+        self.inner.gauge_avg(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -217,6 +225,11 @@ where
     #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.count_add_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+        self.inner.gauge_avg_sorted(metric, value, tags);
     }
 
     #[inline]
@@ -249,6 +262,11 @@ where
     #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.inner.count_add_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.inner.gauge_avg_prepared(prepared, value);
     }
 
     #[inline]
@@ -307,6 +325,13 @@ mod tests {
             self.record(format!("count_add:{}:{value}", metric.as_ref()));
         }
 
+        fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        where
+            TT: AsMut<[RylvStr<'t>]>,
+        {
+            self.record(format!("gauge_avg:{}:{value}", metric.as_ref()));
+        }
+
         fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
         where
             TT: AsMut<[RylvStr<'t>]>,
@@ -330,6 +355,10 @@ mod tests {
             _tags: &SortedTags<Self::Hasher>,
         ) {
             self.record(format!("count_add_sorted:{}:{value}", metric.as_ref()));
+        }
+
+        fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
+            self.record(format!("gauge_avg_sorted:{}:{value}", metric.as_ref()));
         }
 
         fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
@@ -369,6 +398,13 @@ mod tests {
         fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
             self.record(format!(
                 "count_add_prepared:{}:{value}",
+                prepared.metric().as_ref()
+            ));
+        }
+
+        fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+            self.record(format!(
+                "gauge_avg_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
         }
@@ -430,7 +466,7 @@ mod tests {
             3,
             &mut [RylvStr::from_static("tag:test")],
         );
-        collector.gauge(
+        collector.gauge_avg(
             RylvStr::from_static("load"),
             9,
             &mut [RylvStr::from_static("tag:test")],
@@ -441,10 +477,10 @@ mod tests {
             &mut [RylvStr::from_static("tag:test")],
         );
         collector.count_add_sorted(RylvStr::from_static("sorted_count"), 2, &sorted);
-        collector.gauge_sorted(RylvStr::from_static("sorted_gauge"), 5, &sorted);
+        collector.gauge_avg_sorted(RylvStr::from_static("sorted_gauge"), 5, &sorted);
         collector.histogram_sorted(RylvStr::from_static("sorted_hist"), 11, &sorted);
         collector.count_add_prepared(&prepared, 4);
-        collector.gauge_prepared(&prepared, 6);
+        collector.gauge_avg_prepared(&prepared, 6);
         collector.histogram_prepared(&prepared, 8);
 
         let calls = inner.take_calls();
@@ -453,13 +489,13 @@ mod tests {
             vec![
                 "count:requests".to_string(),
                 "count_add:requests:3".to_string(),
-                "gauge:load:9".to_string(),
+                "gauge_avg:load:9".to_string(),
                 "histogram:latency:7".to_string(),
                 "count_add_sorted:sorted_count:2".to_string(),
-                "gauge_sorted:sorted_gauge:5".to_string(),
+                "gauge_avg_sorted:sorted_gauge:5".to_string(),
                 "histogram_sorted:sorted_hist:11".to_string(),
                 "count_add_prepared:prepared:4".to_string(),
-                "gauge_prepared:prepared:6".to_string(),
+                "gauge_avg_prepared:prepared:6".to_string(),
                 "histogram_prepared:prepared:8".to_string(),
             ]
         );

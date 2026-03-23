@@ -64,7 +64,7 @@ fuzz_target!(|data: &[u8]| {
         let mut tag_refs: Vec<RylvStr<'_>> =
             tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
         collector.count(RylvStr::from(metric_count.as_str()), &mut tag_refs);
-        collector.gauge(
+        collector.gauge_avg(
             RylvStr::from(metric_gauge.as_str()),
             i as u64,
             &mut tag_refs,

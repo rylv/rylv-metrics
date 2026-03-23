@@ -50,7 +50,7 @@ fn main() {
     );
 
     // Gauge — records a point-in-time value (averaged when multiple values per flush)
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         100,
         &mut [RylvStr::from_static("pool:main")],

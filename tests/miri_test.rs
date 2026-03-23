@@ -121,7 +121,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
         RylvStr::from_static("requests"),
         &mut [RylvStr::from_static("env:test")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
         &mut [RylvStr::from_static("env:test")],
@@ -178,7 +178,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
         RylvStr::from_static("requests"),
         &mut [RylvStr::from_static("env:test")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
         &mut [RylvStr::from_static("env:test")],

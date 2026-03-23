@@ -262,7 +262,7 @@ fn test_simple_writer_counter_methods() -> std::io::Result<()> {
         1024,
         &mut [RylvStr::from_static("service:api")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory.usage"),
         75,
         &mut [RylvStr::from_static("host:server1")],
@@ -294,7 +294,7 @@ fn test_linux_batch_counter_methods() -> std::io::Result<()> {
         500,
         &mut [RylvStr::from_static("batch:sendmmsg")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("linux.cpu"),
         85,
         &mut [RylvStr::from_static("core:0")],
@@ -326,7 +326,7 @@ fn test_apple_batch_counter_methods() -> std::io::Result<()> {
         2048,
         &mut [RylvStr::from_static("batch:sendmsg_x")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("macos.temp"),
         65,
         &mut [RylvStr::from_static("sensor:cpu")],
@@ -366,7 +366,7 @@ fn test_simple_writer_mixed_methods() -> std::io::Result<()> {
         10000,
         &mut [RylvStr::from_static("unit:bytes")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("connections"),
         42,
         &mut [RylvStr::from_static("pool:main")],
@@ -409,7 +409,7 @@ fn test_linux_batch_mixed_methods() -> std::io::Result<()> {
         5120,
         &mut [RylvStr::from_static("proto:http")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("active.users"),
         123,
         &mut [RylvStr::from_static("region:us-east")],
@@ -452,7 +452,7 @@ fn test_apple_batch_mixed_methods() -> std::io::Result<()> {
         1920000,
         &mut [RylvStr::from_static("resolution:1080p")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("battery.level"),
         87,
         &mut [RylvStr::from_static("device:iphone")],
@@ -523,17 +523,17 @@ fn test_simple_writer_gauge_aggregation() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         50,
         &mut [RylvStr::from_static("host:web1")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         75,
         &mut [RylvStr::from_static("host:web1")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         90,
         &mut [RylvStr::from_static("host:web1")],
@@ -827,7 +827,7 @@ fn test_simple_writer_no_tags() -> std::io::Result<()> {
         42,
         &mut empty_tags,
     );
-    collector.gauge(RylvStr::from_static("notags.gauge"), 100, &mut empty_tags);
+    collector.gauge_avg(RylvStr::from_static("notags.gauge"), 100, &mut empty_tags);
     collector.histogram(
         RylvStr::from_static("notags.histogram"),
         250,
@@ -867,7 +867,7 @@ fn test_linux_batch_no_tags() -> std::io::Result<()> {
         1024,
         &mut empty_tags,
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("linux.notags.cpu"),
         45,
         &mut empty_tags,
@@ -906,7 +906,7 @@ fn test_apple_batch_no_tags() -> std::io::Result<()> {
         2048,
         &mut empty_tags,
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("macos.notags.memory"),
         512,
         &mut empty_tags,

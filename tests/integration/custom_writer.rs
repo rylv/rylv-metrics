@@ -148,7 +148,7 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     );
 
     // Test gauge
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("custom.gauge"),
         100,
         &mut [RylvStr::from_static("host:server1")],
@@ -225,7 +225,7 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
 
     let mut empty_tags: [RylvStr<'_>; 0] = [];
     collector.count(RylvStr::from_static("notags.counter"), &mut empty_tags);
-    collector.gauge(RylvStr::from_static("notags.gauge"), 100, &mut empty_tags);
+    collector.gauge_avg(RylvStr::from_static("notags.gauge"), 100, &mut empty_tags);
     collector.histogram(
         RylvStr::from_static("notags.histogram"),
         250,
@@ -289,7 +289,7 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
         RylvStr::from_static("requests"),
         &mut [RylvStr::from_static("method:GET")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory"),
         512,
         &mut [RylvStr::from_static("unit:mb")],
@@ -359,17 +359,17 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
     );
 
     // Test gauge aggregation
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         50,
         &mut [RylvStr::from_static("host:web1")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         75,
         &mut [RylvStr::from_static("host:web1")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         90,
         &mut [RylvStr::from_static("host:web1")],

@@ -56,6 +56,15 @@ pub trait MetricCollectorTrait {
     /// Multiple gauge values for the same metric/tags are averaged on flush.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>;
+
+    /// Records a gauge value representing a point-in-time measurement.
+    ///
+    /// Only the last value recorded before flush is emitted (last-write-wins).
+    ///
+    /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>;
@@ -71,7 +80,10 @@ pub trait MetricCollectorTrait {
     /// Increments a counter by value using pre-sorted tags.
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
-    /// Records a gauge using pre-sorted tags.
+    /// Records an averaged gauge using pre-sorted tags.
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+
+    /// Records a last-write-wins gauge using pre-sorted tags.
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
     /// Builds a [`SortedTags`] bound to this collector's hasher.
@@ -101,7 +113,10 @@ pub trait MetricCollectorTrait {
     /// Increments a counter by value using a prepared metric key.
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
 
-    /// Records a gauge using a prepared metric key.
+    /// Records an averaged gauge using a prepared metric key.
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+
+    /// Records a last-write-wins gauge using a prepared metric key.
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
 }
 

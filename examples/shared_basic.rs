@@ -11,7 +11,7 @@ fn main() {
         RylvStr::from_static("requests"),
         &mut [RylvStr::from_static("service:web")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
         &mut [RylvStr::from_static("service:web")],

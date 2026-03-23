@@ -96,6 +96,7 @@ where
 pub enum DrainStage {
     Count,
     Gauge,
+    GaugeLast,
     Histogram,
     Done,
 }
@@ -114,6 +115,13 @@ type GaugeDrainIter<'a, S> = dashmap::iter::Iter<
     S,
     DashMap<AggregatorEntryKey<S>, GaugeState, S>,
 >;
+type GaugeLastDrainIter<'a, S> = dashmap::iter::Iter<
+    'a,
+    AggregatorEntryKey<S>,
+    AtomicU64,
+    S,
+    DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
+>;
 type HistogramDrainIter<'a, S> = dashmap::iter::IterMut<
     'a,
     AggregatorEntryKey<S>,
@@ -131,9 +139,11 @@ where
     stage: DrainStage,
     count_iter: Option<CountDrainIter<'a, S>>,
     gauge_iter: Option<GaugeDrainIter<'a, S>>,
+    gauge_last_iter: Option<GaugeLastDrainIter<'a, S>>,
     histogram_iter: Option<HistogramDrainIter<'a, S>>,
     count: &'a DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
     gauge: &'a DashMap<AggregatorEntryKey<S>, GaugeState, S>,
+    gauge_last: &'a DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
     histogram: &'a DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
     pool_histograms: &'a [crossbeam::queue::SegQueue<HistogramWrapper>],
     keys_to_remove: Vec<RemoveKey>,
@@ -574,6 +584,42 @@ where
             remove_from_map(self.gauge, key, |_k| ());
         }
         self.keys_to_remove.clear();
+        self.stage = DrainStage::GaugeLast;
+        None
+    }
+
+    fn emit_gauge_last_metric(&mut self) -> Option<MetricFrameRef<'a>> {
+        if let Some(iter) = self.gauge_last_iter.as_mut() {
+            for entry in iter.by_ref() {
+                let value = entry.value().swap(u64::MAX, Ordering::SeqCst);
+                if value == u64::MAX {
+                    self.keys_to_remove.push(entry.key().remove_key());
+                    continue;
+                }
+
+                let key = entry.key();
+                let (metric, tags) = unsafe {
+                    (
+                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
+                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
+                    )
+                };
+                return Some(MetricFrameRef {
+                    prefix: self.prefix,
+                    metric,
+                    suffix: MetricSuffix::None,
+                    tags,
+                    value,
+                    kind: MetricKind::Gauge,
+                });
+            }
+        }
+
+        self.gauge_last_iter = None;
+        for key in &self.keys_to_remove {
+            remove_from_map(self.gauge_last, key, |_k| ());
+        }
+        self.keys_to_remove.clear();
         self.stage = DrainStage::Histogram;
         None
     }
@@ -722,6 +768,11 @@ where
                         return Some(frame);
                     }
                 }
+                DrainStage::GaugeLast => {
+                    if let Some(frame) = self.emit_gauge_last_metric() {
+                        return Some(frame);
+                    }
+                }
                 DrainStage::Histogram => {
                     if self.pending_histogram.is_none() && !self.load_next_histogram() {
                         self.histogram_iter = None;
@@ -760,9 +811,11 @@ where
         stage: DrainStage::Count,
         count_iter: Some(aggregator.count.iter()),
         gauge_iter: Some(aggregator.gauge.iter()),
+        gauge_last_iter: Some(aggregator.gauge_last.iter()),
         histogram_iter: Some(aggregator.histograms.iter_mut()),
         count: &aggregator.count,
         gauge: &aggregator.gauge,
+        gauge_last: &aggregator.gauge_last,
         histogram: &aggregator.histograms,
         pool_histograms: &aggregator.pool_histograms,
         keys_to_remove: Vec::new(),
@@ -812,13 +865,23 @@ where
     }
 
     #[inline]
-    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
     {
         let mut_tags = tags.as_mut();
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator(&aggregator, metric, value, mut_tags);
+    }
+
+    #[inline]
+    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>,
+    {
+        let mut_tags = tags.as_mut();
+        let aggregator = self.current_aggregator.load();
+        record_gauge_last_in_aggregator(&aggregator, metric, value, mut_tags);
     }
 
     #[inline]
@@ -841,9 +904,15 @@ where
     }
 
     #[inline]
-    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator_sorted(&aggregator, metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        let aggregator = self.current_aggregator.load();
+        record_gauge_last_in_aggregator_sorted(&aggregator, metric, value, tags);
     }
 
     #[cold]
@@ -881,9 +950,15 @@ where
     }
 
     #[inline]
-    fn gauge_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator_prepared(&aggregator, prepared, value);
+    }
+
+    #[inline]
+    fn gauge_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+        let aggregator = self.current_aggregator.load();
+        record_gauge_last_in_aggregator_prepared(&aggregator, prepared, value);
     }
 }
 
@@ -918,6 +993,14 @@ where
     }
 
     #[inline]
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>,
+    {
+        (*self).gauge_avg(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvStr<'t>]>,
@@ -933,6 +1016,11 @@ where
     #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).count_add_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        (*self).gauge_avg_sorted(metric, value, tags);
     }
 
     #[inline]
@@ -965,6 +1053,11 @@ where
     #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).count_add_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        (*self).gauge_avg_prepared(prepared, value);
     }
 
     #[inline]
@@ -1325,15 +1418,79 @@ pub fn record_gauge_in_aggregator_prepared<S>(
     );
 }
 
+pub fn record_gauge_last_in_aggregator<S>(
+    aggregator: &Aggregator<S>,
+    metric: RylvStr<'_>,
+    value: u64,
+    mut_tags: &mut [RylvStr<'_>],
+) where
+    S: BuildHasher + Clone,
+{
+    mut_tags.sort_unstable();
+    add_or_insert_entry_read_first(
+        metric,
+        mut_tags,
+        value,
+        &aggregator.gauge_last,
+        |v, value| {
+            v.store(value, Ordering::Relaxed);
+            Ok(())
+        },
+        || Some(AtomicU64::new(u64::MAX)),
+    );
+}
+
+pub fn record_gauge_last_in_aggregator_sorted<S>(
+    aggregator: &Aggregator<S>,
+    metric: RylvStr<'_>,
+    value: u64,
+    sorted_tags: &SortedTags<S>,
+) where
+    S: BuildHasher + Clone,
+{
+    add_or_insert_entry_read_first_sorted(
+        metric,
+        sorted_tags,
+        value,
+        &aggregator.gauge_last,
+        |v, value| {
+            v.store(value, Ordering::Relaxed);
+            Ok(())
+        },
+        || Some(AtomicU64::new(u64::MAX)),
+    );
+}
+
+pub fn record_gauge_last_in_aggregator_prepared<S>(
+    aggregator: &Aggregator<S>,
+    prepared: &PreparedMetric<S>,
+    value: u64,
+) where
+    S: BuildHasher + Clone,
+{
+    add_or_insert_entry_read_first_prepared(
+        prepared,
+        value,
+        &aggregator.gauge_last,
+        |v, value| {
+            v.store(value, Ordering::Relaxed);
+            Ok(())
+        },
+        || Some(AtomicU64::new(u64::MAX)),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         drain_aggregator_frames, record_count_add_in_aggregator,
         record_count_add_in_aggregator_prepared, record_count_add_in_aggregator_sorted,
         record_gauge_in_aggregator, record_gauge_in_aggregator_prepared,
-        record_gauge_in_aggregator_sorted, record_histogram_in_aggregator,
-        record_histogram_in_aggregator_prepared, record_histogram_in_aggregator_sorted,
-        remove_from_map, SharedCollector, SharedCollectorOptions,
+        record_gauge_in_aggregator_sorted, record_gauge_last_in_aggregator,
+        record_gauge_last_in_aggregator_prepared, record_gauge_last_in_aggregator_sorted,
+        record_histogram_in_aggregator, record_histogram_in_aggregator_prepared,
+        record_histogram_in_aggregator_sorted, remove_from_map, SharedCollector,
+        SharedCollectorOptions,
     };
     use crate::dogstats::aggregator::Aggregator;
     use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
@@ -1543,8 +1700,8 @@ mod tests {
 
         collector.count_add_sorted(RylvStr::from_static("requests"), 2, &sorted);
         collector.count_add_prepared(&prepared_count, 3);
-        collector.gauge_sorted(RylvStr::from_static("load"), 10, &sorted);
-        collector.gauge_prepared(&prepared_gauge, 20);
+        collector.gauge_avg_sorted(RylvStr::from_static("load"), 10, &sorted);
+        collector.gauge_avg_prepared(&prepared_gauge, 20);
         collector.histogram_sorted(RylvStr::from_static("latency"), 40, &sorted);
         collector.histogram_prepared(&prepared_hist, 60);
 
@@ -1599,12 +1756,12 @@ mod tests {
             4,
             &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
         );
-        collector_ref.gauge(
+        collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             10,
             &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
         );
-        collector_ref.gauge(
+        collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             20,
             &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
@@ -1726,5 +1883,166 @@ mod tests {
                 .pop()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn gauge_last_emits_last_value_not_average() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "app.".to_string(),
+            ..Default::default()
+        });
+
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            100,
+            &mut [RylvStr::from_static("pool:main")],
+        );
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            200,
+            &mut [RylvStr::from_static("pool:main")],
+        );
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            50,
+            &mut [RylvStr::from_static("pool:main")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(
+            lines,
+            vec!["app.connections:50|g|#pool:main\n".to_string()]
+        );
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn gauge_last_without_tags() {
+        let collector = SharedCollector::new(SharedCollectorOptions::default());
+
+        collector.gauge(RylvStr::from_static("cpu.usage"), 73, &mut []);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["cpu.usage:73|g\n".to_string()]);
+    }
+
+    #[test]
+    fn gauge_last_sorted_and_prepared() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "s.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let prepared =
+            collector.prepare_metric(RylvStr::from_static("temperature"), sorted.clone());
+
+        collector.gauge_sorted(RylvStr::from_static("temperature"), 10, &sorted);
+        collector.gauge_sorted(RylvStr::from_static("temperature"), 30, &sorted);
+        collector.gauge_prepared(&prepared, 20);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(
+            lines,
+            vec!["s.temperature:20|g|#a:1,b:2\n".to_string()]
+        );
+    }
+
+    #[test]
+    fn gauge_last_and_gauge_avg_are_independent() {
+        let collector = SharedCollector::new(SharedCollectorOptions::default());
+
+        collector.gauge_avg(
+            RylvStr::from_static("load"),
+            10,
+            &mut [RylvStr::from_static("a:1")],
+        );
+        collector.gauge_avg(
+            RylvStr::from_static("load"),
+            20,
+            &mut [RylvStr::from_static("a:1")],
+        );
+        collector.gauge(
+            RylvStr::from_static("load"),
+            10,
+            &mut [RylvStr::from_static("a:1")],
+        );
+        collector.gauge(
+            RylvStr::from_static("load"),
+            20,
+            &mut [RylvStr::from_static("a:1")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        // gauge_avg emits 15 (average of 10 and 20), gauge emits 20 (last value)
+        // Both are gauge type (|g) but stored independently
+        assert_eq!(lines.len(), 2);
+        assert!(lines.contains(&"load:15|g|#a:1\n".to_string()));
+        assert!(lines.contains(&"load:20|g|#a:1\n".to_string()));
+    }
+
+    #[test]
+    fn gauge_last_raw_aggregator_helpers() {
+        let collector = SharedCollector::new(SharedCollectorOptions::default());
+        let aggregator =
+            Aggregator::with_hasher_builder(&collector.hasher_builder, collector.pool_count);
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let prepared =
+            collector.prepare_metric(RylvStr::from_static("gl_prepared"), sorted.clone());
+
+        record_gauge_last_in_aggregator(
+            &aggregator,
+            RylvStr::from_static("gl"),
+            10,
+            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+        );
+        record_gauge_last_in_aggregator(
+            &aggregator,
+            RylvStr::from_static("gl"),
+            42,
+            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+        );
+        record_gauge_last_in_aggregator_sorted(
+            &aggregator,
+            RylvStr::from_static("gl_sorted"),
+            77,
+            prepared.tags(),
+        );
+        record_gauge_last_in_aggregator_prepared(&aggregator, &prepared, 99);
+
+        let lines = frames_to_lines(drain_aggregator_frames(&aggregator, ""));
+        assert!(lines.contains(&"gl:42|g|#a:1,b:2\n".to_string()));
+        assert!(lines.contains(&"gl_sorted:77|g|#a:1,b:2\n".to_string()));
+        assert!(lines.contains(&"gl_prepared:99|g|#a:1,b:2\n".to_string()));
+    }
+
+    #[test]
+    fn drain_frames_remove_empty_gauge_last_entries() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let aggregator = Aggregator::with_hasher_builder(&hasher, 0);
+
+        record_gauge_last_in_aggregator(
+            &aggregator,
+            RylvStr::from_static("gl"),
+            10,
+            &mut [RylvStr::from_static("a:1")],
+        );
+        // Set to sentinel (u64::MAX) to simulate "no writes this cycle"
+        aggregator
+            .gauge_last
+            .iter()
+            .next()
+            .unwrap()
+            .value()
+            .store(u64::MAX, Ordering::SeqCst);
+
+        let mut frames = drain_aggregator_frames(&aggregator, "");
+        assert!(frames.next_frame().is_none());
+        drop(frames);
+
+        assert!(aggregator.gauge_last.is_empty());
     }
 }

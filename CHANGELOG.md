@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SortedTags` for reusable pre-sorted tag sets that skip per-call sorting
 - `MetricCollector` now generic over any `DrainMetricCollectorTrait` inner collector
 - Batch UDP writers: `LinuxBatch` (sendmmsg) and `AppleBatch` (sendmsg_x)
-- Convenience macros: `histogram!`, `count!`, `count_add!`, `gauge!`
+- Convenience macros: `histogram!`, `count!`, `count_add!`, `gauge_avg!`
 - `HistogramConfig::with_count()`, `with_min()`, `with_avg()`, `with_max()` base metric toggles
 - `Bounds` for inclusive min/max histogram value clamping
 - Miri tests for `SharedCollector` and `TLSCollector` drain lifetime safety

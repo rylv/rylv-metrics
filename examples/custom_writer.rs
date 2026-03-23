@@ -75,7 +75,7 @@ fn main() {
         RylvStr::from_static("request.count"),
         &mut [RylvStr::from_static("endpoint:api")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("connections"),
         10,
         &mut [RylvStr::from_static("pool:main")],
