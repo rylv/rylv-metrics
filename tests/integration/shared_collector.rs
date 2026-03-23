@@ -29,6 +29,7 @@ where
                 let metric_type = match frame.kind {
                     rylv_metrics::MetricKind::Count => "c",
                     rylv_metrics::MetricKind::Gauge => "g",
+                    rylv_metrics::MetricKind::Timing => "ms",
                 };
                 if frame.tags.is_empty() {
                     lines.push(format!("{metric}:{}|{metric_type}\n", frame.value));

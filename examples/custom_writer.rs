@@ -29,6 +29,7 @@ impl StatsWriterTrait for InMemoryWriter {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
             MetricKind::Gauge => "g",
+            MetricKind::Timing => "ms",
         };
         let metric_name: String = metrics.iter().copied().collect();
         let line = if tags.is_empty() {

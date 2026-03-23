@@ -38,6 +38,7 @@ impl StatsWriterTrait for MiriCustomWriter {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
             MetricKind::Gauge => "g",
+            MetricKind::Timing => "ms",
         };
         for metric in metrics {
             self.current.push_str(metric);
@@ -131,6 +132,11 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
         42,
         &mut [RylvStr::from_static("env:test")],
     );
+    collector.timing(
+        RylvStr::from_static("duration_ms"),
+        55,
+        &mut [RylvStr::from_static("env:test")],
+    );
 
     let mut acquired = None;
     for _ in 0..8 {
@@ -144,6 +150,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
     let mut saw_count = false;
     let mut saw_gauge = false;
     let mut saw_histogram = false;
+    let mut saw_timing = false;
 
     for frame in drain.by_ref() {
         assert!(!frame.metric.is_empty());
@@ -162,12 +169,18 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
                     saw_histogram = true;
                 }
             }
+            FrameMetricKind::Timing => {
+                if frame.metric == "duration_ms" {
+                    saw_timing = true;
+                }
+            }
         }
     }
 
     assert!(saw_count);
     assert!(saw_gauge);
     assert!(saw_histogram);
+    assert!(saw_timing);
 }
 
 #[cfg(feature = "tls-collector")]
@@ -188,12 +201,18 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
         42,
         &mut [RylvStr::from_static("env:test")],
     );
+    collector.timing(
+        RylvStr::from_static("duration_ms"),
+        55,
+        &mut [RylvStr::from_static("env:test")],
+    );
 
     let drain = collector.try_begin_drain();
     let mut drain = drain.expect("tls drain should be immediately available");
     let mut saw_count = false;
     let mut saw_gauge = false;
     let mut saw_histogram = false;
+    let mut saw_timing = false;
 
     for frame in drain.by_ref() {
         assert!(!frame.metric.is_empty());
@@ -212,10 +231,16 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
                     saw_histogram = true;
                 }
             }
+            FrameMetricKind::Timing => {
+                if frame.metric == "duration_ms" {
+                    saw_timing = true;
+                }
+            }
         }
     }
 
     assert!(saw_count);
     assert!(saw_gauge);
     assert!(saw_histogram);
+    assert!(saw_timing);
 }

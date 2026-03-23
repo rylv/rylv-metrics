@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example gauges`
 
 use rylv_metrics::{
-    gauge, gauge_avg, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    gauge_avg, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
     SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::time::Duration;

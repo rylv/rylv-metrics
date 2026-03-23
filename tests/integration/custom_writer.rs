@@ -46,6 +46,7 @@ impl StatsWriterTrait for TestStatsWriter {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
             MetricKind::Gauge => "g",
+            MetricKind::Timing => "ms",
         };
         let mut buffer = self.current_buffer.lock().unwrap();
 

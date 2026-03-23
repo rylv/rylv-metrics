@@ -218,6 +218,14 @@ where
     }
 
     #[inline]
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>,
+    {
+        self.inner.timing(metric, value, tags);
+    }
+
+    #[inline]
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.histogram_sorted(metric, value, tags);
     }
@@ -235,6 +243,11 @@ where
     #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.gauge_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+        self.inner.timing_sorted(metric, value, tags);
     }
 
     #[cold]
@@ -272,6 +285,11 @@ where
     #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.inner.gauge_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.inner.timing_prepared(prepared, value);
     }
 }
 
@@ -339,6 +357,13 @@ mod tests {
             self.record(format!("gauge:{}:{value}", metric.as_ref()));
         }
 
+        fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        where
+            TT: AsMut<[RylvStr<'t>]>,
+        {
+            self.record(format!("timing:{}:{value}", metric.as_ref()));
+        }
+
         fn histogram_sorted(
             &self,
             metric: RylvStr<'_>,
@@ -357,12 +382,21 @@ mod tests {
             self.record(format!("count_add_sorted:{}:{value}", metric.as_ref()));
         }
 
-        fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
+        fn gauge_avg_sorted(
+            &self,
+            metric: RylvStr<'_>,
+            value: u64,
+            _tags: &SortedTags<Self::Hasher>,
+        ) {
             self.record(format!("gauge_avg_sorted:{}:{value}", metric.as_ref()));
         }
 
         fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
             self.record(format!("gauge_sorted:{}:{value}", metric.as_ref()));
+        }
+
+        fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
+            self.record(format!("timing_sorted:{}:{value}", metric.as_ref()));
         }
 
         fn prepare_sorted_tags<'a>(
@@ -412,6 +446,13 @@ mod tests {
         fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
             self.record(format!(
                 "gauge_prepared:{}:{value}",
+                prepared.metric().as_ref()
+            ));
+        }
+
+        fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+            self.record(format!(
+                "timing_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
         }
@@ -476,12 +517,19 @@ mod tests {
             7,
             &mut [RylvStr::from_static("tag:test")],
         );
+        collector.timing(
+            RylvStr::from_static("duration"),
+            13,
+            &mut [RylvStr::from_static("tag:test")],
+        );
         collector.count_add_sorted(RylvStr::from_static("sorted_count"), 2, &sorted);
         collector.gauge_avg_sorted(RylvStr::from_static("sorted_gauge"), 5, &sorted);
         collector.histogram_sorted(RylvStr::from_static("sorted_hist"), 11, &sorted);
+        collector.timing_sorted(RylvStr::from_static("sorted_timing"), 14, &sorted);
         collector.count_add_prepared(&prepared, 4);
         collector.gauge_avg_prepared(&prepared, 6);
         collector.histogram_prepared(&prepared, 8);
+        collector.timing_prepared(&prepared, 15);
 
         let calls = inner.take_calls();
         assert_eq!(
@@ -491,12 +539,15 @@ mod tests {
                 "count_add:requests:3".to_string(),
                 "gauge_avg:load:9".to_string(),
                 "histogram:latency:7".to_string(),
+                "timing:duration:13".to_string(),
                 "count_add_sorted:sorted_count:2".to_string(),
                 "gauge_avg_sorted:sorted_gauge:5".to_string(),
                 "histogram_sorted:sorted_hist:11".to_string(),
+                "timing_sorted:sorted_timing:14".to_string(),
                 "count_add_prepared:prepared:4".to_string(),
                 "gauge_avg_prepared:prepared:6".to_string(),
                 "histogram_prepared:prepared:8".to_string(),
+                "timing_prepared:prepared:15".to_string(),
             ]
         );
     }

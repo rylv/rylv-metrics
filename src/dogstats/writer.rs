@@ -527,6 +527,7 @@ const fn metric_str(metric_type: MetricKind) -> &'static str {
     match metric_type {
         MetricKind::Count => "c",
         MetricKind::Gauge => "g",
+        MetricKind::Timing => "ms",
     }
 }
 

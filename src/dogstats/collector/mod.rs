@@ -69,6 +69,16 @@ pub trait MetricCollectorTrait {
     where
         TT: AsMut<[RylvStr<'t>]>;
 
+    /// Records a timing value for duration tracking.
+    ///
+    /// Timings are aggregated client-side identically to histograms, but emitted
+    /// with the `DogStatsD` `ms` metric type instead of gauge.
+    ///
+    /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvStr<'t>]>;
+
     /// Records a histogram using pre-sorted tags.
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
@@ -85,6 +95,9 @@ pub trait MetricCollectorTrait {
 
     /// Records a last-write-wins gauge using pre-sorted tags.
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+
+    /// Records a timing using pre-sorted tags.
+    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
     /// Builds a [`SortedTags`] bound to this collector's hasher.
     fn prepare_sorted_tags<'a>(
@@ -118,6 +131,9 @@ pub trait MetricCollectorTrait {
 
     /// Records a last-write-wins gauge using a prepared metric key.
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+
+    /// Records a timing using a prepared metric key.
+    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
 }
 
 /// Trait for collectors that support draining aggregated metrics.
@@ -167,4 +183,6 @@ pub enum MetricKind {
     Count,
     /// Gauge metric (`|g`).
     Gauge,
+    /// Timing metric (`|ms`).
+    Timing,
 }

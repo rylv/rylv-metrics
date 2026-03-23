@@ -353,6 +353,71 @@ macro_rules! sorted_tags {
     }};
 }
 
+/// Macro for recording timing values with variable number of tags.
+///
+/// Timings are aggregated client-side identically to histograms, but emitted
+/// with the `DogStatsD` `ms` metric type.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "udp")] {
+/// use rylv_metrics::{
+///     timing, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
+///     SharedCollector, StatsWriterType,
+/// };
+/// use std::time::Duration;
+///
+/// let options = MetricCollectorOptions {
+///     max_udp_packet_size: 1500,
+///     max_udp_batch_size: 100,
+///     flush_interval: Duration::from_millis(100),
+///     writer_type: StatsWriterType::Simple,
+///     ..Default::default()
+/// };
+/// let inner = SharedCollector::default();
+/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options, inner).unwrap();
+///
+/// timing!(collector, "request.duration", 100, "endpoint:api", "method:get");
+/// timing!(collector, "db.query", 42);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! timing {
+    // With tags
+    ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
+        {
+            #[allow(unused_mut)]
+            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            $collector.timing($crate::RylvStr::from($metric), $value, &mut tags)
+        }
+    };
+    // Without tags
+    ($collector:expr, $metric:expr, $value:expr) => {
+        {
+            #[allow(unused_mut)]
+            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            $collector.timing($crate::RylvStr::from($metric), $value, &mut tags)
+        }
+    };
+}
+
+/// Macro for recording timing values with pre-sorted tags.
+#[macro_export]
+macro_rules! timing_sorted {
+    ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
+        $collector.timing_sorted($crate::RylvStr::from($metric), $value, $tags)
+    }};
+}
+
+/// Macro for recording timing values with a prepared metric key.
+#[macro_export]
+macro_rules! timing_prepared {
+    ($collector:expr, $prepared:expr, $value:expr) => {{
+        $collector.timing_prepared($prepared, $value)
+    }};
+}
+
 /// Macro for recording histogram values with pre-sorted tags.
 #[macro_export]
 macro_rules! histogram_sorted {
