@@ -1,7 +1,7 @@
+use std::collections::HashMap;
 use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{cmp::Ordering as CmpOrdering, collections::HashMap};
 
 use super::{DrainMetricCollectorTrait, MetricCollectorTrait};
 use crate::dogstats::aggregator::{
@@ -13,7 +13,7 @@ use crate::dogstats::histogram_config::{
     ResolvedHistogramConfigs,
 };
 use crate::dogstats::sorted_tags::{combine_metric_tags_hash, hash_tags, PreparedMetric};
-use crate::dogstats::{Aggregator, RylvStr, SortedTags};
+use crate::dogstats::{Aggregator, RylvStr, RylvTag, SortedTags};
 use crate::DefaultMetricHasher;
 use arc_swap::ArcSwap;
 use dashmap::{DashMap, SharedValue};
@@ -270,7 +270,7 @@ where
 
 fn add_or_insert_entry_read_first<V, S>(
     metric: RylvStr<'_>,
-    tags: &[RylvStr<'_>],
+    tags: &[RylvTag<'_>],
     value: u64,
     hashmap: &DashMap<AggregatorEntryKey<S>, V, impl BuildHasher + Clone>,
     record_fn: impl FnOnce(&V, u64) -> Result<(), String>,
@@ -469,7 +469,7 @@ fn add_or_insert_entry_read_first_prepared<V, S>(
 
 fn build_lookup_key<'a, V, S>(
     metric: RylvStr<'a>,
-    tags: &'a [RylvStr<'a>],
+    tags: &'a [RylvTag<'a>],
     hashmap: &DashMap<AggregatorEntryKey<S>, V, impl BuildHasher + Clone>,
 ) -> LookupKey<'a>
 where
@@ -990,9 +990,8 @@ where
     #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
-        let mut_tags = tags.as_mut();
         let aggregator = self.current_aggregator.load();
         record_histogram_in_aggregator(
             &aggregator,
@@ -1000,14 +999,14 @@ where
             &self.default_histogram_config,
             metric,
             value,
-            mut_tags,
+            tags.as_mut(),
         );
     }
 
     #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.count_add(metric, 1, tags);
     }
@@ -1015,39 +1014,35 @@ where
     #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
-        let mut_tags = tags.as_mut();
         let aggregator = self.current_aggregator.load();
-        record_count_add_in_aggregator(&aggregator, metric, value, mut_tags);
+        record_count_add_in_aggregator(&aggregator, metric, value, tags.as_mut());
     }
 
     #[inline]
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
-        let mut_tags = tags.as_mut();
         let aggregator = self.current_aggregator.load();
-        record_gauge_in_aggregator(&aggregator, metric, value, mut_tags);
+        record_gauge_in_aggregator(&aggregator, metric, value, tags.as_mut());
     }
 
     #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
-        let mut_tags = tags.as_mut();
         let aggregator = self.current_aggregator.load();
-        record_gauge_last_in_aggregator(&aggregator, metric, value, mut_tags);
+        record_gauge_last_in_aggregator(&aggregator, metric, value, tags.as_mut());
     }
 
     #[inline]
     fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
-        let mut_tags = tags.as_mut();
         let aggregator = self.current_aggregator.load();
         record_timing_in_aggregator(
             &aggregator,
@@ -1055,7 +1050,7 @@ where
             &self.default_histogram_config,
             metric,
             value,
-            mut_tags,
+            tags.as_mut(),
         );
     }
 
@@ -1105,7 +1100,7 @@ where
 
     #[cold]
     fn prepare_metric(&self, metric: RylvStr<'_>, tags: SortedTags<S>) -> PreparedMetric<S> {
-        let metric = crate::dogstats::sorted_tags::to_static_metric(metric);
+        let metric = metric.into_static_str();
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
         PreparedMetric::new(metric, tags, hash)
@@ -1114,7 +1109,7 @@ where
     #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
-        tags: impl IntoIterator<Item = RylvStr<'a>>,
+        tags: impl IntoIterator<Item = RylvTag<'a>>,
     ) -> SortedTags<S> {
         SortedTags::new(tags, &self.hasher_builder)
     }
@@ -1171,7 +1166,7 @@ where
     #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).histogram(metric, value, tags);
     }
@@ -1179,7 +1174,7 @@ where
     #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).count(metric, tags);
     }
@@ -1187,7 +1182,7 @@ where
     #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).count_add(metric, value, tags);
     }
@@ -1195,7 +1190,7 @@ where
     #[inline]
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).gauge_avg(metric, value, tags);
     }
@@ -1203,7 +1198,7 @@ where
     #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).gauge(metric, value, tags);
     }
@@ -1211,7 +1206,7 @@ where
     #[inline]
     fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).timing(metric, value, tags);
     }
@@ -1253,7 +1248,7 @@ where
     #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
-        tags: impl IntoIterator<Item = RylvStr<'a>>,
+        tags: impl IntoIterator<Item = RylvTag<'a>>,
     ) -> SortedTags<Self::Hasher> {
         (*self).prepare_sorted_tags(tags)
     }
@@ -1320,17 +1315,11 @@ pub fn record_histogram_in_aggregator<S>(
     default_histogram_config: &ResolvedHistogramConfig,
     metric: RylvStr<'_>,
     value: u64,
-    mut_tags: &mut [RylvStr<'_>],
+    mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
-    mut_tags.sort_unstable_by(|a, b| {
-        if a == b {
-            CmpOrdering::Equal
-        } else {
-            a.as_ref().cmp(b.as_ref())
-        }
-    });
+    mut_tags.sort_unstable();
 
     let hashmap = &aggregator.histograms;
     let lookup_key = build_lookup_key(metric, mut_tags, hashmap);
@@ -1500,17 +1489,11 @@ pub fn record_timing_in_aggregator<S>(
     default_histogram_config: &ResolvedHistogramConfig,
     metric: RylvStr<'_>,
     value: u64,
-    mut_tags: &mut [RylvStr<'_>],
+    mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
-    mut_tags.sort_unstable_by(|a, b| {
-        if a == b {
-            CmpOrdering::Equal
-        } else {
-            a.as_ref().cmp(b.as_ref())
-        }
-    });
+    mut_tags.sort_unstable();
 
     let hashmap = &aggregator.timings;
     let lookup_key = build_lookup_key(metric, mut_tags, hashmap);
@@ -1678,7 +1661,7 @@ pub fn record_count_add_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
-    mut_tags: &mut [RylvStr<'_>],
+    mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
@@ -1740,7 +1723,7 @@ pub fn record_gauge_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
-    mut_tags: &mut [RylvStr<'_>],
+    mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
@@ -1820,7 +1803,7 @@ pub fn record_gauge_last_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
-    mut_tags: &mut [RylvStr<'_>],
+    mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
@@ -1894,7 +1877,7 @@ mod tests {
     use crate::dogstats::aggregator::Aggregator;
     use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
     use crate::dogstats::histogram_config::{resolve_histogram_configs, HistogramConfig};
-    use crate::{MetricCollectorTrait, RylvStr};
+    use crate::{MetricCollectorTrait, RylvStr, RylvTag};
     use std::collections::HashMap;
     use std::sync::atomic::Ordering;
 
@@ -2021,8 +2004,10 @@ mod tests {
     }
 
     fn record_all_helper_variants(collector: &SharedCollector, aggregator: &Aggregator) {
-        let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
         let prepared_count_a =
             collector.prepare_metric(RylvStr::from_static("requests_prepared"), sorted.clone());
         let prepared_count_b =
@@ -2040,7 +2025,10 @@ mod tests {
             aggregator,
             RylvStr::from_static("requests"),
             2,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::Full(RylvStr::from_static("b:2")),
+                RylvTag::Full(RylvStr::from_static("a:1")),
+            ],
         );
         record_count_add_in_aggregator_sorted(
             aggregator,
@@ -2055,7 +2043,10 @@ mod tests {
             aggregator,
             RylvStr::from_static("load"),
             10,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         record_gauge_in_aggregator_sorted(
             aggregator,
@@ -2072,7 +2063,10 @@ mod tests {
             &collector.default_histogram_config,
             RylvStr::from_static("latency"),
             40,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         record_histogram_in_aggregator_sorted(
             aggregator,
@@ -2105,8 +2099,10 @@ mod tests {
             ..Default::default()
         });
 
-        let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
         let prepared_count =
             collector.prepare_metric(RylvStr::from_static("requests"), sorted.clone());
         let prepared_gauge = collector.prepare_metric(RylvStr::from_static("load"), sorted.clone());
@@ -2141,7 +2137,7 @@ mod tests {
         let collector = SharedCollector::new(SharedCollectorOptions::default());
         collector.count(
             RylvStr::from_static("requests"),
-            &mut [RylvStr::from_static("scope:test")],
+            &mut [RylvTag::from(RylvStr::from_static("scope:test"))],
         );
 
         let held = collector.current_aggregator.load_full();
@@ -2164,32 +2160,50 @@ mod tests {
 
         collector_ref.count(
             RylvStr::from_static("requests"),
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         collector_ref.count_add(
             RylvStr::from_static("requests"),
             4,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("a:1")),
+                RylvTag::from(RylvStr::from_static("b:2")),
+            ],
         );
         collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             10,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             20,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("a:1")),
+                RylvTag::from(RylvStr::from_static("b:2")),
+            ],
         );
         collector_ref.histogram(
             RylvStr::from_static("latency"),
             40,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         collector_ref.histogram(
             RylvStr::from_static("latency"),
             60,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("a:1")),
+                RylvTag::from(RylvStr::from_static("b:2")),
+            ],
         );
 
         let drain =
@@ -2233,7 +2247,7 @@ mod tests {
             &aggregator,
             RylvStr::from_static("to_remove"),
             1,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         let remove_key = aggregator
             .count
@@ -2249,7 +2263,7 @@ mod tests {
             &aggregator,
             RylvStr::from_static("requests"),
             1,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         aggregator
             .count
@@ -2263,7 +2277,7 @@ mod tests {
             &aggregator,
             RylvStr::from_static("load"),
             10,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         let gauge = aggregator.gauge.iter().next().unwrap();
         gauge.sum.store(0, Ordering::SeqCst);
@@ -2276,7 +2290,7 @@ mod tests {
             &resolved.default_histogram_config,
             RylvStr::from_static("latency"),
             10,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         aggregator
             .histograms
@@ -2310,17 +2324,17 @@ mod tests {
         collector.gauge(
             RylvStr::from_static("connections"),
             100,
-            &mut [RylvStr::from_static("pool:main")],
+            &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
         );
         collector.gauge(
             RylvStr::from_static("connections"),
             200,
-            &mut [RylvStr::from_static("pool:main")],
+            &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
         );
         collector.gauge(
             RylvStr::from_static("connections"),
             50,
-            &mut [RylvStr::from_static("pool:main")],
+            &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
         );
 
         let lines = drain_metrics_now(&collector);
@@ -2345,8 +2359,10 @@ mod tests {
             ..Default::default()
         });
 
-        let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
         let prepared =
             collector.prepare_metric(RylvStr::from_static("temperature"), sorted.clone());
 
@@ -2365,22 +2381,22 @@ mod tests {
         collector.gauge_avg(
             RylvStr::from_static("load"),
             10,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         collector.gauge_avg(
             RylvStr::from_static("load"),
             20,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         collector.gauge(
             RylvStr::from_static("load"),
             10,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         collector.gauge(
             RylvStr::from_static("load"),
             20,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
 
         let lines = drain_metrics_now(&collector);
@@ -2397,21 +2413,29 @@ mod tests {
         let aggregator =
             Aggregator::with_hasher_builder(&collector.hasher_builder, collector.pool_count);
 
-        let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
         let prepared = collector.prepare_metric(RylvStr::from_static("gl_prepared"), sorted);
 
         record_gauge_last_in_aggregator(
             &aggregator,
             RylvStr::from_static("gl"),
             10,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         record_gauge_last_in_aggregator(
             &aggregator,
             RylvStr::from_static("gl"),
             42,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("a:1")),
+                RylvTag::from(RylvStr::from_static("b:2")),
+            ],
         );
         record_gauge_last_in_aggregator_sorted(
             &aggregator,
@@ -2436,7 +2460,7 @@ mod tests {
             &aggregator,
             RylvStr::from_static("gl"),
             10,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         // Set to sentinel (u64::MAX) to simulate "no writes this cycle"
         aggregator
@@ -2464,12 +2488,12 @@ mod tests {
         collector.timing(
             RylvStr::from_static("request.duration"),
             100,
-            &mut [RylvStr::from_static("endpoint:api")],
+            &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))],
         );
         collector.timing(
             RylvStr::from_static("request.duration"),
             200,
-            &mut [RylvStr::from_static("endpoint:api")],
+            &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))],
         );
 
         let lines = drain_metrics_now(&collector);
@@ -2504,8 +2528,10 @@ mod tests {
             ..Default::default()
         });
 
-        let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
         let prepared = collector.prepare_metric(RylvStr::from_static("duration"), sorted.clone());
 
         collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
@@ -2524,12 +2550,12 @@ mod tests {
         collector.histogram(
             RylvStr::from_static("latency"),
             100,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         collector.timing(
             RylvStr::from_static("latency"),
             200,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
 
         let lines = drain_metrics_now(&collector);
@@ -2549,12 +2575,18 @@ mod tests {
         collector_ref.timing(
             RylvStr::from_static("duration"),
             40,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         collector_ref.timing(
             RylvStr::from_static("duration"),
             60,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("a:1")),
+                RylvTag::from(RylvStr::from_static("b:2")),
+            ],
         );
 
         let drain =
@@ -2569,8 +2601,10 @@ mod tests {
         let aggregator =
             Aggregator::with_hasher_builder(&collector.hasher_builder, collector.pool_count);
 
-        let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
         let prepared_a =
             collector.prepare_metric(RylvStr::from_static("timing_prepared"), sorted.clone());
         let prepared_b = collector.prepare_metric(RylvStr::from_static("timing_prepared"), sorted);
@@ -2581,7 +2615,10 @@ mod tests {
             &collector.default_histogram_config,
             RylvStr::from_static("timing"),
             40,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [
+                RylvTag::from(RylvStr::from_static("b:2")),
+                RylvTag::from(RylvStr::from_static("a:1")),
+            ],
         );
         record_timing_in_aggregator_sorted(
             &aggregator,
@@ -2632,7 +2669,7 @@ mod tests {
             &resolved.default_histogram_config,
             RylvStr::from_static("duration"),
             10,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         // Reset the histogram to simulate empty timing entry
         aggregator
@@ -2662,8 +2699,10 @@ mod tests {
             ..Default::default()
         });
 
-        let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
         let prepared = collector.prepare_metric(RylvStr::from_static("duration"), sorted.clone());
 
         collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
@@ -2703,7 +2742,7 @@ mod tests {
             &resolved.default_histogram_config,
             RylvStr::from_static("latency"),
             10,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
         aggregator
             .histograms
@@ -2727,7 +2766,7 @@ mod tests {
             &resolved.default_histogram_config,
             RylvStr::from_static("duration"),
             20,
-            &mut [RylvStr::from_static("a:1")],
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
 
         // Pool should be empty because the timing consumed the recycled wrapper.

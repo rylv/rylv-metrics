@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rylv_metrics::{
     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, PreparedMetric, RylvStr,
-    SharedCollector, SharedCollectorOptions, SortedTags, DEFAULT_STATS_WRITER_TYPE,
+    RylvTag, SharedCollector, SharedCollectorOptions, SortedTags, DEFAULT_STATS_WRITER_TYPE,
 };
 #[cfg(all(feature = "udp", feature = "tls-collector"))]
 use rylv_metrics::{TLSCollector, TLSCollectorOptions};
@@ -84,9 +84,9 @@ fn benchmark_record_histogram(c: &mut Criterion) {
                 black_box(RylvStr::from_static(vec_metrics[i])),
                 black_box(1),
                 black_box([
-                    RylvStr::from_static(tags_metrics[i]),
-                    RylvStr::from_static("tag:value"),
-                    RylvStr::from_static("tag2:value2"),
+                    RylvTag::from(RylvStr::from_static(tags_metrics[i])),
+                    RylvTag::from(RylvStr::from_static("tag:value")),
+                    RylvTag::from(RylvStr::from_static("tag2:value2")),
                 ]),
             );
             i = (i + 1) % n;
@@ -118,8 +118,8 @@ fn benchmark_record_histogram_single(c: &mut Criterion) {
                 black_box(RylvStr::from_static("some.metric")),
                 black_box(1),
                 black_box([
-                    RylvStr::from_static("tag:value"),
-                    RylvStr::from_static("tag2:value2"),
+                    RylvTag::from(RylvStr::from_static("tag:value")),
+                    RylvTag::from(RylvStr::from_static("tag2:value2")),
                 ]),
             );
         });
@@ -203,20 +203,20 @@ fn make_tls_collector(
         .expect("failed to create collector")
 }
 
-fn make_dynamic_metric_and_tag_pool() -> (Vec<RylvStr<'static>>, Vec<RylvStr<'static>>) {
+fn make_dynamic_metric_and_tag_pool() -> (Vec<RylvStr<'static>>, Vec<RylvTag<'static>>) {
     let mut metrics = Vec::with_capacity(DYNAMIC_POOL_SIZE);
     let mut tags = Vec::with_capacity(DYNAMIC_POOL_SIZE);
     for i in 0..DYNAMIC_POOL_SIZE {
         let metric = format!("bench.sync.histogram.metric{i}");
         let tag = format!("benchsync:criterion{i}");
         metrics.push(RylvStr::from_static(metric.leak()));
-        tags.push(RylvStr::from_static(tag.leak()));
+        tags.push(RylvTag::from(RylvStr::from_static(tag.leak())));
     }
     (metrics, tags)
 }
 
 fn build_sorted_tags_pool<C: MetricCollectorTrait>(
-    dynamic_tags: &[RylvStr<'static>],
+    dynamic_tags: &[RylvTag<'static>],
     collector: &C,
 ) -> Vec<SortedTags<C::Hasher>> {
     dynamic_tags
@@ -224,8 +224,8 @@ fn build_sorted_tags_pool<C: MetricCollectorTrait>(
         .map(|tag| {
             collector.prepare_sorted_tags([
                 tag.clone(),
-                RylvStr::from_static(TAG_CONST_1),
-                RylvStr::from_static(TAG_CONST_2),
+                RylvTag::from(RylvStr::from_static(TAG_CONST_1)),
+                RylvTag::from(RylvStr::from_static(TAG_CONST_2)),
             ])
         })
         .collect()
@@ -234,7 +234,7 @@ fn build_sorted_tags_pool<C: MetricCollectorTrait>(
 fn run_parallel_histogram_regular<C: MetricCollectorTrait + Sync>(
     collector: &C,
     metrics: &[RylvStr<'static>],
-    dynamic_tags: &[RylvStr<'static>],
+    dynamic_tags: &[RylvTag<'static>],
     iters: u64,
     thread_count: usize,
 ) {
@@ -253,8 +253,8 @@ fn run_parallel_histogram_regular<C: MetricCollectorTrait + Sync>(
                     let idx = (iter + index) % len;
                     let mut tags = [
                         dynamic_tags[idx].clone(),
-                        RylvStr::from_static(TAG_CONST_1),
-                        RylvStr::from_static(TAG_CONST_2),
+                        RylvTag::from(RylvStr::from_static(TAG_CONST_1)),
+                        RylvTag::from(RylvStr::from_static(TAG_CONST_2)),
                     ];
                     collector.histogram(metrics[idx].clone(), HISTOGRAM_VALUE, &mut tags);
                 }
@@ -362,8 +362,8 @@ fn benchmark_histogram_sync_single_compare(c: &mut Criterion) {
         b.iter(|| {
             let mut tags = [
                 dynamic_tags[idx].clone(),
-                RylvStr::from_static(TAG_CONST_1),
-                RylvStr::from_static(TAG_CONST_2),
+                RylvTag::from(RylvStr::from_static(TAG_CONST_1)),
+                RylvTag::from(RylvStr::from_static(TAG_CONST_2)),
             ];
             collector.histogram(
                 black_box(metrics[idx].clone()),

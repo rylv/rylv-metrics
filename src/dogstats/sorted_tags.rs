@@ -1,5 +1,5 @@
 use crate::dogstats::slice_utils::equal_slice;
-use crate::dogstats::RylvStr;
+use crate::dogstats::{resolve_tags, RylvStr, RylvTag};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,7 +29,7 @@ pub fn metric_tags_fingerprint(metric: &str, joined_tags: &str) -> u64 {
 /// Fast secondary fingerprint over metric + sorted tags slice.
 #[must_use]
 #[inline]
-pub fn metric_tags_fingerprint_from_tags(metric: &str, tags: &[RylvStr<'_>]) -> u64 {
+pub fn metric_tags_fingerprint_from_tags(metric: &str, tags: &[RylvTag<'_>]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0100_0000_01b3;
     let mut hash = OFFSET;
@@ -42,17 +42,38 @@ pub fn metric_tags_fingerprint_from_tags(metric: &str, tags: &[RylvStr<'_>]) -> 
 
     let mut iter = tags.iter();
     if let Some(tag) = iter.next() {
-        for b in tag.as_ref().as_bytes() {
-            hash ^= u64::from(*b);
-            hash = hash.wrapping_mul(PRIME);
-        }
+        hash = hash_tag::<PRIME>(hash, tag);
     }
     for tag in iter {
         hash ^= u64::from(b',');
         hash = hash.wrapping_mul(PRIME);
-        for b in tag.as_ref().as_bytes() {
-            hash ^= u64::from(*b);
+
+        hash = hash_tag::<PRIME>(hash, tag);
+    }
+    hash
+}
+
+fn hash_tag<const PRIME: u64>(mut hash: u64, tag: &RylvTag) -> u64 {
+    match tag {
+        RylvTag::Full(tag) => {
+            for b in tag.as_ref().as_bytes() {
+                hash ^= u64::from(*b);
+                hash = hash.wrapping_mul(PRIME);
+            }
+        }
+        RylvTag::Compound(k, v) => {
+            for b in k.as_ref().as_bytes() {
+                hash ^= u64::from(*b);
+                hash = hash.wrapping_mul(PRIME);
+            }
+
+            hash ^= u64::from(':');
             hash = hash.wrapping_mul(PRIME);
+
+            for b in v.as_ref().as_bytes() {
+                hash ^= u64::from(*b);
+                hash = hash.wrapping_mul(PRIME);
+            }
         }
     }
     hash
@@ -61,10 +82,19 @@ pub fn metric_tags_fingerprint_from_tags(metric: &str, tags: &[RylvStr<'_>]) -> 
 /// Compute a hash over a sorted tag slice.
 #[must_use]
 #[inline]
-pub fn hash_tags<S: BuildHasher>(hasher_builder: &S, tags: &[RylvStr<'_>]) -> u64 {
+pub fn hash_tags<S: BuildHasher>(hasher_builder: &S, tags: &[RylvTag<'_>]) -> u64 {
     let mut hasher = hasher_builder.build_hasher();
     for tag in tags {
-        tag.as_ref().hash(&mut hasher);
+        match tag {
+            RylvTag::Full(t) => {
+                t.as_ref().hash(&mut hasher);
+            }
+            RylvTag::Compound(key, value) => {
+                key.as_ref().hash(&mut hasher);
+                ':'.hash(&mut hasher);
+                value.as_ref().hash(&mut hasher);
+            }
+        }
     }
     hasher.finish()
 }
@@ -89,7 +119,7 @@ pub fn combine_metric_tags_hash<S: BuildHasher>(
 /// and hashing. The tags hash is precomputed at construction time.
 #[derive(Clone, Debug)]
 pub struct SortedTags<S: BuildHasher + Clone> {
-    tags: Box<[RylvStr<'static>]>,
+    tags: Box<[RylvTag<'static>]>,
     joined_tags: Arc<str>,
     tags_hash: u64,
     id: u64,
@@ -112,37 +142,22 @@ impl<S: BuildHasher + Clone> PartialEq for SortedTags<S> {
 impl<S: BuildHasher + Clone> SortedTags<S> {
     /// Builds a `SortedTags` from any tag iterator.
     ///
-    /// Tags are converted to owned/static form, sorted, joined, and hashed once.
+    /// Tags are resolved (compound tags are joined), converted to owned/static form,
+    /// sorted, joined, and hashed once.
     #[must_use]
     pub fn new<'a, I>(tags: I, hasher_builder: &S) -> Self
     where
-        I: IntoIterator<Item = RylvStr<'a>>,
+        I: IntoIterator<Item = RylvTag<'a>>,
     {
-        let mut tags_vec: Vec<RylvStr<'static>> = tags.into_iter().map(to_static_tag).collect();
+        let mut tags_vec: Vec<RylvTag<'static>> = resolve_tags(tags);
         tags_vec.sort_unstable();
 
-        // TODO: route this through `build_joined_tags` too, so joined-tag construction lives in
-        // one place before we do any further hot-path tuning here.
-        let joined_tags = if tags_vec.is_empty() {
-            Arc::<str>::from("")
-        } else {
-            let joined_len =
-                tags_vec.iter().map(|tag| tag.as_ref().len()).sum::<usize>() + tags_vec.len() - 1;
-            let mut buffer = String::with_capacity(joined_len);
-            let mut iter = tags_vec.iter();
-            if let Some(tag) = iter.next() {
-                buffer.push_str(tag.as_ref());
-            }
-            for tag in iter {
-                buffer.push(',');
-                buffer.push_str(tag.as_ref());
-            }
-            Arc::<str>::from(buffer)
-        };
+        let joined_tags = build_joined_tags(&tags_vec);
 
         let tags_hash = hash_tags(hasher_builder, &tags_vec);
 
         Self {
+            // TODO: Why not leave the vec here, for size reduction?
             tags: tags_vec.into_boxed_slice(),
             joined_tags,
             tags_hash,
@@ -152,11 +167,12 @@ impl<S: BuildHasher + Clone> SortedTags<S> {
     }
 
     /// Builds `SortedTags` from already-sorted tags and a precomputed tags hash.
-    pub(crate) fn from_sorted_tags_with_hash(tags: &[RylvStr<'_>], tags_hash: u64) -> Self {
-        let tags_vec: Vec<RylvStr<'static>> = tags.iter().cloned().map(to_static_tag).collect();
+    pub(crate) fn from_sorted_tags_with_hash(tags: &[RylvTag<'_>], tags_hash: u64) -> Self {
+        let tags_vec: Vec<RylvTag<'static>> = resolve_tags(tags.iter().cloned());
         let joined_tags = build_joined_tags(&tags_vec);
 
         Self {
+            // TODO: Why not leave the vec here, for size reduction?
             tags: tags_vec.into_boxed_slice(),
             joined_tags,
             tags_hash,
@@ -173,7 +189,7 @@ impl<S: BuildHasher + Clone> SortedTags<S> {
 
     /// Returns sorted tags.
     #[must_use]
-    pub fn tags(&self) -> &[RylvStr<'static>] {
+    pub fn tags(&self) -> &[RylvTag<'static>] {
         &self.tags
     }
 
@@ -196,29 +212,20 @@ impl<S: BuildHasher + Clone> SortedTags<S> {
     }
 }
 
-fn to_static_tag(tag: RylvStr<'_>) -> RylvStr<'static> {
-    match tag {
-        RylvStr::Static(s) => RylvStr::Static(s),
-        RylvStr::Borrowed(s) => RylvStr::Owned(Arc::from(s)),
-        RylvStr::Owned(s) => RylvStr::Owned(s),
-    }
-}
-
-fn build_joined_tags(tags_vec: &[RylvStr<'static>]) -> Arc<str> {
+fn build_joined_tags(tags_vec: &[RylvTag<'static>]) -> Arc<str> {
     if tags_vec.is_empty() {
         return Arc::<str>::from("");
     }
 
-    let joined_len =
-        tags_vec.iter().map(|tag| tag.as_ref().len()).sum::<usize>() + tags_vec.len() - 1;
+    let joined_len = tags_vec.iter().map(super::RylvTag::len).sum::<usize>() + tags_vec.len() - 1;
     let mut buffer = String::with_capacity(joined_len);
     let mut iter = tags_vec.iter();
     if let Some(tag) = iter.next() {
-        buffer.push_str(tag.as_ref());
+        tag.push_tag(&mut buffer);
     }
     for tag in iter {
         buffer.push(',');
-        buffer.push_str(tag.as_ref());
+        tag.push_tag(&mut buffer);
     }
     Arc::<str>::from(buffer)
 }
@@ -286,16 +293,6 @@ impl<S: BuildHasher + Clone> PreparedMetric<S> {
     }
 }
 
-/// Converts a metric name into a `'static` representation.
-#[must_use]
-pub fn to_static_metric(metric: RylvStr<'_>) -> RylvStr<'static> {
-    match metric {
-        RylvStr::Static(s) => RylvStr::Static(s),
-        RylvStr::Borrowed(s) => RylvStr::Owned(Arc::from(s)),
-        RylvStr::Owned(s) => RylvStr::Owned(s),
-    }
-}
-
 static NEXT_SORTED_TAG_ID: AtomicU64 = AtomicU64::new(0);
 pub fn next_sorted_tag_id() -> u64 {
     NEXT_SORTED_TAG_ID.fetch_add(1, Ordering::Relaxed)
@@ -309,7 +306,7 @@ pub fn next_metric_id() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::SortedTags;
-    use crate::{DefaultMetricHasher, RylvStr};
+    use crate::{DefaultMetricHasher, RylvStr, RylvTag};
 
     fn default_hasher() -> DefaultMetricHasher {
         DefaultMetricHasher::default()
@@ -319,9 +316,9 @@ mod tests {
     fn sorted_tags_builds_sorted_joined() {
         let tags = SortedTags::new(
             [
-                RylvStr::from("service:api".to_string()),
-                RylvStr::from_static("env:prod"),
-                RylvStr::from_static("az:use1"),
+                RylvTag::from("service:api".to_string()),
+                RylvTag::Full(RylvStr::from_static("env:prod")),
+                RylvTag::Full(RylvStr::from_static("az:use1")),
             ],
             &default_hasher(),
         );

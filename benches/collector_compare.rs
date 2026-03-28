@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rylv_metrics::{
-    MetricCollectorTrait, PreparedMetric, RylvStr, SharedCollector, SharedCollectorOptions,
-    TLSCollector, TLSCollectorOptions,
+    MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag, SharedCollector,
+    SharedCollectorOptions, TLSCollector, TLSCollectorOptions,
 };
 use std::time::Instant;
 
@@ -37,9 +37,9 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
     group.bench_function("shared_regular", |b| {
         let collector = make_shared();
         let mut tags = [
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from(RylvStr::from_static("service:api")),
+            RylvTag::from(RylvStr::from_static("env:bench")),
+            RylvTag::from(RylvStr::from_static("region:us-east-1")),
         ];
         b.iter(|| {
             collector.histogram(
@@ -53,9 +53,9 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
     group.bench_function("shared_sorted", |b| {
         let collector = make_shared();
         let sorted = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from(RylvStr::from_static("service:api")),
+            RylvTag::from(RylvStr::from_static("env:bench")),
+            RylvTag::from(RylvStr::from_static("region:us-east-1")),
         ]);
         b.iter(|| {
             collector.histogram_sorted(
@@ -69,9 +69,9 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
     group.bench_function("shared_prepared", |b| {
         let collector = make_shared();
         let sorted = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from(RylvStr::from_static("service:api")),
+            RylvTag::from(RylvStr::from_static("env:bench")),
+            RylvTag::from(RylvStr::from_static("region:us-east-1")),
         ]);
         let prepared = collector.prepare_metric(RylvStr::from_static("bench.histogram"), sorted);
         b.iter(|| {
@@ -83,9 +83,9 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
     group.bench_function("tls_regular", |b| {
         let collector = make_tls();
         let mut tags = [
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from(RylvStr::from_static("service:api")),
+            RylvTag::from(RylvStr::from_static("env:bench")),
+            RylvTag::from(RylvStr::from_static("region:us-east-1")),
         ];
         b.iter(|| {
             collector.histogram(
@@ -99,9 +99,9 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
     group.bench_function("tls_sorted", |b| {
         let collector = make_tls();
         let sorted = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from(RylvStr::from_static("service:api")),
+            RylvTag::from(RylvStr::from_static("env:bench")),
+            RylvTag::from(RylvStr::from_static("region:us-east-1")),
         ]);
         b.iter(|| {
             collector.histogram_sorted(
@@ -115,9 +115,9 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
     group.bench_function("tls_prepared", |b| {
         let collector = make_tls();
         let sorted = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from(RylvStr::from_static("service:api")),
+            RylvTag::from(RylvStr::from_static("env:bench")),
+            RylvTag::from(RylvStr::from_static("region:us-east-1")),
         ]);
         let prepared = collector.prepare_metric(RylvStr::from_static("bench.histogram"), sorted);
         b.iter(|| {
@@ -149,9 +149,9 @@ fn run_parallel_histogram_regular<C: MetricCollectorTrait + Sync>(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 let mut tags = [
-                    RylvStr::from_static("service:api"),
-                    RylvStr::from_static("env:bench"),
-                    RylvStr::from_static("region:us-east-1"),
+                    RylvTag::from(RylvStr::from_static("service:api")),
+                    RylvTag::from(RylvStr::from_static("env:bench")),
+                    RylvTag::from(RylvStr::from_static("region:us-east-1")),
                 ];
                 for _ in 0..work {
                     collector.histogram(
@@ -182,9 +182,9 @@ fn run_parallel_histogram_sorted<C: MetricCollectorTrait + Sync>(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 let sorted = collector.prepare_sorted_tags([
-                    RylvStr::from_static("service:api"),
-                    RylvStr::from_static("env:bench"),
-                    RylvStr::from_static("region:us-east-1"),
+                    RylvTag::from(RylvStr::from_static("service:api")),
+                    RylvTag::from(RylvStr::from_static("env:bench")),
+                    RylvTag::from(RylvStr::from_static("region:us-east-1")),
                 ]);
                 for _ in 0..work {
                     collector.histogram_sorted(
@@ -281,9 +281,9 @@ fn benchmark_histogram_parallel(c: &mut Criterion) {
         let prepared = collector.prepare_metric(
             RylvStr::from_static("bench.parallel.histogram"),
             collector.prepare_sorted_tags([
-                RylvStr::from_static("service:api"),
-                RylvStr::from_static("env:bench"),
-                RylvStr::from_static("region:us-east-1"),
+                RylvTag::from(RylvStr::from_static("service:api")),
+                RylvTag::from(RylvStr::from_static("env:bench")),
+                RylvTag::from(RylvStr::from_static("region:us-east-1")),
             ]),
         );
         b.iter_custom(|iters| {
@@ -317,9 +317,9 @@ fn benchmark_histogram_parallel(c: &mut Criterion) {
         let prepared = collector.prepare_metric(
             RylvStr::from_static("bench.parallel.histogram"),
             collector.prepare_sorted_tags([
-                RylvStr::from_static("service:api"),
-                RylvStr::from_static("env:bench"),
-                RylvStr::from_static("region:us-east-1"),
+                RylvTag::from(RylvStr::from_static("service:api")),
+                RylvTag::from(RylvStr::from_static("env:bench")),
+                RylvTag::from(RylvStr::from_static("region:us-east-1")),
             ]),
         );
         b.iter_custom(|iters| {

@@ -1,6 +1,7 @@
 use std::hash::BuildHasher;
 
 use crate::dogstats::RylvStr;
+use crate::dogstats::RylvTag;
 use crate::dogstats::{PreparedMetric, SortedTags};
 
 #[cfg(feature = "shared-collector")]
@@ -31,7 +32,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Increments a counter by one.
     ///
@@ -40,7 +41,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Increments a counter by the specified value.
     ///
@@ -49,7 +50,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a gauge value representing a point-in-time measurement.
     ///
@@ -58,7 +59,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a gauge value representing a point-in-time measurement.
     ///
@@ -67,7 +68,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a timing value for duration tracking.
     ///
@@ -77,7 +78,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a histogram using pre-sorted tags.
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
@@ -102,7 +103,7 @@ pub trait MetricCollectorTrait {
     /// Builds a [`SortedTags`] bound to this collector's hasher.
     fn prepare_sorted_tags<'a>(
         &self,
-        tags: impl IntoIterator<Item = RylvStr<'a>>,
+        tags: impl IntoIterator<Item = RylvTag<'a>>,
     ) -> SortedTags<Self::Hasher>;
 
     /// Precomputes a collector-bound metric key for hot paths.

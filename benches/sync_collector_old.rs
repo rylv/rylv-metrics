@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rylv_metrics::{
     HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
-    SigFig, TLSCollector, TLSCollectorOptions, DEFAULT_STATS_WRITER_TYPE,
+    RylvTag, SigFig, TLSCollector, TLSCollectorOptions, DEFAULT_STATS_WRITER_TYPE,
 };
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -87,9 +87,9 @@ fn benchmark_record_histogram(c: &mut Criterion) {
                 black_box(RylvStr::from_static(vec_metrics[i])),
                 black_box(1),
                 black_box([
-                    RylvStr::from_static(tags_metrics[i]),
-                    RylvStr::from_static("tag:value"),
-                    RylvStr::from_static("tag2:value2"),
+                    RylvTag::from(RylvStr::from_static(tags_metrics[i])),
+                    RylvTag::from(RylvStr::from_static("tag:value")),
+                    RylvTag::from(RylvStr::from_static("tag2:value2")),
                 ]),
             );
             i = (i + 1) % n;

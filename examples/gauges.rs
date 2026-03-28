@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example gauges`
 
 use rylv_metrics::{
-    gauge_avg, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    gauge_avg, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag,
     SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::time::Duration;
@@ -31,15 +31,15 @@ fn main() {
     collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         42,
-        &mut [RylvStr::from_static("pool:main")],
+        &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
     );
 
     collector.gauge_avg(
         RylvStr::from_static("queue.depth"),
         150,
         &mut [
-            RylvStr::from_static("queue:jobs"),
-            RylvStr::from_static("priority:high"),
+            RylvTag::from(RylvStr::from_static("queue:jobs")),
+            RylvTag::from(RylvStr::from_static("priority:high")),
         ],
     );
 

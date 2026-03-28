@@ -1,6 +1,6 @@
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
-    RylvStr, SharedCollector, SharedCollectorOptions, StatsWriterType,
+    RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::net::UdpSocket;
 use std::time::Duration;
@@ -36,12 +36,12 @@ fn test_collector_survives_unreachable_destination() {
     for i in 0..100 {
         collector.count(
             RylvStr::from_static("dead.target.count"),
-            &mut [RylvStr::from_static("scenario:unreachable")],
+            &mut [RylvTag::from(RylvStr::from_static("scenario:unreachable"))],
         );
         collector.histogram(
             RylvStr::from_static("dead.target.hist"),
             i,
-            &mut [RylvStr::from_static("scenario:unreachable")],
+            &mut [RylvTag::from(RylvStr::from_static("scenario:unreachable"))],
         );
     }
 
@@ -52,7 +52,7 @@ fn test_collector_survives_unreachable_destination() {
     collector.gauge_avg(
         RylvStr::from_static("dead.target.gauge"),
         42,
-        &mut [RylvStr::from_static("scenario:unreachable")],
+        &mut [RylvTag::from(RylvStr::from_static("scenario:unreachable"))],
     );
 
     // Graceful drop — must not panic or hang
@@ -80,7 +80,7 @@ fn test_collector_survives_destination_closed_midstream() {
 
     collector.count(
         RylvStr::from_static("midstream.count"),
-        &mut [RylvStr::from_static("phase:before")],
+        &mut [RylvTag::from(RylvStr::from_static("phase:before"))],
     );
 
     // Let the first flush go through
@@ -93,7 +93,7 @@ fn test_collector_survives_destination_closed_midstream() {
     for _ in 0..50 {
         collector.count(
             RylvStr::from_static("midstream.count"),
-            &mut [RylvStr::from_static("phase:after")],
+            &mut [RylvTag::from(RylvStr::from_static("phase:after"))],
         );
     }
 
@@ -119,7 +119,7 @@ fn test_shared_collector_handles_high_cardinality_tags() {
         let tag = format!("id:{i}");
         collector.count(
             RylvStr::from_static("high_cardinality.requests"),
-            &mut [RylvStr::from(tag)],
+            &mut [RylvTag::from(RylvStr::from(tag))],
         );
     }
 
@@ -148,7 +148,7 @@ fn test_shared_collector_handles_high_cardinality_metrics() {
         let metric = format!("metric.unique.{i}");
         collector.count(
             RylvStr::from(metric),
-            &mut [RylvStr::from_static("env:test")],
+            &mut [RylvTag::from(RylvStr::from_static("env:test"))],
         );
     }
 
@@ -194,7 +194,7 @@ fn test_graceful_shutdown_flushes_pending_metrics() {
 
     collector.count(
         RylvStr::from_static("shutdown.pending"),
-        &mut [RylvStr::from_static("test:flush")],
+        &mut [RylvTag::from(RylvStr::from_static("test:flush"))],
     );
 
     // Drop triggers final drain
@@ -250,7 +250,7 @@ fn test_shared_collector_consecutive_drains_reset_state() {
 
     collector.count(
         RylvStr::from_static("consecutive.count"),
-        &mut [RylvStr::from_static("round:1")],
+        &mut [RylvTag::from(RylvStr::from_static("round:1"))],
     );
 
     // First drain
@@ -266,7 +266,7 @@ fn test_shared_collector_consecutive_drains_reset_state() {
     // Record new metrics
     collector.count(
         RylvStr::from_static("consecutive.count"),
-        &mut [RylvStr::from_static("round:2")],
+        &mut [RylvTag::from(RylvStr::from_static("round:2"))],
     );
 
     // Second drain should only see the new metric

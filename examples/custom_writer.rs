@@ -4,7 +4,7 @@
 
 use rylv_metrics::{
     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricKind, MetricResult,
-    RylvStr, SharedCollector, SharedCollectorOptions, StatsWriterTrait, StatsWriterType,
+    RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterTrait, StatsWriterType,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -74,12 +74,12 @@ fn main() {
     // Record some metrics
     collector.count(
         RylvStr::from_static("request.count"),
-        &mut [RylvStr::from_static("endpoint:api")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("connections"),
         10,
-        &mut [RylvStr::from_static("pool:main")],
+        &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
     );
 
     // Shutdown triggers a final flush

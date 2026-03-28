@@ -1,7 +1,7 @@
 #[cfg(feature = "shared-collector")]
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind as FrameMetricKind, MetricSuffix,
-    RylvStr, SharedCollector,
+    RylvStr, RylvTag, SharedCollector,
 };
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
@@ -120,22 +120,22 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
     let collector = SharedCollector::default();
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.timing(
         RylvStr::from_static("duration_ms"),
         55,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
 
     let mut acquired = None;
@@ -189,22 +189,22 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
     let collector = TLSCollector::new(TLSCollectorOptions::default());
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.timing(
         RylvStr::from_static("duration_ms"),
         55,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
 
     let drain = collector.try_begin_drain();

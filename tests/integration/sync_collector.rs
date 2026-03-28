@@ -1,6 +1,6 @@
 use rylv_metrics::{
-    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SharedCollector,
-    SharedCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
+    MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag,
+    SharedCollector, SharedCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
 use std::collections::HashSet;
 use std::net::UdpSocket;
@@ -110,16 +110,16 @@ fn test_build_collector() -> std::io::Result<()> {
         RylvStr::from_static("some.metric"),
         1,
         &mut [
-            RylvStr::from_static("tag:value"),
-            RylvStr::from_static("tag2:value2"),
+            RylvTag::from(RylvStr::from_static("tag:value")),
+            RylvTag::from(RylvStr::from_static("tag2:value2")),
         ],
     );
     collector.histogram(
         RylvStr::from_static("some.metric"),
         1,
         &mut [
-            RylvStr::from_static("tag:value"),
-            RylvStr::from_static("tag2:value3"),
+            RylvTag::from(RylvStr::from_static("tag:value")),
+            RylvTag::from(RylvStr::from_static("tag2:value3")),
         ],
     );
 
@@ -172,12 +172,12 @@ fn test_simple_writer() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("test.simple.writer"),
         10,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.histogram(
         RylvStr::from_static("test.simple.writer"),
         20,
-        &mut [RylvStr::from_static("env:prod")],
+        &mut [RylvTag::from(RylvStr::from_static("env:prod"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -199,12 +199,12 @@ fn test_linux_batch_writer() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("test.linux.batch"),
         100,
-        &mut [RylvStr::from_static("batch:enabled")],
+        &mut [RylvTag::from(RylvStr::from_static("batch:enabled"))],
     );
     collector.histogram(
         RylvStr::from_static("test.linux.batch"),
         200,
-        &mut [RylvStr::from_static("batch:test")],
+        &mut [RylvTag::from(RylvStr::from_static("batch:test"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -226,12 +226,12 @@ fn test_apple_batch_writer() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("test.apple.batch"),
         50,
-        &mut [RylvStr::from_static("platform:macos")],
+        &mut [RylvTag::from(RylvStr::from_static("platform:macos"))],
     );
     collector.histogram(
         RylvStr::from_static("test.apple.batch"),
         75,
-        &mut [RylvStr::from_static("platform:ios")],
+        &mut [RylvTag::from(RylvStr::from_static("platform:ios"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -255,17 +255,17 @@ fn test_simple_writer_counter_methods() -> std::io::Result<()> {
 
     collector.count(
         RylvStr::from_static("requests.total"),
-        &mut [RylvStr::from_static("service:api")],
+        &mut [RylvTag::from(RylvStr::from_static("service:api"))],
     );
     collector.count_add(
         RylvStr::from_static("requests.bytes"),
         1024,
-        &mut [RylvStr::from_static("service:api")],
+        &mut [RylvTag::from(RylvStr::from_static("service:api"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory.usage"),
         75,
-        &mut [RylvStr::from_static("host:server1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:server1"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -287,17 +287,17 @@ fn test_linux_batch_counter_methods() -> std::io::Result<()> {
 
     collector.count(
         RylvStr::from_static("linux.requests"),
-        &mut [RylvStr::from_static("batch:sendmmsg")],
+        &mut [RylvTag::from(RylvStr::from_static("batch:sendmmsg"))],
     );
     collector.count_add(
         RylvStr::from_static("linux.packets"),
         500,
-        &mut [RylvStr::from_static("batch:sendmmsg")],
+        &mut [RylvTag::from(RylvStr::from_static("batch:sendmmsg"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("linux.cpu"),
         85,
-        &mut [RylvStr::from_static("core:0")],
+        &mut [RylvTag::from(RylvStr::from_static("core:0"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -319,17 +319,17 @@ fn test_apple_batch_counter_methods() -> std::io::Result<()> {
 
     collector.count(
         RylvStr::from_static("macos.events"),
-        &mut [RylvStr::from_static("batch:sendmsg_x")],
+        &mut [RylvTag::from(RylvStr::from_static("batch:sendmsg_x"))],
     );
     collector.count_add(
         RylvStr::from_static("macos.transfers"),
         2048,
-        &mut [RylvStr::from_static("batch:sendmsg_x")],
+        &mut [RylvTag::from(RylvStr::from_static("batch:sendmsg_x"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("macos.temp"),
         65,
-        &mut [RylvStr::from_static("sensor:cpu")],
+        &mut [RylvTag::from(RylvStr::from_static("sensor:cpu"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -355,21 +355,21 @@ fn test_simple_writer_mixed_methods() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("latency"),
         150,
-        &mut [RylvStr::from_static("endpoint:/api")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/api"))],
     );
     collector.count(
         RylvStr::from_static("errors"),
-        &mut [RylvStr::from_static("type:500")],
+        &mut [RylvTag::from(RylvStr::from_static("type:500"))],
     );
     collector.count_add(
         RylvStr::from_static("throughput"),
         10000,
-        &mut [RylvStr::from_static("unit:bytes")],
+        &mut [RylvTag::from(RylvStr::from_static("unit:bytes"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("connections"),
         42,
-        &mut [RylvStr::from_static("pool:main")],
+        &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -398,21 +398,21 @@ fn test_linux_batch_mixed_methods() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("response.time"),
         250,
-        &mut [RylvStr::from_static("service:web")],
+        &mut [RylvTag::from(RylvStr::from_static("service:web"))],
     );
     collector.count(
         RylvStr::from_static("requests.count"),
-        &mut [RylvStr::from_static("method:GET")],
+        &mut [RylvTag::from(RylvStr::from_static("method:GET"))],
     );
     collector.count_add(
         RylvStr::from_static("bytes.sent"),
         5120,
-        &mut [RylvStr::from_static("proto:http")],
+        &mut [RylvTag::from(RylvStr::from_static("proto:http"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("active.users"),
         123,
-        &mut [RylvStr::from_static("region:us-east")],
+        &mut [RylvTag::from(RylvStr::from_static("region:us-east"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -441,21 +441,21 @@ fn test_apple_batch_mixed_methods() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("render.time"),
         16,
-        &mut [RylvStr::from_static("view:main")],
+        &mut [RylvTag::from(RylvStr::from_static("view:main"))],
     );
     collector.count(
         RylvStr::from_static("gestures.tap"),
-        &mut [RylvStr::from_static("screen:home")],
+        &mut [RylvTag::from(RylvStr::from_static("screen:home"))],
     );
     collector.count_add(
         RylvStr::from_static("pixels.drawn"),
         1920000,
-        &mut [RylvStr::from_static("resolution:1080p")],
+        &mut [RylvTag::from(RylvStr::from_static("resolution:1080p"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("battery.level"),
         87,
-        &mut [RylvStr::from_static("device:iphone")],
+        &mut [RylvTag::from(RylvStr::from_static("device:iphone"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -481,31 +481,31 @@ fn test_simple_writer_counter_aggregation() -> std::io::Result<()> {
 
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvStr::from_static("page:home")],
+        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
     );
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvStr::from_static("page:home")],
+        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
     );
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvStr::from_static("page:home")],
+        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
     );
 
     collector.count_add(
         RylvStr::from_static("data.transferred"),
         100,
-        &mut [RylvStr::from_static("protocol:tcp")],
+        &mut [RylvTag::from(RylvStr::from_static("protocol:tcp"))],
     );
     collector.count_add(
         RylvStr::from_static("data.transferred"),
         200,
-        &mut [RylvStr::from_static("protocol:tcp")],
+        &mut [RylvTag::from(RylvStr::from_static("protocol:tcp"))],
     );
     collector.count_add(
         RylvStr::from_static("data.transferred"),
         150,
-        &mut [RylvStr::from_static("protocol:tcp")],
+        &mut [RylvTag::from(RylvStr::from_static("protocol:tcp"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -526,17 +526,17 @@ fn test_simple_writer_gauge_aggregation() -> std::io::Result<()> {
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         50,
-        &mut [RylvStr::from_static("host:web1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         75,
-        &mut [RylvStr::from_static("host:web1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         90,
-        &mut [RylvStr::from_static("host:web1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -559,22 +559,22 @@ fn test_simple_writer_histogram_aggregation() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("request.duration"),
         100,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         200,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         150,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         300,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -597,24 +597,24 @@ fn test_linux_batch_counter_aggregation() -> std::io::Result<()> {
     for _ in 0..5 {
         collector.count(
             RylvStr::from_static("linux.network.packets"),
-            &mut [RylvStr::from_static("iface:eth0")],
+            &mut [RylvTag::from(RylvStr::from_static("iface:eth0"))],
         );
     }
 
     collector.count_add(
         RylvStr::from_static("linux.disk.writes"),
         512,
-        &mut [RylvStr::from_static("mount:/")],
+        &mut [RylvTag::from(RylvStr::from_static("mount:/"))],
     );
     collector.count_add(
         RylvStr::from_static("linux.disk.writes"),
         1024,
-        &mut [RylvStr::from_static("mount:/")],
+        &mut [RylvTag::from(RylvStr::from_static("mount:/"))],
     );
     collector.count_add(
         RylvStr::from_static("linux.disk.writes"),
         768,
-        &mut [RylvStr::from_static("mount:/")],
+        &mut [RylvTag::from(RylvStr::from_static("mount:/"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -638,7 +638,7 @@ fn test_linux_batch_histogram_aggregation() -> std::io::Result<()> {
         collector.histogram(
             RylvStr::from_static("linux.query.time"),
             val,
-            &mut [RylvStr::from_static("db:postgres")],
+            &mut [RylvTag::from(RylvStr::from_static("db:postgres"))],
         );
     }
 
@@ -662,24 +662,24 @@ fn test_apple_batch_counter_aggregation() -> std::io::Result<()> {
     for _ in 0..6 {
         collector.count(
             RylvStr::from_static("macos.ui.clicks"),
-            &mut [RylvStr::from_static("button:submit")],
+            &mut [RylvTag::from(RylvStr::from_static("button:submit"))],
         );
     }
 
     collector.count_add(
         RylvStr::from_static("macos.file.size"),
         256,
-        &mut [RylvStr::from_static("type:image")],
+        &mut [RylvTag::from(RylvStr::from_static("type:image"))],
     );
     collector.count_add(
         RylvStr::from_static("macos.file.size"),
         512,
-        &mut [RylvStr::from_static("type:image")],
+        &mut [RylvTag::from(RylvStr::from_static("type:image"))],
     );
     collector.count_add(
         RylvStr::from_static("macos.file.size"),
         1024,
-        &mut [RylvStr::from_static("type:image")],
+        &mut [RylvTag::from(RylvStr::from_static("type:image"))],
     );
 
     let all_text = wait_and_collect(receiver);
@@ -703,7 +703,7 @@ fn test_apple_batch_histogram_aggregation() -> std::io::Result<()> {
         collector.histogram(
             RylvStr::from_static("macos.animation.fps"),
             val,
-            &mut [RylvStr::from_static("scene:menu")],
+            &mut [RylvTag::from(RylvStr::from_static("scene:menu"))],
         );
     }
 
@@ -730,12 +730,12 @@ fn test_simple_writer_heavy_aggregation() -> std::io::Result<()> {
     for i in 1..=50 {
         collector.count(
             RylvStr::from_static("heavy.counter"),
-            &mut [RylvStr::from_static("load:test")],
+            &mut [RylvTag::from(RylvStr::from_static("load:test"))],
         );
         collector.histogram(
             RylvStr::from_static("heavy.histogram"),
             i * 10,
-            &mut [RylvStr::from_static("load:test")],
+            &mut [RylvTag::from(RylvStr::from_static("load:test"))],
         );
     }
 
@@ -760,13 +760,13 @@ fn test_linux_batch_heavy_aggregation() -> std::io::Result<()> {
     for i in 1..=100 {
         collector.count(
             RylvStr::from_static("linux.heavy.requests"),
-            &mut [RylvStr::from_static("test:sendmmsg")],
+            &mut [RylvTag::from(RylvStr::from_static("test:sendmmsg"))],
         );
         if i % 2 == 0 {
             collector.histogram(
                 RylvStr::from_static("linux.heavy.latency"),
                 i,
-                &mut [RylvStr::from_static("test:sendmmsg")],
+                &mut [RylvTag::from(RylvStr::from_static("test:sendmmsg"))],
             );
         }
     }
@@ -790,13 +790,13 @@ fn test_apple_batch_heavy_aggregation() -> std::io::Result<()> {
     for i in 1..=100 {
         collector.count(
             RylvStr::from_static("macos.heavy.interactions"),
-            &mut [RylvStr::from_static("test:sendmsg_x")],
+            &mut [RylvTag::from(RylvStr::from_static("test:sendmsg_x"))],
         );
         if i % 3 == 0 {
             collector.histogram(
                 RylvStr::from_static("macos.heavy.frametime"),
                 i,
-                &mut [RylvStr::from_static("test:sendmsg_x")],
+                &mut [RylvTag::from(RylvStr::from_static("test:sendmsg_x"))],
             );
         }
     }
@@ -820,7 +820,7 @@ fn test_simple_writer_no_tags() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
-    let mut empty_tags: [RylvStr<'_>; 0] = [];
+    let mut empty_tags: [RylvTag<'_>; 0] = [];
     collector.count(RylvStr::from_static("notags.counter"), &mut empty_tags);
     collector.count_add(
         RylvStr::from_static("notags.counter.value"),
@@ -857,7 +857,7 @@ fn test_linux_batch_no_tags() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 512);
 
-    let mut empty_tags: [RylvStr<'_>; 0] = [];
+    let mut empty_tags: [RylvTag<'_>; 0] = [];
     collector.count(
         RylvStr::from_static("linux.notags.requests"),
         &mut empty_tags,
@@ -899,7 +899,7 @@ fn test_apple_batch_no_tags() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 512);
 
-    let mut empty_tags: [RylvStr<'_>; 0] = [];
+    let mut empty_tags: [RylvTag<'_>; 0] = [];
     collector.count(RylvStr::from_static("macos.notags.events"), &mut empty_tags);
     collector.count_add(
         RylvStr::from_static("macos.notags.transfers"),

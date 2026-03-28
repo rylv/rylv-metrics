@@ -1,6 +1,6 @@
 use rylv_metrics::{
     DrainMetricCollectorTrait, HistogramConfig, MetricCollector, MetricCollectorOptions,
-    MetricCollectorTrait, RylvStr, SharedCollector, SharedCollectorOptions, SigFig,
+    MetricCollectorTrait, RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, SigFig,
     StatsWriterType,
 };
 use std::time::Duration;
@@ -69,29 +69,35 @@ fn test_shared_drain_basic() {
 
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+        &mut [
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ],
     );
     collector.count_add(
         RylvStr::from_static("requests"),
         2,
-        &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+        &mut [
+            RylvTag::from(RylvStr::from_static("a:1")),
+            RylvTag::from(RylvStr::from_static("b:2")),
+        ],
     );
 
     collector.gauge_avg(
         RylvStr::from_static("memory"),
         100,
-        &mut [RylvStr::from_static("host:web")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory"),
         300,
-        &mut [RylvStr::from_static("host:web")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web"))],
     );
 
     collector.histogram(
         RylvStr::from_static("latency"),
         42,
-        &mut [RylvStr::from_static("endpoint:/")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/"))],
     );
 
     let lines = drain_metrics_now(&collector);
@@ -125,7 +131,7 @@ fn test_shared_custom_histogram_config() {
     collector.histogram(
         RylvStr::from_static("custom.hist"),
         100,
-        &mut [RylvStr::from_static("scope:test")],
+        &mut [RylvTag::from(RylvStr::from_static("scope:test"))],
     );
 
     let lines: String = drain_metrics_now(&collector).concat();
@@ -144,7 +150,7 @@ fn test_shared_drain_frames_borrowed_output() {
 
     collector.count(
         RylvStr::from_static("frames.count"),
-        &mut [RylvStr::from_static("scope:test")],
+        &mut [RylvTag::from(RylvStr::from_static("scope:test"))],
     );
 
     let mut seen = 0usize;
@@ -214,54 +220,60 @@ fn test_shared_parity_with_metric_collector_custom_writer() {
     collector.count_add(
         RylvStr::from_static("requests"),
         3,
-        &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+        &mut [
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ],
     );
     shared_collector.count_add(
         RylvStr::from_static("requests"),
         3,
-        &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+        &mut [
+            RylvTag::from(RylvStr::from_static("b:2")),
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ],
     );
 
     collector.gauge_avg(
         RylvStr::from_static("memory"),
         100,
-        &mut [RylvStr::from_static("host:web")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory"),
         300,
-        &mut [RylvStr::from_static("host:web")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web"))],
     );
     shared_collector.gauge_avg(
         RylvStr::from_static("memory"),
         100,
-        &mut [RylvStr::from_static("host:web")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web"))],
     );
     shared_collector.gauge_avg(
         RylvStr::from_static("memory"),
         300,
-        &mut [RylvStr::from_static("host:web")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web"))],
     );
 
     collector.histogram(
         RylvStr::from_static("latency"),
         42,
-        &mut [RylvStr::from_static("endpoint:/")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/"))],
     );
     collector.histogram(
         RylvStr::from_static("latency"),
         100,
-        &mut [RylvStr::from_static("endpoint:/")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/"))],
     );
     shared_collector.histogram(
         RylvStr::from_static("latency"),
         42,
-        &mut [RylvStr::from_static("endpoint:/")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/"))],
     );
     shared_collector.histogram(
         RylvStr::from_static("latency"),
         100,
-        &mut [RylvStr::from_static("endpoint:/")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/"))],
     );
 
     drop(collector);

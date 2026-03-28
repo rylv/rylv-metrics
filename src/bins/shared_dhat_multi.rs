@@ -1,4 +1,6 @@
-use rylv_metrics::{HistogramConfig, MetricCollectorTrait, RylvStr, SharedCollector, SigFig};
+use rylv_metrics::{
+    HistogramConfig, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector, SigFig,
+};
 
 #[cfg(not(feature = "allocationcounter"))]
 #[global_allocator]
@@ -26,9 +28,9 @@ fn main() {
             RylvStr::from_static(vec_metrics[i]),
             1,
             [
-                RylvStr::from_static(tags_metrics[i]),
-                RylvStr::from_static("tag:value"),
-                RylvStr::from_static("tag2:value2"),
+                RylvTag::from(RylvStr::from_static(tags_metrics[i])),
+                RylvTag::from(RylvStr::from_static("tag:value")),
+                RylvTag::from(RylvStr::from_static("tag2:value2")),
             ],
         );
         i = (i + 1) % n;

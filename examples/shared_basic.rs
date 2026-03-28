@@ -2,24 +2,26 @@
 //!
 //! Run with: `cargo run --example shared_basic`
 
-use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, SharedCollector};
+use rylv_metrics::{
+    DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
+};
 
 fn main() {
     let collector = SharedCollector::default();
 
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("service:web")],
+        &mut [RylvTag::from(RylvStr::from_static("service:web"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
-        &mut [RylvStr::from_static("service:web")],
+        &mut [RylvTag::from(RylvStr::from_static("service:web"))],
     );
     collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
-        &mut [RylvStr::from_static("service:web")],
+        &mut [RylvTag::from(RylvStr::from_static("service:web"))],
     );
 
     // Drain is non-blocking; first call usually schedules a generation swap.

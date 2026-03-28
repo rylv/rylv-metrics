@@ -14,7 +14,7 @@
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.histogram(RylvStr::from_static("latency"), 42, &mut [RylvStr::from_static("env:prod")]);
+/// collector.histogram(RylvStr::from_static("latency"), 42, &mut [RylvTag::from(RylvStr::from_static("env:prod"))]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// histogram!(collector, "latency", 42, "env:prod");
@@ -56,7 +56,7 @@ macro_rules! histogram {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.histogram($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -64,7 +64,7 @@ macro_rules! histogram {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.histogram($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -86,7 +86,7 @@ macro_rules! histogram {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:prod")]);
+/// collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from(RylvStr::from_static("env:prod"))]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// count!(collector, "requests", "env:prod");
@@ -122,7 +122,7 @@ macro_rules! count {
     ($collector:expr, $metric:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.count($crate::RylvStr::from($metric), &mut tags)
         }
     };
@@ -130,7 +130,7 @@ macro_rules! count {
     ($collector:expr, $metric:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.count($crate::RylvStr::from($metric), &mut tags)
         }
     };
@@ -152,7 +152,7 @@ macro_rules! count {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvStr::from_static("env:prod")]);
+/// collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from(RylvStr::from_static("env:prod"))]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// count_add!(collector, "bytes.sent", 1024, "env:prod");
@@ -188,7 +188,7 @@ macro_rules! count_add {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.count_add($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -196,7 +196,7 @@ macro_rules! count_add {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.count_add($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -218,7 +218,7 @@ macro_rules! count_add {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.gauge_avg(RylvStr::from_static("connections"), 42, &mut [RylvStr::from_static("pool:main")]);
+/// collector.gauge_avg(RylvStr::from_static("connections"), 42, &mut [RylvTag::from(RylvStr::from_static("pool:main"))]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// gauge_avg!(collector, "connections", 42, "pool:main");
@@ -254,7 +254,7 @@ macro_rules! gauge_avg {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.gauge_avg($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -262,7 +262,7 @@ macro_rules! gauge_avg {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.gauge_avg($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -302,7 +302,7 @@ macro_rules! gauge {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.gauge($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -310,7 +310,7 @@ macro_rules! gauge {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.gauge($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -349,7 +349,7 @@ macro_rules! gauge_prepared {
 #[macro_export]
 macro_rules! sorted_tags {
     ($collector:expr, $($tag:expr),* $(,)?) => {{
-        $collector.prepare_sorted_tags([$($crate::RylvStr::from($tag)),*])
+        $collector.prepare_sorted_tags([$($crate::RylvTag::from($tag)),*])
     }};
 }
 
@@ -388,7 +388,7 @@ macro_rules! timing {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.timing($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -396,7 +396,7 @@ macro_rules! timing {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.timing($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };

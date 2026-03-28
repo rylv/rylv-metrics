@@ -1,7 +1,7 @@
 use rylv_metrics::{
     HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricKind,
-    MetricResult, RylvStr, SharedCollector, SharedCollectorOptions, SigFig, StatsWriterTrait,
-    StatsWriterType,
+    MetricResult, RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, SigFig,
+    StatsWriterTrait, StatsWriterType,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -140,26 +140,26 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     // Test counter
     collector.count(
         RylvStr::from_static("custom.counter"),
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
     );
     collector.count_add(
         RylvStr::from_static("custom.counter.value"),
         42,
-        &mut [RylvStr::from_static("env:prod")],
+        &mut [RylvTag::from(RylvStr::from_static("env:prod"))],
     );
 
     // Test gauge
     collector.gauge_avg(
         RylvStr::from_static("custom.gauge"),
         100,
-        &mut [RylvStr::from_static("host:server1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:server1"))],
     );
 
     // Test histogram
     collector.histogram(
         RylvStr::from_static("custom.histogram"),
         250,
-        &mut [RylvStr::from_static("endpoint:/api")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/api"))],
     );
 
     // Wait for flush
@@ -224,7 +224,7 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
     let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
         .expect("failed to create collector");
 
-    let mut empty_tags: [RylvStr<'_>; 0] = [];
+    let mut empty_tags: [RylvTag<'_>; 0] = [];
     collector.count(RylvStr::from_static("notags.counter"), &mut empty_tags);
     collector.gauge_avg(RylvStr::from_static("notags.gauge"), 100, &mut empty_tags);
     collector.histogram(
@@ -288,17 +288,17 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
 
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("method:GET")],
+        &mut [RylvTag::from(RylvStr::from_static("method:GET"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory"),
         512,
-        &mut [RylvStr::from_static("unit:mb")],
+        &mut [RylvTag::from(RylvStr::from_static("unit:mb"))],
     );
     collector.histogram(
         RylvStr::from_static("latency"),
         150,
-        &mut [RylvStr::from_static("service:api")],
+        &mut [RylvTag::from(RylvStr::from_static("service:api"))],
     );
 
     drop(collector);
@@ -348,54 +348,54 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
     // Test counter aggregation
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvStr::from_static("page:home")],
+        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
     );
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvStr::from_static("page:home")],
+        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
     );
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvStr::from_static("page:home")],
+        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
     );
 
     // Test gauge aggregation
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         50,
-        &mut [RylvStr::from_static("host:web1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         75,
-        &mut [RylvStr::from_static("host:web1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
     );
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         90,
-        &mut [RylvStr::from_static("host:web1")],
+        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
     );
 
     // Test histogram aggregation
     collector.histogram(
         RylvStr::from_static("request.duration"),
         100,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         200,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         150,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         300,
-        &mut [RylvStr::from_static("endpoint:/users")],
+        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
     );
 
     drop(collector);
@@ -454,9 +454,9 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
     collector.count(
         RylvStr::from_static("multi.tag.metric"),
         &mut [
-            RylvStr::from_static("tag3:value3"),
-            RylvStr::from_static("tag1:value1"),
-            RylvStr::from_static("tag2:value2"),
+            RylvTag::from(RylvStr::from_static("tag3:value3")),
+            RylvTag::from(RylvStr::from_static("tag1:value1")),
+            RylvTag::from(RylvStr::from_static("tag2:value2")),
         ],
     );
 
@@ -501,7 +501,7 @@ fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("configurable.histogram"),
         123,
-        &mut [RylvStr::from_static("scope:test")],
+        &mut [RylvTag::from(RylvStr::from_static("scope:test"))],
     );
 
     drop(collector);
@@ -565,7 +565,7 @@ fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()>
     collector.histogram(
         RylvStr::from_static("custom.percentiles.histogram"),
         100,
-        &mut [RylvStr::from_static("scope:test")],
+        &mut [RylvTag::from(RylvStr::from_static("scope:test"))],
     );
 
     drop(collector);

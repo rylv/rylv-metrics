@@ -14,7 +14,7 @@
 //! ```no_run
 //! # #[cfg(feature = "udp")] {
 //! use rylv_metrics::{
-//!     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SharedCollector,
+//!     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
 //! };
 //! use rylv_metrics::{histogram, count, count_add, gauge_avg};
 //! use std::net::SocketAddr;
@@ -34,10 +34,10 @@
 //! let collector = MetricCollector::new(bind_addr, dst_addr, options, inner).unwrap();
 //!
 //! // Direct API — use RylvStr::from_static() for zero-copy aggregation keys
-//! collector.histogram(RylvStr::from_static("request.latency"), 42, &mut [RylvStr::from_static("endpoint:api")]);
-//! collector.count(RylvStr::from_static("request.count"), &mut [RylvStr::from_static("endpoint:api")]);
-//! collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvStr::from_static("endpoint:api")]);
-//! collector.gauge_avg(RylvStr::from_static("connections.active"), 100, &mut [RylvStr::from_static("pool:main")]);
+//! collector.histogram(RylvStr::from_static("request.latency"), 42, &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))]);
+//! collector.count(RylvStr::from_static("request.count"), &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))]);
+//! collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))]);
+//! collector.gauge_avg(RylvStr::from_static("connections.active"), 100, &mut [RylvTag::from(RylvStr::from_static("pool:main"))]);
 //!
 //! // Convenience macros — allocate on first key insertion, but more ergonomic
 //! histogram!(collector, "request.latency", 42, "endpoint:api");
@@ -81,7 +81,7 @@ pub use dogstats::{
 pub use dogstats::{
     MetricCollector, MetricCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
-pub use dogstats::{RylvStr, SigFig};
+pub use dogstats::{RylvStr, RylvTag, SigFig};
 #[cfg(feature = "shared-collector")]
 pub use dogstats::{SharedCollector, SharedCollectorOptions};
 #[cfg(feature = "tls-collector")]
@@ -108,14 +108,14 @@ pub fn benchmark_lookup_compare(
 ) -> bool {
     use crate::dogstats::{AggregatorEntryKey, LookupKey};
 
-    let lookup_tags_owned: Box<[RylvStr<'static>]> = lookup_tags
+    let lookup_tags_owned: Box<[RylvTag<'static>]> = lookup_tags
         .iter()
-        .map(|tag| RylvStr::from((*tag).to_owned()))
+        .map(|tag| RylvTag::Full(RylvStr::from((*tag).to_owned())))
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let entry_tags_owned: Vec<RylvStr<'static>> = entry_tags
+    let entry_tags_owned: Vec<RylvTag<'static>> = entry_tags
         .iter()
-        .map(|tag| RylvStr::from((*tag).to_owned()))
+        .map(|tag| RylvTag::from((*tag).to_owned()))
         .collect();
 
     let entry = AggregatorEntryKey {

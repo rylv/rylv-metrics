@@ -1,11 +1,10 @@
 use super::histogram_config::{HistogramBaseMetric, HistogramBaseMetrics};
 use super::slice_utils::equal_slice;
 use super::sorted_tags::{
-    metric_tags_fingerprint, metric_tags_fingerprint_from_tags, next_metric_id, to_static_metric,
-    SortedTags,
+    metric_tags_fingerprint, metric_tags_fingerprint_from_tags, next_metric_id, SortedTags,
 };
 use super::RylvStr;
-use crate::{DefaultMetricHasher, PreparedMetric};
+use crate::{DefaultMetricHasher, PreparedMetric, RylvTag};
 use hdrhistogram::Histogram;
 use std::cmp::{max, min};
 use std::hash::BuildHasher;
@@ -80,7 +79,7 @@ pub struct LookupKey<'a> {
     /// Metric name.
     pub metric: RylvStr<'a>,
     /// Sorted tag slice.
-    pub tags: &'a [RylvStr<'a>],
+    pub tags: &'a [RylvTag<'a>],
     /// Hash of the sorted tag set.
     pub tags_hash: u64,
     /// Combined metric-and-tags hash.
@@ -95,7 +94,7 @@ impl LookupKey<'_> {
     pub(crate) fn into_key_with_id<S: BuildHasher + Clone>(self, id: u64) -> AggregatorEntryKey<S> {
         let fingerprint = metric_tags_fingerprint_from_tags(self.metric.as_ref(), self.tags);
         AggregatorEntryKey {
-            metric: to_static_metric(self.metric),
+            metric: self.metric.into_static_str(),
             tags: SortedTags::from_sorted_tags_with_hash(self.tags, self.tags_hash),
             hash: self.hash,
             fingerprint,
@@ -130,12 +129,24 @@ impl LookupKey<'_> {
         let mut offset = 0usize;
         let last_index = compare.len() - 1;
         for (index, tag) in compare.iter().enumerate() {
-            let tag_bytes = tag.as_ref().as_bytes();
-            let next_offset = offset + tag_bytes.len();
-            if next_offset > joined.len() || !equal_slice(&joined[offset..next_offset], tag_bytes) {
-                return false;
+            match tag {
+                RylvTag::Full(t) => {
+                    if !Self::compare_advance_offset(joined, &mut offset, t.as_ref().as_bytes()) {
+                        return false;
+                    }
+                }
+                RylvTag::Compound(ke, va) => {
+                    if !Self::compare_advance_offset(joined, &mut offset, ke.as_ref().as_bytes()) {
+                        return false;
+                    }
+                    if !Self::compare_advance_offset(joined, &mut offset, b":") {
+                        return false;
+                    }
+                    if !Self::compare_advance_offset(joined, &mut offset, va.as_ref().as_bytes()) {
+                        return false;
+                    }
+                }
             }
-            offset = next_offset;
 
             if index < last_index {
                 if offset >= joined.len() || joined[offset] != b',' {
@@ -148,11 +159,20 @@ impl LookupKey<'_> {
         offset == joined.len()
     }
 
-    fn joined_tags_len(tags: &[RylvStr<'_>]) -> usize {
+    fn compare_advance_offset(joined: &[u8], offset: &mut usize, tag_bytes: &[u8]) -> bool {
+        let next_offset = *offset + tag_bytes.len();
+        if next_offset > joined.len() || !equal_slice(&joined[*offset..next_offset], tag_bytes) {
+            return false;
+        }
+        *offset = next_offset;
+        true
+    }
+
+    fn joined_tags_len(tags: &[RylvTag<'_>]) -> usize {
         if tags.is_empty() {
             return 0;
         }
-        tags.iter().map(|tag| tag.as_ref().len()).sum::<usize>() + tags.len() - 1
+        tags.iter().map(super::RylvTag::len).sum::<usize>() + tags.len() - 1
     }
 }
 
@@ -177,7 +197,7 @@ impl<S: BuildHasher + Clone> LookupKeySorted<'_, S> {
         let fingerprint =
             metric_tags_fingerprint(self.metric.as_ref(), self.sorted_tags.joined_tags());
         AggregatorEntryKey {
-            metric: to_static_metric(self.metric),
+            metric: self.metric.into_static_str(),
             tags: self.sorted_tags.clone(),
             hash: self.hash,
             fingerprint,
@@ -268,14 +288,19 @@ mod tests {
     };
     use crate::dogstats::histogram_config::{HistogramBaseMetric, HistogramBaseMetrics};
     use crate::dogstats::sorted_tags::{combine_metric_tags_hash, hash_tags, SortedTags};
-    use crate::{PreparedMetric, RylvStr};
+    use crate::{PreparedMetric, RylvStr, RylvTag};
     use hdrhistogram::Histogram;
     use std::sync::Arc;
 
     type TestHasher = std::hash::BuildHasherDefault<std::collections::hash_map::DefaultHasher>;
 
     fn sorted_tags(tags: &[&str]) -> SortedTags<TestHasher> {
-        SortedTags::new(tags.iter().copied().map(RylvStr::from), &TestHasher::new())
+        SortedTags::new(
+            tags.iter()
+                .copied()
+                .map(|t| RylvTag::from(RylvStr::from(t))),
+            &TestHasher::new(),
+        )
     }
 
     #[test]
@@ -336,8 +361,8 @@ mod tests {
     fn lookup_key_into_key_and_compare_cover_match_and_mismatch_paths() {
         let hasher = TestHasher::new();
         let tags = [
-            RylvStr::from_static("env:test"),
-            RylvStr::from_static("service:api"),
+            RylvTag::Full(RylvStr::from_static("env:test")),
+            RylvTag::Full(RylvStr::from_static("service:api")),
         ];
         let tags_hash = hash_tags(&hasher, &tags);
         let hash = combine_metric_tags_hash(&hasher, "bench.metric", tags_hash);
@@ -369,7 +394,7 @@ mod tests {
         };
         assert!(!mismatched_metric.compare(&entry));
 
-        let short_tags = [RylvStr::from_static("env:test")];
+        let short_tags = [RylvTag::Full(RylvStr::from_static("env:test"))];
         let mismatched_tag_count = LookupKey {
             metric: RylvStr::from_static("bench.metric"),
             tags: &short_tags,
@@ -380,7 +405,10 @@ mod tests {
 
         let bad_separator_entry = AggregatorEntryKey {
             metric: RylvStr::from_static("bench.metric"),
-            tags: SortedTags::new([RylvStr::from_static("env:test,service:api")], &hasher),
+            tags: SortedTags::new(
+                [RylvTag::from(RylvStr::from_static("env:test,service:api"))],
+                &hasher,
+            ),
             hash,
             fingerprint: entry.fingerprint,
             id: entry.id + 1,
