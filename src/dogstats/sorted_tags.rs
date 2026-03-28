@@ -325,4 +325,106 @@ mod tests {
         assert_eq!(tags.joined_tags(), "az:use1,env:prod,service:api");
         assert_eq!(tags.len(), 3);
     }
+
+    #[test]
+    fn sorted_tags_with_compound_tags() {
+        let tags = SortedTags::new(
+            [
+                RylvTag::Compound(RylvStr::from_static("service"), RylvStr::from_static("api")),
+                RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
+                RylvTag::Full(RylvStr::from_static("az:use1")),
+            ],
+            &default_hasher(),
+        );
+        assert_eq!(tags.joined_tags(), "az:use1,env:prod,service:api");
+        assert_eq!(tags.len(), 3);
+        assert!(!tags.is_empty());
+    }
+
+    #[test]
+    fn sorted_tags_empty() {
+        let tags: SortedTags<DefaultMetricHasher> =
+            SortedTags::new(std::iter::empty::<RylvTag<'_>>(), &default_hasher());
+        assert_eq!(tags.joined_tags(), "");
+        assert_eq!(tags.len(), 0);
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn sorted_tags_equality_same_tags() {
+        let hasher = default_hasher();
+        let a = SortedTags::new(
+            [RylvTag::Full(RylvStr::from_static("env:prod"))],
+            &hasher,
+        );
+        let b = SortedTags::new(
+            [RylvTag::Full(RylvStr::from_static("env:prod"))],
+            &hasher,
+        );
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn sorted_tags_equality_full_vs_compound() {
+        let hasher = default_hasher();
+        let a = SortedTags::new(
+            [RylvTag::Full(RylvStr::from_static("env:prod"))],
+            &hasher,
+        );
+        let b = SortedTags::new(
+            [RylvTag::Compound(
+                RylvStr::from_static("env"),
+                RylvStr::from_static("prod"),
+            )],
+            &hasher,
+        );
+        // joined_tags should be identical
+        assert_eq!(a.joined_tags(), b.joined_tags());
+    }
+
+    #[test]
+    fn fingerprint_consistent_full_vs_compound() {
+        use super::{metric_tags_fingerprint, metric_tags_fingerprint_from_tags};
+
+        let full_tags = [RylvTag::Full(RylvStr::from_static("env:prod"))];
+        let compound_tags = [RylvTag::Compound(
+            RylvStr::from_static("env"),
+            RylvStr::from_static("prod"),
+        )];
+
+        let fp_full = metric_tags_fingerprint_from_tags("my.metric", &full_tags);
+        let fp_compound = metric_tags_fingerprint_from_tags("my.metric", &compound_tags);
+        assert_eq!(fp_full, fp_compound);
+
+        let fp_joined = metric_tags_fingerprint("my.metric", "env:prod");
+        assert_eq!(fp_full, fp_joined);
+    }
+
+    #[test]
+    fn hash_tags_deterministic() {
+        use super::hash_tags;
+
+        let hasher = default_hasher();
+        let tags = [
+            RylvTag::Full(RylvStr::from_static("env:prod")),
+            RylvTag::Full(RylvStr::from_static("az:use1")),
+        ];
+        let h1 = hash_tags(&hasher, &tags);
+        let h2 = hash_tags(&hasher, &tags);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn hash_tags_compound() {
+        use super::hash_tags;
+
+        let hasher = default_hasher();
+        let compound_tags = [RylvTag::Compound(
+            RylvStr::from_static("env"),
+            RylvStr::from_static("prod"),
+        )];
+        // Just verify it produces a non-zero hash without panicking
+        let h = hash_tags(&hasher, &compound_tags);
+        assert_ne!(h, 0);
+    }
 }

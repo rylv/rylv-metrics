@@ -319,7 +319,6 @@ impl PartialOrd for RylvTag<'_> {
     }
 }
 
-// TODO: add tests for this code
 fn cmp(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> Ordering {
     let r = r.as_ref();
     let k = k.as_ref();
@@ -340,7 +339,7 @@ fn cmp(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> Ordering {
         return ordering;
     }
 
-    let Some(rest) = r.get(m..) else {
+    let Some(rest) = r.get(m + 1..) else {
         return if v.is_empty() {
             Ordering::Equal
         } else {
@@ -360,4 +359,302 @@ fn eq(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> bool {
         && r[0..k.len()].eq(k)
         && r.as_bytes()[k.len()] == b':'
         && r[k.len() + 1..].eq(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+    use std::sync::Arc;
+
+    // --- RylvStr tests ---
+
+    #[test]
+    fn rylv_str_partial_eq() {
+        let a = RylvStr::from_static("hello");
+        let b = RylvStr::from("hello".to_string());
+        let c = RylvStr::Borrowed("hello");
+        let d = RylvStr::OwnedStr(Arc::from("hello"));
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert_eq!(a, d);
+        assert_eq!(b, d);
+        assert_ne!(a, RylvStr::from_static("world"));
+    }
+
+    #[test]
+    fn rylv_str_partial_ord() {
+        let a = RylvStr::from_static("abc");
+        let b = RylvStr::from_static("def");
+        assert!(a < b);
+        assert_eq!(a.partial_cmp(&a), Some(Ordering::Equal));
+    }
+
+    #[test]
+    fn rylv_str_from_arc_string() {
+        let arc = Arc::new("test".to_string());
+        let s = RylvStr::from(arc);
+        assert_eq!(s.as_ref(), "test");
+    }
+
+    #[test]
+    fn rylv_str_from_arc_str() {
+        let arc: Arc<str> = Arc::from("test");
+        let s = RylvStr::from(arc);
+        assert_eq!(s.as_ref(), "test");
+    }
+
+    #[test]
+    fn rylv_str_from_cow_borrowed() {
+        let cow = Cow::Borrowed("hello");
+        let s = RylvStr::from(cow);
+        assert_eq!(s.as_ref(), "hello");
+    }
+
+    #[test]
+    fn rylv_str_from_cow_owned() {
+        let cow: Cow<'_, str> = Cow::Owned("hello".to_string());
+        let s = RylvStr::from(cow);
+        assert_eq!(s.as_ref(), "hello");
+    }
+
+    #[test]
+    fn rylv_str_into_static_owned_str() {
+        let s = RylvStr::OwnedStr(Arc::from("test"));
+        let st = s.into_static();
+        assert_eq!(st.as_ref(), "test");
+    }
+
+    // --- RylvTag tests ---
+
+    #[test]
+    fn rylv_tag_from_str() {
+        let tag = RylvTag::from("env:prod");
+        assert_eq!(tag.len(), 8);
+    }
+
+    #[test]
+    fn rylv_tag_from_arc_string() {
+        let arc = Arc::new("env:prod".to_string());
+        let tag = RylvTag::from(arc);
+        assert_eq!(tag.len(), 8);
+    }
+
+    #[test]
+    fn rylv_tag_from_arc_str() {
+        let arc: Arc<str> = Arc::from("env:prod");
+        let tag = RylvTag::from(arc);
+        assert_eq!(tag.len(), 8);
+    }
+
+    #[test]
+    fn rylv_tag_from_cow() {
+        let cow: Cow<'_, str> = Cow::Owned("env:prod".to_string());
+        let tag = RylvTag::from(cow);
+        assert_eq!(tag.len(), 8);
+    }
+
+    #[test]
+    fn rylv_tag_from_static() {
+        let tag = RylvTag::from_static("env:prod");
+        assert_eq!(tag.len(), 8);
+    }
+
+    #[test]
+    fn rylv_tag_compound_len() {
+        let tag = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        assert_eq!(tag.len(), 8); // "env" + ":" + "prod"
+    }
+
+    #[test]
+    fn rylv_tag_is_empty() {
+        let tag = RylvTag::Full(RylvStr::from_static(""));
+        assert!(tag.is_empty());
+
+        let tag = RylvTag::from_static("env:prod");
+        assert!(!tag.is_empty());
+    }
+
+    #[test]
+    fn rylv_tag_push_tag_compound() {
+        let tag = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        let mut buf = String::new();
+        tag.push_tag(&mut buf);
+        assert_eq!(buf, "env:prod");
+    }
+
+    #[test]
+    fn rylv_tag_push_tag_full() {
+        let tag = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let mut buf = String::new();
+        tag.push_tag(&mut buf);
+        assert_eq!(buf, "env:prod");
+    }
+
+    #[test]
+    fn rylv_tag_into_static_tag_compound() {
+        let tag = RylvTag::Compound(RylvStr::Borrowed("env"), RylvStr::Borrowed("prod"));
+        let st = tag.into_static_tag();
+        let mut buf = String::new();
+        st.push_tag(&mut buf);
+        assert_eq!(buf, "env:prod");
+    }
+
+    // --- Cross-variant PartialEq ---
+
+    #[test]
+    fn rylv_tag_eq_full_full() {
+        let a = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let b = RylvTag::Full(RylvStr::from_static("env:prod"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn rylv_tag_eq_full_compound() {
+        let full = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let compound =
+            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        assert_eq!(full, compound);
+        assert_eq!(compound, full);
+    }
+
+    #[test]
+    fn rylv_tag_eq_compound_compound() {
+        let a = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        let b = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn rylv_tag_neq_full_compound_different_value() {
+        let full = RylvTag::Full(RylvStr::from_static("env:staging"));
+        let compound =
+            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        assert_ne!(full, compound);
+    }
+
+    // --- Cross-variant Ord ---
+
+    #[test]
+    fn rylv_tag_ord_full_full() {
+        let a = RylvTag::Full(RylvStr::from_static("az:use1"));
+        let b = RylvTag::Full(RylvStr::from_static("env:prod"));
+        assert!(a < b);
+    }
+
+    #[test]
+    fn rylv_tag_ord_full_compound_equal() {
+        let full = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let compound =
+            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        assert_eq!(full.cmp(&compound), Ordering::Equal);
+    }
+
+    #[test]
+    fn rylv_tag_ord_compound_full_less() {
+        let compound =
+            RylvTag::Compound(RylvStr::from_static("az"), RylvStr::from_static("use1"));
+        let full = RylvTag::Full(RylvStr::from_static("env:prod"));
+        assert!(compound < full);
+    }
+
+    #[test]
+    fn rylv_tag_ord_compound_compound() {
+        let a = RylvTag::Compound(RylvStr::from_static("az"), RylvStr::from_static("use1"));
+        let b = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        assert!(a < b);
+
+        let c = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("alpha"));
+        let d = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("beta"));
+        assert!(c < d);
+    }
+
+    #[test]
+    fn rylv_tag_partial_ord() {
+        let a = RylvTag::from_static("az:use1");
+        let b = RylvTag::from_static("env:prod");
+        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
+    }
+
+    // --- cmp/eq helper function tests ---
+
+    #[test]
+    fn helper_eq_matching() {
+        let r = RylvStr::from_static("env:prod");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("prod");
+        assert!(eq(&r, &k, &v));
+    }
+
+    #[test]
+    fn helper_eq_different_key() {
+        let r = RylvStr::from_static("env:prod");
+        let k = RylvStr::from_static("az");
+        let v = RylvStr::from_static("prod");
+        assert!(!eq(&r, &k, &v));
+    }
+
+    #[test]
+    fn helper_eq_different_value() {
+        let r = RylvStr::from_static("env:prod");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("staging");
+        assert!(!eq(&r, &k, &v));
+    }
+
+    #[test]
+    fn helper_cmp_equal() {
+        let r = RylvStr::from_static("env:prod");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("prod");
+        assert_eq!(cmp(&r, &k, &v), Ordering::Equal);
+    }
+
+    #[test]
+    fn helper_cmp_key_less() {
+        let r = RylvStr::from_static("az:use1");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("prod");
+        assert_eq!(cmp(&r, &k, &v), Ordering::Less);
+    }
+
+    #[test]
+    fn helper_cmp_key_greater() {
+        let r = RylvStr::from_static("zzz:val");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("prod");
+        assert_eq!(cmp(&r, &k, &v), Ordering::Greater);
+    }
+
+    #[test]
+    fn helper_cmp_r_shorter_than_key() {
+        let r = RylvStr::from_static("en");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("prod");
+        assert_eq!(cmp(&r, &k, &v), Ordering::Less);
+    }
+
+    #[test]
+    fn helper_cmp_separator_mismatch() {
+        // 'e' < ':' is false, 'e' > ':' in ASCII
+        let r = RylvStr::from_static("enveprod");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("prod");
+        assert_eq!(cmp(&r, &k, &v), Ordering::Greater);
+    }
+
+    // --- resolve_tags ---
+
+    #[test]
+    fn resolve_tags_converts_to_static() {
+        let tags = vec![
+            RylvTag::Full(RylvStr::Borrowed("env:prod")),
+            RylvTag::Compound(RylvStr::Borrowed("az"), RylvStr::Borrowed("use1")),
+        ];
+        let resolved = resolve_tags(tags);
+        assert_eq!(resolved.len(), 2);
+        let mut buf = String::new();
+        resolved[1].push_tag(&mut buf);
+        assert_eq!(buf, "az:use1");
+    }
 }
