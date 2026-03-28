@@ -1001,7 +1001,7 @@ where
         metric: RylvStr<'_>,
         tags: SortedTags<Self::Hasher>,
     ) -> PreparedMetric<Self::Hasher> {
-        let metric = metric.into_static_str();
+        let metric = metric.into_static();
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
         PreparedMetric::new(metric, tags, hash)

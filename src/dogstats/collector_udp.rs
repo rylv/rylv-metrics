@@ -412,7 +412,7 @@ mod tests {
             metric: RylvStr<'_>,
             tags: SortedTags<Self::Hasher>,
         ) -> PreparedMetric<Self::Hasher> {
-            let metric = metric.into_static_str();
+            let metric = metric.into_static();
             let mut hasher = <Self::Hasher as Default>::default().build_hasher();
             std::hash::Hash::hash(&metric.as_ref(), &mut hasher);
             std::hash::Hash::hash(&tags.tags_hash(), &mut hasher);

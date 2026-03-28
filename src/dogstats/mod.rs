@@ -63,12 +63,16 @@ pub enum RylvStr<'a> {
 
 impl RylvStr<'_> {
     /// Creates a `RylvStr::Static` from a `&'static str` for zero-copy conversion.
+    #[inline]
     #[must_use]
     pub const fn from_static(s: &'static str) -> RylvStr<'static> {
         RylvStr::Static(s)
     }
 
-    pub(crate) fn into_static_str(self) -> RylvStr<'static> {
+    /// Converts this `RylvStr` into a `'static` variant, cloning borrowed data.
+    #[inline]
+    #[must_use]
+    pub fn into_static(self) -> RylvStr<'static> {
         match self {
             RylvStr::Static(s) => RylvStr::Static(s),
             RylvStr::Borrowed(s) => RylvStr::OwnedStr(Arc::from(s)),
@@ -79,6 +83,7 @@ impl RylvStr<'_> {
 }
 
 impl AsRef<str> for RylvStr<'_> {
+    #[inline]
     fn as_ref(&self) -> &str {
         match self {
             RylvStr::Static(s) | RylvStr::Borrowed(s) => s,
@@ -89,6 +94,7 @@ impl AsRef<str> for RylvStr<'_> {
 }
 
 impl PartialEq for RylvStr<'_> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.as_ref() == other.as_ref()
     }
@@ -97,42 +103,49 @@ impl PartialEq for RylvStr<'_> {
 impl Eq for RylvStr<'_> {}
 
 impl PartialOrd for RylvStr<'_> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for RylvStr<'_> {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.as_ref().cmp(other.as_ref())
     }
 }
 
 impl<'a> From<&'a str> for RylvStr<'a> {
+    #[inline]
     fn from(s: &'a str) -> Self {
         RylvStr::Borrowed(s)
     }
 }
 
 impl From<String> for RylvStr<'_> {
+    #[inline]
     fn from(s: String) -> Self {
         RylvStr::Owned(Arc::from(s))
     }
 }
 
 impl From<Arc<String>> for RylvStr<'_> {
+    #[inline]
     fn from(s: Arc<String>) -> Self {
         RylvStr::Owned(s)
     }
 }
 
 impl From<Arc<str>> for RylvStr<'_> {
+    #[inline]
     fn from(s: Arc<str>) -> Self {
         RylvStr::OwnedStr(s)
     }
 }
 
 impl<'a> From<Cow<'a, str>> for RylvStr<'a> {
+    #[inline]
     fn from(cow: Cow<'a, str>) -> Self {
         match cow {
             Cow::Borrowed(s) => RylvStr::Borrowed(s),
@@ -161,48 +174,63 @@ pub enum RylvTag<'a> {
 }
 
 impl<'a> From<&'a str> for RylvTag<'a> {
+    #[inline]
     fn from(s: &'a str) -> Self {
         RylvTag::Full(RylvStr::from(s))
     }
 }
 
 impl From<String> for RylvTag<'_> {
+    #[inline]
     fn from(value: String) -> Self {
         RylvTag::Full(RylvStr::from(value))
     }
 }
 
 impl From<Arc<String>> for RylvTag<'_> {
+    #[inline]
     fn from(value: Arc<String>) -> Self {
         RylvTag::Full(RylvStr::from(value))
     }
 }
 
 impl From<Arc<str>> for RylvTag<'_> {
+    #[inline]
     fn from(value: Arc<str>) -> Self {
         RylvTag::Full(RylvStr::from(value))
     }
 }
 
 impl<'a> From<RylvStr<'a>> for RylvTag<'a> {
+    #[inline]
     fn from(s: RylvStr<'a>) -> Self {
         RylvTag::Full(s)
     }
 }
 
 impl<'a> From<Cow<'a, str>> for RylvTag<'a> {
+    #[inline]
     fn from(cow: Cow<'a, str>) -> Self {
         RylvTag::Full(RylvStr::from(cow))
     }
 }
 
 impl RylvTag<'_> {
+    /// Returns the length of the resolved tag string in bytes.
+    #[inline]
     #[must_use]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             RylvTag::Full(t) => t.as_ref().len(),
             RylvTag::Compound(k, v) => k.as_ref().len() + v.as_ref().len() + 1,
         }
+    }
+
+    /// Returns `true` when the resolved tag string is empty.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub(crate) fn push_tag(&self, buffer: &mut String) {
@@ -218,16 +246,20 @@ impl RylvTag<'_> {
         }
     }
 
-    fn into_static_tag(self) -> RylvTag<'static> {
+    /// Converts this tag into a `'static` variant, cloning borrowed data.
+    #[inline]
+    #[must_use]
+    pub fn into_static_tag(self) -> RylvTag<'static> {
         match self {
             RylvTag::Compound(key, value) => {
-                RylvTag::Compound(key.into_static_str(), value.into_static_str())
+                RylvTag::Compound(key.into_static(), value.into_static())
             }
-            RylvTag::Full(s) => RylvTag::Full(s.into_static_str()),
+            RylvTag::Full(s) => RylvTag::Full(s.into_static()),
         }
     }
 
     /// Creates a `RylvTag::Full` wrapping a `RylvStr::Static` for zero-copy usage.
+    #[inline]
     #[must_use]
     pub const fn from_static(s: &'static str) -> RylvTag<'static> {
         RylvTag::Full(RylvStr::from_static(s))
@@ -241,29 +273,9 @@ where
     tags.into_iter().map(RylvTag::into_static_tag).collect()
 }
 
-/*
-impl<'a> RylvTag<'a> {
-    /// Resolves this tag into a single [`RylvStr`].
-    ///
-    /// `Full` extracts the inner value; `Compound` allocates `"key:value"`.
-    #[must_use]
-    pub fn resolve(self) -> RylvStr<'a> {
-        match self {
-            RylvTag::Full(s) => s,
-            RylvTag::Compound(key, val) => {
-                let mut buf = String::with_capacity(key.as_ref().len() + 1 + val.as_ref().len());
-                buf.push_str(key.as_ref());
-                buf.push(':');
-                buf.push_str(val.as_ref());
-                RylvStr::Owned(Arc::from(buf))
-            }
-        }
-    }
-}
- */
-
 impl Eq for RylvTag<'_> {}
 impl PartialEq for RylvTag<'_> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         match self {
             RylvTag::Full(r1) => match other {
@@ -279,6 +291,7 @@ impl PartialEq for RylvTag<'_> {
 }
 
 impl Ord for RylvTag<'_> {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         match self {
             RylvTag::Full(r1) => match other {
@@ -300,6 +313,7 @@ impl Ord for RylvTag<'_> {
 }
 
 impl PartialOrd for RylvTag<'_> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -347,16 +361,3 @@ fn eq(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> bool {
         && r.as_bytes()[k.len()] == b':'
         && r[k.len() + 1..].eq(v)
 }
-
-/*
-/// Resolves a slice of [`RylvTag`] values into a `Vec<RylvStr>`.
-#[must_use]
-pub fn resolve_tags<'a>(tags: &mut [RylvTag<'a>]) -> Vec<RylvStr<'a>> {
-    tags.iter_mut()
-        .map(|tag| {
-            let taken = std::mem::replace(tag, RylvTag::Full(RylvStr::Static("")));
-            taken.resolve()
-        })
-        .collect()
-}
-*/

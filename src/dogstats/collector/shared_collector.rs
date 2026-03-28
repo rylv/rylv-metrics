@@ -44,6 +44,7 @@ where
 }
 
 impl Default for SharedCollectorOptions<DefaultMetricHasher> {
+    #[cold]
     fn default() -> Self {
         Self {
             stats_prefix: String::new(),
@@ -73,6 +74,7 @@ where
 }
 
 impl Default for SharedCollector {
+    #[cold]
     fn default() -> Self {
         Self::new(SharedCollectorOptions::default())
     }
@@ -247,6 +249,7 @@ where
 {
     type Item = MetricFrameRef<'a>;
 
+    #[cold]
     fn next(&mut self) -> Option<Self::Item> {
         self.frames.next_frame()
     }
@@ -497,7 +500,7 @@ fn match_prepared_signature<S: BuildHasher + Clone>(
     key.metric.as_ref() == prepared.metric().as_ref() && &key.tags == prepared.tags()
 }
 
-pub fn remove_from_map<V, SH, S>(
+fn remove_from_map<V, SH, S>(
     map: &DashMap<AggregatorEntryKey<S>, V, SH>,
     key: &RemoveKey,
     mut on_removed: impl FnMut(V),
@@ -1100,7 +1103,7 @@ where
 
     #[cold]
     fn prepare_metric(&self, metric: RylvStr<'_>, tags: SortedTags<S>) -> PreparedMetric<S> {
-        let metric = metric.into_static_str();
+        let metric = metric.into_static();
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
         PreparedMetric::new(metric, tags, hash)
@@ -1309,7 +1312,7 @@ where
     }
 }
 
-pub fn record_histogram_in_aggregator<S>(
+fn record_histogram_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
     default_histogram_config: &ResolvedHistogramConfig,
@@ -1365,7 +1368,7 @@ pub fn record_histogram_in_aggregator<S>(
     }
 }
 
-pub fn record_histogram_in_aggregator_sorted<S>(
+fn record_histogram_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
     default_histogram_config: &ResolvedHistogramConfig,
@@ -1424,7 +1427,7 @@ pub fn record_histogram_in_aggregator_sorted<S>(
     }
 }
 
-pub fn record_histogram_in_aggregator_prepared<S>(
+fn record_histogram_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
     default_histogram_config: &ResolvedHistogramConfig,
@@ -1483,7 +1486,7 @@ pub fn record_histogram_in_aggregator_prepared<S>(
     }
 }
 
-pub fn record_timing_in_aggregator<S>(
+fn record_timing_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
     default_histogram_config: &ResolvedHistogramConfig,
@@ -1539,7 +1542,7 @@ pub fn record_timing_in_aggregator<S>(
     }
 }
 
-pub fn record_timing_in_aggregator_sorted<S>(
+fn record_timing_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
     default_histogram_config: &ResolvedHistogramConfig,
@@ -1598,7 +1601,7 @@ pub fn record_timing_in_aggregator_sorted<S>(
     }
 }
 
-pub fn record_timing_in_aggregator_prepared<S>(
+fn record_timing_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
     default_histogram_config: &ResolvedHistogramConfig,
@@ -1657,7 +1660,7 @@ pub fn record_timing_in_aggregator_prepared<S>(
     }
 }
 
-pub fn record_count_add_in_aggregator<S>(
+fn record_count_add_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
@@ -1679,7 +1682,7 @@ pub fn record_count_add_in_aggregator<S>(
     );
 }
 
-pub fn record_count_add_in_aggregator_sorted<S>(
+fn record_count_add_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
@@ -1700,7 +1703,7 @@ pub fn record_count_add_in_aggregator_sorted<S>(
     );
 }
 
-pub fn record_count_add_in_aggregator_prepared<S>(
+fn record_count_add_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     prepared: &PreparedMetric<S>,
     value: u64,
@@ -1719,7 +1722,7 @@ pub fn record_count_add_in_aggregator_prepared<S>(
     );
 }
 
-pub fn record_gauge_in_aggregator<S>(
+fn record_gauge_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
@@ -1747,7 +1750,7 @@ pub fn record_gauge_in_aggregator<S>(
     );
 }
 
-pub fn record_gauge_in_aggregator_sorted<S>(
+fn record_gauge_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
@@ -1774,7 +1777,7 @@ pub fn record_gauge_in_aggregator_sorted<S>(
     );
 }
 
-pub fn record_gauge_in_aggregator_prepared<S>(
+fn record_gauge_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     prepared: &PreparedMetric<S>,
     value: u64,
@@ -1799,7 +1802,7 @@ pub fn record_gauge_in_aggregator_prepared<S>(
     );
 }
 
-pub fn record_gauge_last_in_aggregator<S>(
+fn record_gauge_last_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
@@ -1821,7 +1824,7 @@ pub fn record_gauge_last_in_aggregator<S>(
     );
 }
 
-pub fn record_gauge_last_in_aggregator_sorted<S>(
+fn record_gauge_last_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
     value: u64,
@@ -1842,7 +1845,7 @@ pub fn record_gauge_last_in_aggregator_sorted<S>(
     );
 }
 
-pub fn record_gauge_last_in_aggregator_prepared<S>(
+fn record_gauge_last_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     prepared: &PreparedMetric<S>,
     value: u64,

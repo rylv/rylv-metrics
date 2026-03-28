@@ -94,7 +94,7 @@ impl LookupKey<'_> {
     pub(crate) fn into_key_with_id<S: BuildHasher + Clone>(self, id: u64) -> AggregatorEntryKey<S> {
         let fingerprint = metric_tags_fingerprint_from_tags(self.metric.as_ref(), self.tags);
         AggregatorEntryKey {
-            metric: self.metric.into_static_str(),
+            metric: self.metric.into_static(),
             tags: SortedTags::from_sorted_tags_with_hash(self.tags, self.tags_hash),
             hash: self.hash,
             fingerprint,
@@ -197,7 +197,7 @@ impl<S: BuildHasher + Clone> LookupKeySorted<'_, S> {
         let fingerprint =
             metric_tags_fingerprint(self.metric.as_ref(), self.sorted_tags.joined_tags());
         AggregatorEntryKey {
-            metric: self.metric.into_static_str(),
+            metric: self.metric.into_static(),
             tags: self.sorted_tags.clone(),
             hash: self.hash,
             fingerprint,
