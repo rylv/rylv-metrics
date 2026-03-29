@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use rylv_metrics::{
-    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag,
     SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::time::Duration;
@@ -42,7 +42,7 @@ fuzz_target!(|data: &[u8]| {
     ]);
 
     let tags = vec!["fuzz:test".to_string()];
-    let mut tag_refs: Vec<RylvStr<'_>> = tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
+    let mut tag_refs: Vec<RylvTag<'_>> = tags.iter().map(|t| RylvTag::from(t.as_str())).collect();
 
     // Test with potentially extreme values
     collector.count_add(RylvStr::from_static("fuzz.counter"), value1, &mut tag_refs);

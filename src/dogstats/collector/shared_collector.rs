@@ -2028,10 +2028,7 @@ mod tests {
             aggregator,
             RylvStr::from_static("requests"),
             2,
-            &mut [
-                RylvTag::Full(RylvStr::from_static("b:2")),
-                RylvTag::Full(RylvStr::from_static("a:1")),
-            ],
+            &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
         record_count_add_in_aggregator_sorted(
             aggregator,
@@ -2788,9 +2785,7 @@ mod tests {
             stats_prefix: "ds.".to_string(),
             ..Default::default()
         });
-        let sorted = collector.prepare_sorted_tags([
-            RylvTag::from(RylvStr::from_static("a:1")),
-        ]);
+        let sorted = collector.prepare_sorted_tags([RylvTag::from(RylvStr::from_static("a:1"))]);
         collector.count_sorted(RylvStr::from_static("hits"), &sorted);
         collector.count_sorted(RylvStr::from_static("hits"), &sorted);
 
@@ -2804,9 +2799,7 @@ mod tests {
             stats_prefix: "dp.".to_string(),
             ..Default::default()
         });
-        let sorted = collector.prepare_sorted_tags([
-            RylvTag::from(RylvStr::from_static("a:1")),
-        ]);
+        let sorted = collector.prepare_sorted_tags([RylvTag::from(RylvStr::from_static("a:1"))]);
         let prepared = collector.prepare_metric(RylvStr::from_static("hits"), sorted);
         collector.count_prepared(&prepared);
         collector.count_prepared(&prepared);
@@ -2822,9 +2815,7 @@ mod tests {
             stats_prefix: "g.".to_string(),
             ..Default::default()
         });
-        let sorted = collector.prepare_sorted_tags([
-            RylvTag::from(RylvStr::from_static("a:1")),
-        ]);
+        let sorted = collector.prepare_sorted_tags([RylvTag::from(RylvStr::from_static("a:1"))]);
         let prepared = collector.prepare_metric(RylvStr::from_static("load_p"), sorted.clone());
 
         collector.gauge_sorted(RylvStr::from_static("load_s"), 10, &sorted);
@@ -2843,17 +2834,19 @@ mod tests {
             stats_prefix: "t.".to_string(),
             ..Default::default()
         });
-        let sorted = collector.prepare_sorted_tags([
-            RylvTag::from(RylvStr::from_static("a:1")),
-        ]);
+        let sorted = collector.prepare_sorted_tags([RylvTag::from(RylvStr::from_static("a:1"))]);
         let prepared = collector.prepare_metric(RylvStr::from_static("dur_p"), sorted.clone());
 
         collector.timing_sorted(RylvStr::from_static("dur_s"), 100, &sorted);
         collector.timing_prepared(&prepared, 200);
 
         let lines = drain_metrics_now(&collector);
-        assert!(lines.iter().any(|l| l.contains("dur_s") && l.contains("|ms")));
-        assert!(lines.iter().any(|l| l.contains("dur_p") && l.contains("|ms")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("dur_s") && l.contains("|ms")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("dur_p") && l.contains("|ms")));
     }
 
     #[test]
@@ -2864,7 +2857,7 @@ mod tests {
             RylvStr::from_static("requests"),
             &mut [
                 RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
-                RylvTag::Full(RylvStr::from_static("az:use1")),
+                RylvTag::from_static("az:use1"),
             ],
         );
 

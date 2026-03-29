@@ -2191,7 +2191,7 @@ mod tests {
     ) {
         let count_key = build_lookup_key(
             RylvStr::from_static("requests"),
-            &[RylvTag::Full(RylvStr::from_static("a:1"))],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(10);
@@ -2206,7 +2206,7 @@ mod tests {
 
         let zero_count_key = build_lookup_key(
             RylvStr::from_static("empty_requests"),
-            &[RylvTag::Full(RylvStr::from_static("a:1"))],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(11);
@@ -2221,7 +2221,7 @@ mod tests {
 
         let gauge_key = build_lookup_key(
             RylvStr::from_static("load"),
-            &[RylvTag::Full(RylvStr::from_static("a:1"))],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(12);
@@ -2236,7 +2236,7 @@ mod tests {
 
         let zero_gauge_key = build_lookup_key(
             RylvStr::from_static("empty_load"),
-            &[RylvTag::Full(RylvStr::from_static("a:1"))],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(13);
@@ -2251,7 +2251,7 @@ mod tests {
 
         let hist_key = build_lookup_key(
             RylvStr::from_static("latency"),
-            &[RylvTag::Full(RylvStr::from_static("a:1"))],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(14);
@@ -2273,7 +2273,7 @@ mod tests {
 
         let empty_hist_key = build_lookup_key(
             RylvStr::from_static("empty_latency"),
-            &[RylvTag::Full(RylvStr::from_static("a:1"))],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(15);
@@ -2801,7 +2801,7 @@ mod tests {
         let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
         let mut to_remove = Vec::new();
 
-        let tags = [RylvTag::Full(RylvStr::from_static("a:1"))];
+        let tags = [RylvTag::from_static("a:1")];
         let lookup = build_lookup_key(RylvStr::from_static("temp"), &tags, &hasher);
         local
             .gauge_last
@@ -2996,7 +2996,7 @@ mod tests {
 
         let timing_key = build_lookup_key(
             RylvStr::from_static("duration"),
-            &[RylvTag::Full(RylvStr::from_static("a:1"))],
+            &[RylvTag::from_static("a:1")],
             &hasher,
         )
         .into_key_with_id(20);
@@ -3185,7 +3185,7 @@ mod tests {
             RylvStr::from_static("requests"),
             &mut [
                 RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
-                RylvTag::Full(RylvStr::from_static("az:use1")),
+                RylvTag::from_static("az:use1"),
             ],
         );
 

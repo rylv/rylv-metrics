@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn rylv_tag_is_empty() {
-        let tag = RylvTag::Full(RylvStr::from_static(""));
+        let tag = RylvTag::from_static("");
         assert!(tag.is_empty());
 
         let tag = RylvTag::from_static("env:prod");
@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn rylv_tag_push_tag_full() {
-        let tag = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let tag = RylvTag::from_static("env:prod");
         let mut buf = String::new();
         tag.push_tag(&mut buf);
         assert_eq!(buf, "env:prod");
@@ -526,16 +526,15 @@ mod tests {
 
     #[test]
     fn rylv_tag_eq_full_full() {
-        let a = RylvTag::Full(RylvStr::from_static("env:prod"));
-        let b = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let a = RylvTag::from_static("env:prod");
+        let b = RylvTag::from_static("env:prod");
         assert_eq!(a, b);
     }
 
     #[test]
     fn rylv_tag_eq_full_compound() {
-        let full = RylvTag::Full(RylvStr::from_static("env:prod"));
-        let compound =
-            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        let full = RylvTag::from_static("env:prod");
+        let compound = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
         assert_eq!(full, compound);
         assert_eq!(compound, full);
     }
@@ -549,9 +548,8 @@ mod tests {
 
     #[test]
     fn rylv_tag_neq_full_compound_different_value() {
-        let full = RylvTag::Full(RylvStr::from_static("env:staging"));
-        let compound =
-            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        let full = RylvTag::from_static("env:staging");
+        let compound = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
         assert_ne!(full, compound);
     }
 
@@ -559,24 +557,22 @@ mod tests {
 
     #[test]
     fn rylv_tag_ord_full_full() {
-        let a = RylvTag::Full(RylvStr::from_static("az:use1"));
-        let b = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let a = RylvTag::from_static("az:use1");
+        let b = RylvTag::from_static("env:prod");
         assert!(a < b);
     }
 
     #[test]
     fn rylv_tag_ord_full_compound_equal() {
-        let full = RylvTag::Full(RylvStr::from_static("env:prod"));
-        let compound =
-            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
+        let full = RylvTag::from_static("env:prod");
+        let compound = RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"));
         assert_eq!(full.cmp(&compound), Ordering::Equal);
     }
 
     #[test]
     fn rylv_tag_ord_compound_full_less() {
-        let compound =
-            RylvTag::Compound(RylvStr::from_static("az"), RylvStr::from_static("use1"));
-        let full = RylvTag::Full(RylvStr::from_static("env:prod"));
+        let compound = RylvTag::Compound(RylvStr::from_static("az"), RylvStr::from_static("use1"));
+        let full = RylvTag::from_static("env:prod");
         assert!(compound < full);
     }
 

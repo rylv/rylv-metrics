@@ -46,7 +46,7 @@ fmt-check:
 .PHONY: test
 test:
 	@echo "=> Running tests (all features)"
-	@cargo test --all-features --all-targets
+	@cargo test --all-features
 
 .PHONY: test-default
 test-default:
@@ -156,7 +156,7 @@ bench-flamegraph:
 
 .PHONY: bench-samply
 bench-samply:
-	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp"
+	RUSTFLAGS="-C force-frame-pointers=yes" samply record cargo bench --bench sync_collector --features "udp shared-collector"
 
 # Sorted/Prepared profiling targets (Criterion filters)
 .PHONY: bench-samply-single-regular

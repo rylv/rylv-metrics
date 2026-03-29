@@ -814,9 +814,7 @@ mod tests {
         let mock = MockWriter::new();
         let mut writer = StatsWriterSimple::new(&mock, 1432);
 
-        writer
-            .write(&["m"], "", "1", MetricKind::Count)
-            .unwrap();
+        writer.write(&["m"], "", "1", MetricKind::Count).unwrap();
         writer.reset();
         let flushed = writer.flush().unwrap();
         assert_eq!(flushed, 0);
@@ -851,9 +849,7 @@ mod tests {
                 writer: &mut simple,
             };
             assert!(guard.metric_copied());
-            guard
-                .write(&["m"], "", "1", MetricKind::Count)
-                .unwrap();
+            guard.write(&["m"], "", "1", MetricKind::Count).unwrap();
             guard.flush().unwrap();
         } // guard drops here, calling reset
 

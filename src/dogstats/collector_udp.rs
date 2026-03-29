@@ -555,9 +555,7 @@ mod tests {
     fn metric_collector_gauge_and_timing_forward_to_inner() {
         let inner = Arc::new(FakeInner::default());
         let collector = collector_with_inner(Arc::clone(&inner));
-        let sorted = collector.prepare_sorted_tags([
-            RylvTag::from(RylvStr::from_static("a:1")),
-        ]);
+        let sorted = collector.prepare_sorted_tags([RylvTag::from(RylvStr::from_static("a:1"))]);
         let prepared = collector.prepare_metric(RylvStr::from_static("p"), sorted.clone());
 
         collector.gauge(

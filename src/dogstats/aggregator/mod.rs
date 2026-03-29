@@ -361,8 +361,8 @@ mod tests {
     fn lookup_key_into_key_and_compare_cover_match_and_mismatch_paths() {
         let hasher = TestHasher::new();
         let tags = [
-            RylvTag::Full(RylvStr::from_static("env:test")),
-            RylvTag::Full(RylvStr::from_static("service:api")),
+            RylvTag::from_static("env:test"),
+            RylvTag::from_static("service:api"),
         ];
         let tags_hash = hash_tags(&hasher, &tags);
         let hash = combine_metric_tags_hash(&hasher, "bench.metric", tags_hash);
@@ -394,7 +394,7 @@ mod tests {
         };
         assert!(!mismatched_metric.compare(&entry));
 
-        let short_tags = [RylvTag::Full(RylvStr::from_static("env:test"))];
+        let short_tags = [RylvTag::from_static("env:test")];
         let mismatched_tag_count = LookupKey {
             metric: RylvStr::from_static("bench.metric"),
             tags: &short_tags,
@@ -486,10 +486,7 @@ mod tests {
         let hasher = TestHasher::new();
         let compound_tags = [
             RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("test")),
-            RylvTag::Compound(
-                RylvStr::from_static("service"),
-                RylvStr::from_static("api"),
-            ),
+            RylvTag::Compound(RylvStr::from_static("service"), RylvStr::from_static("api")),
         ];
         let tags_hash = hash_tags(&hasher, &compound_tags);
         let hash = combine_metric_tags_hash(&hasher, "bench.metric", tags_hash);
@@ -515,10 +512,7 @@ mod tests {
         // Mismatched compound value should not match
         let bad_compound = [
             RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
-            RylvTag::Compound(
-                RylvStr::from_static("service"),
-                RylvStr::from_static("api"),
-            ),
+            RylvTag::Compound(RylvStr::from_static("service"), RylvStr::from_static("api")),
         ];
         let bad_lookup = LookupKey {
             metric: RylvStr::from_static("bench.metric"),
@@ -531,10 +525,7 @@ mod tests {
         // Mismatched compound key should not match
         let bad_key = [
             RylvTag::Compound(RylvStr::from_static("xxx"), RylvStr::from_static("test")),
-            RylvTag::Compound(
-                RylvStr::from_static("service"),
-                RylvStr::from_static("api"),
-            ),
+            RylvTag::Compound(RylvStr::from_static("service"), RylvStr::from_static("api")),
         ];
         let bad_key_lookup = LookupKey {
             metric: RylvStr::from_static("bench.metric"),
@@ -549,7 +540,7 @@ mod tests {
     fn compound_separator_mismatch_returns_false() {
         let hasher = TestHasher::new();
         // Entry built from Full("somethingg:a") — key overlap with "something"
-        let full_tags = [RylvTag::Full(RylvStr::from_static("somethingg:a"))];
+        let full_tags = [RylvTag::from_static("somethingg:a")];
         let entry_tags_hash = hash_tags(&hasher, &full_tags);
         let hash = combine_metric_tags_hash(&hasher, "m", entry_tags_hash);
         let entry_lookup = LookupKey {

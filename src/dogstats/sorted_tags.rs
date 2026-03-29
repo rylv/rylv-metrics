@@ -353,24 +353,15 @@ mod tests {
     #[test]
     fn sorted_tags_equality_same_tags() {
         let hasher = default_hasher();
-        let a = SortedTags::new(
-            [RylvTag::Full(RylvStr::from_static("env:prod"))],
-            &hasher,
-        );
-        let b = SortedTags::new(
-            [RylvTag::Full(RylvStr::from_static("env:prod"))],
-            &hasher,
-        );
+        let a = SortedTags::new([RylvTag::from_static("env:prod")], &hasher);
+        let b = SortedTags::new([RylvTag::from_static("env:prod")], &hasher);
         assert_eq!(a, b);
     }
 
     #[test]
     fn sorted_tags_equality_full_vs_compound() {
         let hasher = default_hasher();
-        let a = SortedTags::new(
-            [RylvTag::Full(RylvStr::from_static("env:prod"))],
-            &hasher,
-        );
+        let a = SortedTags::new([RylvTag::from_static("env:prod")], &hasher);
         let b = SortedTags::new(
             [RylvTag::Compound(
                 RylvStr::from_static("env"),
@@ -386,7 +377,7 @@ mod tests {
     fn fingerprint_consistent_full_vs_compound() {
         use super::{metric_tags_fingerprint, metric_tags_fingerprint_from_tags};
 
-        let full_tags = [RylvTag::Full(RylvStr::from_static("env:prod"))];
+        let full_tags = [RylvTag::from_static("env:prod")];
         let compound_tags = [RylvTag::Compound(
             RylvStr::from_static("env"),
             RylvStr::from_static("prod"),
@@ -406,8 +397,8 @@ mod tests {
 
         let hasher = default_hasher();
         let tags = [
-            RylvTag::Full(RylvStr::from_static("env:prod")),
-            RylvTag::Full(RylvStr::from_static("az:use1")),
+            RylvTag::from_static("env:prod"),
+            RylvTag::from_static("az:use1"),
         ];
         let h1 = hash_tags(&hasher, &tags);
         let h2 = hash_tags(&hasher, &tags);
@@ -431,10 +422,7 @@ mod tests {
     #[test]
     fn sorted_tags_accessor_returns_sorted_slice() {
         let tags = SortedTags::new(
-            [
-                RylvTag::Full(RylvStr::from_static("z:3")),
-                RylvTag::Full(RylvStr::from_static("a:1")),
-            ],
+            [RylvTag::from_static("z:3"), RylvTag::from_static("a:1")],
             &default_hasher(),
         );
         let slice = tags.tags();
@@ -449,10 +437,7 @@ mod tests {
     fn fingerprint_multi_tags() {
         use super::{metric_tags_fingerprint, metric_tags_fingerprint_from_tags};
 
-        let tags = [
-            RylvTag::Full(RylvStr::from_static("a:1")),
-            RylvTag::Full(RylvStr::from_static("b:2")),
-        ];
+        let tags = [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")];
         let fp = metric_tags_fingerprint_from_tags("m", &tags);
         let fp_joined = metric_tags_fingerprint("m", "a:1,b:2");
         assert_eq!(fp, fp_joined);
@@ -472,10 +457,7 @@ mod tests {
         use super::PreparedMetric;
 
         let hasher = default_hasher();
-        let tags = SortedTags::new(
-            [RylvTag::Full(RylvStr::from_static("env:prod"))],
-            &hasher,
-        );
+        let tags = SortedTags::new([RylvTag::from_static("env:prod")], &hasher);
         let hash = super::combine_metric_tags_hash(&hasher, "my.metric", tags.tags_hash());
         let prepared = PreparedMetric::new(RylvStr::from_static("my.metric"), tags, hash);
 
@@ -497,10 +479,7 @@ mod tests {
     #[test]
     fn from_sorted_tags_with_hash() {
         let hasher = default_hasher();
-        let tags = [
-            RylvTag::Full(RylvStr::from_static("a:1")),
-            RylvTag::Full(RylvStr::from_static("b:2")),
-        ];
+        let tags = [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")];
         let tags_hash = super::hash_tags(&hasher, &tags);
         let sorted: SortedTags<DefaultMetricHasher> =
             SortedTags::from_sorted_tags_with_hash(&tags, tags_hash);
