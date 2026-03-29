@@ -317,8 +317,8 @@ mod tests {
         let tags = SortedTags::new(
             [
                 RylvTag::from("service:api".to_string()),
-                RylvTag::Full(RylvStr::from_static("env:prod")),
-                RylvTag::Full(RylvStr::from_static("az:use1")),
+                RylvTag::from_static("env:prod"),
+                RylvTag::from_static("az:use1"),
             ],
             &default_hasher(),
         );
@@ -330,9 +330,9 @@ mod tests {
     fn sorted_tags_with_compound_tags() {
         let tags = SortedTags::new(
             [
-                RylvTag::Compound(RylvStr::from_static("service"), RylvStr::from_static("api")),
-                RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
-                RylvTag::Full(RylvStr::from_static("az:use1")),
+                RylvTag::from_static_compound("service", "api"),
+                RylvTag::from_static_compound("env", "prod"),
+                RylvTag::from_static("az:use1"),
             ],
             &default_hasher(),
         );

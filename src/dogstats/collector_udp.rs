@@ -550,4 +550,46 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn metric_collector_gauge_and_timing_forward_to_inner() {
+        let inner = Arc::new(FakeInner::default());
+        let collector = collector_with_inner(Arc::clone(&inner));
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("p"), sorted.clone());
+
+        collector.gauge(
+            RylvStr::from_static("lww"),
+            42,
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+        collector.gauge_sorted(RylvStr::from_static("lww_s"), 43, &sorted);
+        collector.gauge_prepared(&prepared, 44);
+
+        let calls = inner.take_calls();
+        assert_eq!(
+            calls,
+            vec![
+                "gauge:lww:42".to_string(),
+                "gauge_sorted:lww_s:43".to_string(),
+                "gauge_prepared:p:44".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn fake_inner_try_begin_drain() {
+        let inner = FakeInner::default();
+        let drain = inner.try_begin_drain();
+        assert!(drain.is_some());
+        assert_eq!(drain.unwrap().count(), 0);
+    }
+
+    #[test]
+    #[cfg(target_vendor = "apple")]
+    fn stats_writer_type_debug_apple_batch() {
+        assert_eq!(format!("{:?}", StatsWriterType::AppleBatch), "AppleBatch");
+    }
 }

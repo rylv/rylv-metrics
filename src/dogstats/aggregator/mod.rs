@@ -482,6 +482,101 @@ mod tests {
     }
 
     #[test]
+    fn lookup_key_compound_tags_compare_against_entry() {
+        let hasher = TestHasher::new();
+        let compound_tags = [
+            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("test")),
+            RylvTag::Compound(
+                RylvStr::from_static("service"),
+                RylvStr::from_static("api"),
+            ),
+        ];
+        let tags_hash = hash_tags(&hasher, &compound_tags);
+        let hash = combine_metric_tags_hash(&hasher, "bench.metric", tags_hash);
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("bench.metric"),
+            tags: &compound_tags,
+            tags_hash,
+            hash,
+        };
+
+        let entry = lookup.into_key_with_id::<TestHasher>(99);
+        assert_eq!(entry.tags.joined_tags(), "env:test,service:api");
+
+        // Compound lookup against the same entry should match
+        let lookup2 = LookupKey {
+            metric: RylvStr::from_static("bench.metric"),
+            tags: &compound_tags,
+            tags_hash,
+            hash,
+        };
+        assert!(lookup2.compare(&entry));
+
+        // Mismatched compound value should not match
+        let bad_compound = [
+            RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
+            RylvTag::Compound(
+                RylvStr::from_static("service"),
+                RylvStr::from_static("api"),
+            ),
+        ];
+        let bad_lookup = LookupKey {
+            metric: RylvStr::from_static("bench.metric"),
+            tags: &bad_compound,
+            tags_hash,
+            hash,
+        };
+        assert!(!bad_lookup.compare(&entry));
+
+        // Mismatched compound key should not match
+        let bad_key = [
+            RylvTag::Compound(RylvStr::from_static("xxx"), RylvStr::from_static("test")),
+            RylvTag::Compound(
+                RylvStr::from_static("service"),
+                RylvStr::from_static("api"),
+            ),
+        ];
+        let bad_key_lookup = LookupKey {
+            metric: RylvStr::from_static("bench.metric"),
+            tags: &bad_key,
+            tags_hash,
+            hash,
+        };
+        assert!(!bad_key_lookup.compare(&entry));
+    }
+
+    #[test]
+    fn compound_separator_mismatch_returns_false() {
+        let hasher = TestHasher::new();
+        // Entry built from Full("somethingg:a") — key overlap with "something"
+        let full_tags = [RylvTag::Full(RylvStr::from_static("somethingg:a"))];
+        let entry_tags_hash = hash_tags(&hasher, &full_tags);
+        let hash = combine_metric_tags_hash(&hasher, "m", entry_tags_hash);
+        let entry_lookup = LookupKey {
+            metric: RylvStr::from_static("m"),
+            tags: &full_tags,
+            tags_hash: entry_tags_hash,
+            hash,
+        };
+        let entry = entry_lookup.into_key_with_id::<TestHasher>(200);
+        assert_eq!(entry.tags.joined_tags(), "somethingg:a");
+
+        // Lookup with Compound("something", "ga") — expects ':' at position 9
+        // but joined[9] is 'g' not ':'
+        let compound_tags = [RylvTag::Compound(
+            RylvStr::from_static("something"),
+            RylvStr::from_static("ga"),
+        )];
+        let lookup = LookupKey {
+            metric: RylvStr::from_static("m"),
+            tags: &compound_tags,
+            tags_hash: entry_tags_hash,
+            hash,
+        };
+        assert!(!lookup.compare(&entry));
+    }
+
+    #[test]
     fn sig_fig_validates_range() {
         assert_eq!(SigFig::ZERO.value(), 0);
         assert_eq!(SigFig::FIVE.value(), 5);

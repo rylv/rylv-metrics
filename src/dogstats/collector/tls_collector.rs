@@ -3062,4 +3062,134 @@ mod tests {
         assert!(pool[pool_id].is_empty());
         assert_eq!(hist.pool_id, pool_id);
     }
+
+    #[test]
+    fn tls_ref_covers_all_sorted_prepared_and_unsorted_paths() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "rp.".to_string(),
+            ..Default::default()
+        });
+
+        // Use UFCS to explicitly dispatch through &TLSCollector impl
+        type Ref<'a> = &'a TLSCollector;
+
+        <Ref<'_> as MetricCollectorTrait>::count(
+            &&collector,
+            RylvStr::from_static("cnt"),
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+        <Ref<'_> as MetricCollectorTrait>::count_add(
+            &&collector,
+            RylvStr::from_static("cnt"),
+            4,
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+        <Ref<'_> as MetricCollectorTrait>::gauge_avg(
+            &&collector,
+            RylvStr::from_static("gavg"),
+            10,
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+        <Ref<'_> as MetricCollectorTrait>::gauge(
+            &&collector,
+            RylvStr::from_static("lww"),
+            20,
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+        <Ref<'_> as MetricCollectorTrait>::timing(
+            &&collector,
+            RylvStr::from_static("dur"),
+            100,
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+        <Ref<'_> as MetricCollectorTrait>::histogram(
+            &&collector,
+            RylvStr::from_static("lat"),
+            50,
+            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+
+        // sorted via reference UFCS
+        let sorted = <Ref<'_> as MetricCollectorTrait>::prepare_sorted_tags(
+            &&collector,
+            [RylvTag::from(RylvStr::from_static("a:1"))],
+        );
+
+        <Ref<'_> as MetricCollectorTrait>::histogram_sorted(
+            &&collector,
+            RylvStr::from_static("lat_s"),
+            50,
+            &sorted,
+        );
+        <Ref<'_> as MetricCollectorTrait>::count_add_sorted(
+            &&collector,
+            RylvStr::from_static("cnt_s"),
+            2,
+            &sorted,
+        );
+        <Ref<'_> as MetricCollectorTrait>::gauge_avg_sorted(
+            &&collector,
+            RylvStr::from_static("gavg_s"),
+            30,
+            &sorted,
+        );
+        <Ref<'_> as MetricCollectorTrait>::gauge_sorted(
+            &&collector,
+            RylvStr::from_static("glww_s"),
+            40,
+            &sorted,
+        );
+        <Ref<'_> as MetricCollectorTrait>::timing_sorted(
+            &&collector,
+            RylvStr::from_static("dur_s"),
+            60,
+            &sorted,
+        );
+
+        // prepared via reference UFCS
+        let prepared_h = <Ref<'_> as MetricCollectorTrait>::prepare_metric(
+            &&collector,
+            RylvStr::from_static("lat_p"),
+            sorted.clone(),
+        );
+        let prepared_c = <Ref<'_> as MetricCollectorTrait>::prepare_metric(
+            &&collector,
+            RylvStr::from_static("cnt_p"),
+            sorted.clone(),
+        );
+
+        <Ref<'_> as MetricCollectorTrait>::histogram_prepared(&&collector, &prepared_h, 70);
+        <Ref<'_> as MetricCollectorTrait>::count_add_prepared(&&collector, &prepared_c, 3);
+        <Ref<'_> as MetricCollectorTrait>::gauge_avg_prepared(&&collector, &prepared_h, 80);
+        <Ref<'_> as MetricCollectorTrait>::gauge_prepared(&&collector, &prepared_h, 90);
+        <Ref<'_> as MetricCollectorTrait>::timing_prepared(&&collector, &prepared_h, 110);
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.iter().any(|l| l.contains("cnt")));
+        assert!(lines.iter().any(|l| l.contains("lww") && l.contains("|g")));
+        assert!(lines.iter().any(|l| l.contains("dur") && l.contains("|ms")));
+        assert!(lines.iter().any(|l| l.contains("lat_s")));
+        assert!(lines.iter().any(|l| l.contains("cnt_s")));
+        assert!(lines.iter().any(|l| l.contains("gavg_s")));
+        assert!(lines.iter().any(|l| l.contains("glww_s")));
+        assert!(lines.iter().any(|l| l.contains("dur_s")));
+        assert!(lines.iter().any(|l| l.contains("lat_p")));
+        assert!(lines.iter().any(|l| l.contains("cnt_p")));
+    }
+
+    #[test]
+    fn tls_compound_tags_through_collector() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.count(
+            RylvStr::from_static("requests"),
+            &mut [
+                RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
+                RylvTag::Full(RylvStr::from_static("az:use1")),
+            ],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["requests:1|c|#az:use1,env:prod\n".to_string()]);
+    }
 }

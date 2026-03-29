@@ -679,3 +679,186 @@ impl<T: Writer> StatsWriterTrait for StatsWriterSimple<T> {
         self.current_transmit.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct MockWriter {
+        written: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl MockWriter {
+        fn new() -> Self {
+            Self {
+                written: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn take_written(&self) -> Vec<Vec<u8>> {
+            std::mem::take(&mut *self.written.borrow_mut())
+        }
+    }
+
+    impl Writer for MockWriter {
+        fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
+            self.written.borrow_mut().push(buf.to_vec());
+            Ok(buf.len())
+        }
+
+        #[cfg(target_os = "linux")]
+        fn write_mvec(
+            &self,
+            _pool_msg_headers: &mut [rustix::net::MMsgHdr<'_>],
+        ) -> MetricResult<usize> {
+            Ok(0)
+        }
+
+        #[cfg(target_os = "linux")]
+        fn get_destination(&self) -> &rustix::net::SocketAddrAny {
+            unimplemented!()
+        }
+
+        #[cfg(target_vendor = "apple")]
+        fn get_destination_addr(&self) -> libc::sockaddr_in {
+            unimplemented!()
+        }
+
+        #[cfg(target_vendor = "apple")]
+        fn as_raw_fd(&self) -> libc::c_int {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn simple_writer_writes_metric_with_tags() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer
+            .write(&["my.metric"], "env:prod", "42", MetricKind::Count)
+            .unwrap();
+        let flushed = writer.flush().unwrap();
+        assert!(flushed > 0);
+
+        let written = mock.take_written();
+        assert_eq!(written.len(), 1);
+        let line = String::from_utf8(written[0].clone()).unwrap();
+        assert_eq!(line, "my.metric:42|c|#env:prod\n");
+    }
+
+    #[test]
+    fn simple_writer_writes_metric_without_tags() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer
+            .write(&["my.metric"], "", "10", MetricKind::Gauge)
+            .unwrap();
+        writer.flush().unwrap();
+
+        let written = mock.take_written();
+        let line = String::from_utf8(written[0].clone()).unwrap();
+        assert_eq!(line, "my.metric:10|g\n");
+    }
+
+    #[test]
+    fn simple_writer_timing_metric_type() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer
+            .write(&["dur"], "", "100", MetricKind::Timing)
+            .unwrap();
+        writer.flush().unwrap();
+
+        let written = mock.take_written();
+        let line = String::from_utf8(written[0].clone()).unwrap();
+        assert_eq!(line, "dur:100|ms\n");
+    }
+
+    #[test]
+    fn simple_writer_rejects_oversized_metric() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 20);
+
+        let result = writer.write(
+            &["a.very.long.metric.name.that.exceeds.packet"],
+            "tag:val",
+            "999999",
+            MetricKind::Count,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn simple_writer_flushes_when_full() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 40);
+
+        writer
+            .write(&["metric.a"], "", "1", MetricKind::Count)
+            .unwrap();
+        writer
+            .write(&["metric.b"], "", "2", MetricKind::Count)
+            .unwrap();
+        writer.flush().unwrap();
+
+        let written = mock.take_written();
+        assert!(written.len() >= 1);
+    }
+
+    #[test]
+    fn simple_writer_reset_clears_buffer() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer
+            .write(&["m"], "", "1", MetricKind::Count)
+            .unwrap();
+        writer.reset();
+        let flushed = writer.flush().unwrap();
+        assert_eq!(flushed, 0);
+    }
+
+    #[test]
+    fn metric_len_with_tags() {
+        // "m:v|c|#t\n" = 1+1+1+1+1+1+2+1+1 = metric(1) + ':' + value(1) + '|' + type(1) + '|#' + tags(1) + '\n'
+        let len = metric_len(&["m"], "t", "v", "c");
+        assert_eq!(len, "m:v|c|#t\n".len());
+    }
+
+    #[test]
+    fn metric_len_without_tags() {
+        let len = metric_len(&["m"], "", "v", "c");
+        assert_eq!(len, "m:v|c\n".len());
+    }
+
+    #[test]
+    fn metric_str_maps_kinds() {
+        assert_eq!(metric_str(MetricKind::Count), "c");
+        assert_eq!(metric_str(MetricKind::Gauge), "g");
+        assert_eq!(metric_str(MetricKind::Timing), "ms");
+    }
+
+    #[test]
+    fn stats_guard_delegates_and_resets_on_drop() {
+        let mut simple = StatsWriterSimple::new(MockWriter::new(), 1432);
+
+        {
+            let mut guard = StatsGuard {
+                writer: &mut simple,
+            };
+            assert!(guard.metric_copied());
+            guard
+                .write(&["m"], "", "1", MetricKind::Count)
+                .unwrap();
+            guard.flush().unwrap();
+        } // guard drops here, calling reset
+
+        // After drop, internal buffer should be cleared
+        let flushed = simple.flush().unwrap();
+        assert_eq!(flushed, 0);
+    }
+}

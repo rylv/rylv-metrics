@@ -160,7 +160,7 @@ impl<'a> From<Cow<'a, str>> for RylvStr<'a> {
 ///
 /// | Variant | Example | Resolved form |
 /// |---------|---------|---------------|
-/// | `Full` | `RylvTag::Full(RylvStr::from_static("env:prod"))` | `"env:prod"` |
+/// | `Full` | `RylvTag::from_static("env:prod")` | `"env:prod"` |
 /// | `Compound` | `RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod"))` | `"env:prod"` |
 ///
 /// `Full` is zero-cost when the tag is already in `key:value` format.
@@ -264,6 +264,13 @@ impl RylvTag<'_> {
     pub const fn from_static(s: &'static str) -> RylvTag<'static> {
         RylvTag::Full(RylvStr::from_static(s))
     }
+
+    /// Creates a `RylvTag::Compound` wrapping a `RylvStr::Static` for zero-copy usage for key and value.
+    #[inline]
+    #[must_use]
+    pub const fn from_static_compound(key: &'static str, value: &'static str) -> RylvTag<'static> {
+        RylvTag::Compound(RylvStr::from_static(key), RylvStr::from_static(value))
+    }
 }
 
 fn resolve_tags<'a, I>(tags: I) -> Vec<RylvTag<'static>>
@@ -319,6 +326,7 @@ impl PartialOrd for RylvTag<'_> {
     }
 }
 
+// FIXME: revisar bien esta funcion
 fn cmp(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> Ordering {
     let r = r.as_ref();
     let k = k.as_ref();
@@ -326,27 +334,41 @@ fn cmp(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> Ordering {
 
     let m = min(r.len(), k.len());
     let ordering = r[0..m].cmp(k);
+
+    // prefijo distinto, retorno inmediatamente
     if ordering != Ordering::Equal {
         return ordering;
     }
 
-    let Some(sep) = r.as_bytes().get(m) else {
+    // rylvStr es más largo, entonces esperemos que sea ":" para chequear luego el value
+    let Some(expected_sep_in_r) = r.as_bytes().get(m) else {
+        // Si no tiene mas caracteres, entonces es un string raro
+        // r="mykey" <- invalid?
+        // k="mykey" v="myvalue" => "mykey:myvalue"
         return Ordering::Less;
     };
 
-    let ordering = sep.cmp(&b':');
-    if ordering != Ordering::Equal {
-        return ordering;
+    // Si no es un limitador
+    if *expected_sep_in_r != b':' {
+        // r="mykeyy:myvalue"
+        // k="mykey" v="myvalue"
+        return Ordering::Greater;
     }
 
     let Some(rest) = r.get(m + 1..) else {
         return if v.is_empty() {
+            // r="mykey:"
+            // k="mykey" v=""
             Ordering::Equal
         } else {
+            // r="mykey:"
+            // k="mykey" v="myvalue"
             Ordering::Less
         };
     };
 
+    // r="mykey:myvalue"
+    // k="mykey" v="myvalue"
     rest.cmp(v)
 }
 

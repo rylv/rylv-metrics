@@ -46,7 +46,7 @@ fmt-check:
 .PHONY: test
 test:
 	@echo "=> Running tests (all features)"
-	@cargo test --all-features
+	@cargo test --all-features --all-targets
 
 .PHONY: test-default
 test-default:
