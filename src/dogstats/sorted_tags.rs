@@ -427,4 +427,84 @@ mod tests {
         let h = hash_tags(&hasher, &compound_tags);
         assert_ne!(h, 0);
     }
+
+    #[test]
+    fn sorted_tags_accessor_returns_sorted_slice() {
+        let tags = SortedTags::new(
+            [
+                RylvTag::Full(RylvStr::from_static("z:3")),
+                RylvTag::Full(RylvStr::from_static("a:1")),
+            ],
+            &default_hasher(),
+        );
+        let slice = tags.tags();
+        assert_eq!(slice.len(), 2);
+        // First tag should be "a:1" (sorted)
+        let mut buf = String::new();
+        slice[0].push_tag(&mut buf);
+        assert_eq!(buf, "a:1");
+    }
+
+    #[test]
+    fn fingerprint_multi_tags() {
+        use super::{metric_tags_fingerprint, metric_tags_fingerprint_from_tags};
+
+        let tags = [
+            RylvTag::Full(RylvStr::from_static("a:1")),
+            RylvTag::Full(RylvStr::from_static("b:2")),
+        ];
+        let fp = metric_tags_fingerprint_from_tags("m", &tags);
+        let fp_joined = metric_tags_fingerprint("m", "a:1,b:2");
+        assert_eq!(fp, fp_joined);
+    }
+
+    #[test]
+    fn combine_metric_tags_hash_works() {
+        use super::combine_metric_tags_hash;
+
+        let hasher = default_hasher();
+        let h = combine_metric_tags_hash(&hasher, "my.metric", 12345);
+        assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn prepared_metric_accessors() {
+        use super::PreparedMetric;
+
+        let hasher = default_hasher();
+        let tags = SortedTags::new(
+            [RylvTag::Full(RylvStr::from_static("env:prod"))],
+            &hasher,
+        );
+        let hash = super::combine_metric_tags_hash(&hasher, "my.metric", tags.tags_hash());
+        let prepared = PreparedMetric::new(RylvStr::from_static("my.metric"), tags, hash);
+
+        assert_eq!(prepared.metric().as_ref(), "my.metric");
+        assert_eq!(prepared.tags().len(), 1);
+        assert_eq!(prepared.hash(), hash);
+        assert_ne!(prepared.fingerprint(), 0);
+        // prepared_id should be unique
+        let _ = prepared.prepared_id();
+    }
+
+    #[test]
+    fn next_metric_id_increments() {
+        let a = super::next_metric_id();
+        let b = super::next_metric_id();
+        assert_eq!(b, a + 1);
+    }
+
+    #[test]
+    fn from_sorted_tags_with_hash() {
+        let hasher = default_hasher();
+        let tags = [
+            RylvTag::Full(RylvStr::from_static("a:1")),
+            RylvTag::Full(RylvStr::from_static("b:2")),
+        ];
+        let tags_hash = super::hash_tags(&hasher, &tags);
+        let sorted: SortedTags<DefaultMetricHasher> =
+            SortedTags::from_sorted_tags_with_hash(&tags, tags_hash);
+        assert_eq!(sorted.joined_tags(), "a:1,b:2");
+        assert_eq!(sorted.tags_hash(), tags_hash);
+    }
 }

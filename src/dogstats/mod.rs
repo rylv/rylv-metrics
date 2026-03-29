@@ -657,4 +657,49 @@ mod tests {
         resolved[1].push_tag(&mut buf);
         assert_eq!(buf, "az:use1");
     }
+
+    // --- Additional edge cases for cmp ---
+
+    #[test]
+    fn helper_cmp_r_equals_key_no_separator() {
+        // r == k exactly, no separator → Less
+        let r = RylvStr::from_static("env");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("prod");
+        assert_eq!(cmp(&r, &k, &v), Ordering::Less);
+    }
+
+    #[test]
+    fn helper_cmp_empty_value() {
+        // r = "env:", k = "env", v = "" → rest="" == v="" → Equal
+        let r = RylvStr::from_static("env:");
+        let k = RylvStr::from_static("env");
+        let v = RylvStr::from_static("");
+        assert_eq!(cmp(&r, &k, &v), Ordering::Equal);
+    }
+
+    // --- From<String> for RylvTag ---
+
+    #[test]
+    fn rylv_tag_from_string() {
+        let tag = RylvTag::from("env:prod".to_string());
+        assert_eq!(tag.len(), 8);
+    }
+
+    // --- RylvStr::Borrowed via From<&str> coverage ---
+
+    #[test]
+    fn rylv_str_from_borrowed_str() {
+        let s = "hello";
+        let rs: RylvStr<'_> = RylvStr::from(s);
+        assert_eq!(rs.as_ref(), "hello");
+    }
+
+    // --- RylvStr::OwnedStr AsRef coverage ---
+
+    #[test]
+    fn rylv_str_owned_str_as_ref() {
+        let s = RylvStr::OwnedStr(Arc::from("test"));
+        assert_eq!(s.as_ref(), "test");
+    }
 }

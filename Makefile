@@ -124,15 +124,11 @@ coverage:
 
 .PHONY: coverage-open
 coverage-open:
-	cargo llvm-cov --workspace --open --ignore-filename-regex 'bins/'
+	cargo llvm-cov --all-features --all-targets --open --ignore-filename-regex 'bins/'
 
 .PHONY: coverage-all
 coverage-all:
-	@echo "Running coverage with default features..."
-	cargo llvm-cov --workspace --html --ignore-filename-regex 'bins/'
-	@echo "Running coverage with no-default-features..."
-	cargo llvm-cov --no-default-features --workspace --html --ignore-filename-regex 'bins/'
-	@echo "All coverage reports generated at target/llvm-cov/html/index.html"
+	cargo llvm-cov --all-features --all-targets --html --ignore-filename-regex 'bins/'
 
 .PHONY: docker-coverage
 docker-coverage:

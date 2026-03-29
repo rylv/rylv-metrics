@@ -2781,4 +2781,94 @@ mod tests {
             .iter()
             .any(|l| l.contains("duration") && l.contains("|ms")));
     }
+
+    #[test]
+    fn default_count_sorted_delegates_to_count_add_sorted() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "ds.".to_string(),
+            ..Default::default()
+        });
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
+        collector.count_sorted(RylvStr::from_static("hits"), &sorted);
+        collector.count_sorted(RylvStr::from_static("hits"), &sorted);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["ds.hits:2|c|#a:1\n".to_string()]);
+    }
+
+    #[test]
+    fn default_count_prepared_delegates_to_count_add_prepared() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "dp.".to_string(),
+            ..Default::default()
+        });
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("hits"), sorted);
+        collector.count_prepared(&prepared);
+        collector.count_prepared(&prepared);
+        collector.count_prepared(&prepared);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["dp.hits:3|c|#a:1\n".to_string()]);
+    }
+
+    #[test]
+    fn gauge_sorted_and_prepared_last_write_wins() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "g.".to_string(),
+            ..Default::default()
+        });
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("load_p"), sorted.clone());
+
+        collector.gauge_sorted(RylvStr::from_static("load_s"), 10, &sorted);
+        collector.gauge_sorted(RylvStr::from_static("load_s"), 20, &sorted);
+        collector.gauge_prepared(&prepared, 30);
+        collector.gauge_prepared(&prepared, 40);
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.contains(&"g.load_s:20|g|#a:1\n".to_string()));
+        assert!(lines.contains(&"g.load_p:40|g|#a:1\n".to_string()));
+    }
+
+    #[test]
+    fn timing_sorted_and_prepared_default_methods() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "t.".to_string(),
+            ..Default::default()
+        });
+        let sorted = collector.prepare_sorted_tags([
+            RylvTag::from(RylvStr::from_static("a:1")),
+        ]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("dur_p"), sorted.clone());
+
+        collector.timing_sorted(RylvStr::from_static("dur_s"), 100, &sorted);
+        collector.timing_prepared(&prepared, 200);
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.iter().any(|l| l.contains("dur_s") && l.contains("|ms")));
+        assert!(lines.iter().any(|l| l.contains("dur_p") && l.contains("|ms")));
+    }
+
+    #[test]
+    fn compound_tags_through_collector() {
+        let collector = SharedCollector::new(SharedCollectorOptions::default());
+
+        collector.count(
+            RylvStr::from_static("requests"),
+            &mut [
+                RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
+                RylvTag::Full(RylvStr::from_static("az:use1")),
+            ],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["requests:1|c|#az:use1,env:prod\n".to_string()]);
+    }
 }
