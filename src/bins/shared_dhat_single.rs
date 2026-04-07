@@ -19,8 +19,8 @@ fn main() {
             RylvStr::from_static("some.metric"),
             1,
             [
-                RylvTag::from(RylvStr::from_static("tag:value")),
-                RylvTag::from(RylvStr::from_static("tag2:value2")),
+                RylvTag::from_static("tag:value"),
+                RylvTag::from_static("tag2:value2"),
             ],
         );
     }

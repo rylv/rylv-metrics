@@ -45,8 +45,8 @@ fn test_parallel_histogram_stress() {
                         RylvStr::from_static("parallel.histogram.static"),
                         value,
                         [
-                            RylvTag::from(RylvStr::from_static("thread:static")),
-                            RylvTag::from(RylvStr::from_static("test:parallel")),
+                            RylvTag::from_static("thread:static"),
+                            RylvTag::from_static("test:parallel"),
                         ],
                     );
 
@@ -180,8 +180,8 @@ fn test_parallel_high_contention() {
                         RylvStr::from_static("parallel.contention.same_metric"),
                         (thread_id * iterations_per_thread + i) as u64,
                         [
-                            RylvTag::from(RylvStr::from_static("contention:high")),
-                            RylvTag::from(RylvStr::from_static("test:stress")),
+                            RylvTag::from_static("contention:high"),
+                            RylvTag::from_static("test:stress"),
                         ],
                     );
                 }
@@ -212,7 +212,7 @@ fn test_parallel_many_unique_metrics() {
                     collector.histogram(
                         RylvStr::from(metric_name),
                         i as u64,
-                        [RylvTag::from(RylvStr::from_static("unique:metric"))],
+                        [RylvTag::from_static("unique:metric")],
                     );
                 }
             })
@@ -339,7 +339,7 @@ fn test_parallel_varying_tag_counts() {
                             collector.histogram(
                                 RylvStr::from_static("parallel.tags.one"),
                                 value,
-                                [RylvTag::from(RylvStr::from_static("tag:one"))],
+                                [RylvTag::from_static("tag:one")],
                             );
                         }
                         2 => {
@@ -348,8 +348,8 @@ fn test_parallel_varying_tag_counts() {
                                 RylvStr::from_static("parallel.tags.two"),
                                 value,
                                 [
-                                    RylvTag::from(RylvStr::from_static("tag:one")),
-                                    RylvTag::from(RylvStr::from_static("tag:two")),
+                                    RylvTag::from_static("tag:one"),
+                                    RylvTag::from_static("tag:two"),
                                 ],
                             );
                         }

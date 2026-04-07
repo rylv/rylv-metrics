@@ -88,8 +88,8 @@ fn benchmark_record_histogram(c: &mut Criterion) {
                 black_box(1),
                 black_box([
                     RylvTag::from(RylvStr::from_static(tags_metrics[i])),
-                    RylvTag::from(RylvStr::from_static("tag:value")),
-                    RylvTag::from(RylvStr::from_static("tag2:value2")),
+                    RylvTag::from_static("tag:value"),
+                    RylvTag::from_static("tag2:value2"),
                 ]),
             );
             i = (i + 1) % n;

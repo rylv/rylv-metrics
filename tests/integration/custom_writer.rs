@@ -140,26 +140,26 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     // Test counter
     collector.count(
         RylvStr::from_static("custom.counter"),
-        &mut [RylvTag::from(RylvStr::from_static("env:test"))],
+        &mut [RylvTag::from_static("env:test")],
     );
     collector.count_add(
         RylvStr::from_static("custom.counter.value"),
         42,
-        &mut [RylvTag::from(RylvStr::from_static("env:prod"))],
+        &mut [RylvTag::from_static("env:prod")],
     );
 
     // Test gauge
     collector.gauge_avg(
         RylvStr::from_static("custom.gauge"),
         100,
-        &mut [RylvTag::from(RylvStr::from_static("host:server1"))],
+        &mut [RylvTag::from_static("host:server1")],
     );
 
     // Test histogram
     collector.histogram(
         RylvStr::from_static("custom.histogram"),
         250,
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:/api"))],
+        &mut [RylvTag::from_static("endpoint:/api")],
     );
 
     // Wait for flush
@@ -288,17 +288,17 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
 
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvTag::from(RylvStr::from_static("method:GET"))],
+        &mut [RylvTag::from_static("method:GET")],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory"),
         512,
-        &mut [RylvTag::from(RylvStr::from_static("unit:mb"))],
+        &mut [RylvTag::from_static("unit:mb")],
     );
     collector.histogram(
         RylvStr::from_static("latency"),
         150,
-        &mut [RylvTag::from(RylvStr::from_static("service:api"))],
+        &mut [RylvTag::from_static("service:api")],
     );
 
     drop(collector);
@@ -348,54 +348,54 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
     // Test counter aggregation
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
+        &mut [RylvTag::from_static("page:home")],
     );
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
+        &mut [RylvTag::from_static("page:home")],
     );
     collector.count(
         RylvStr::from_static("page.views"),
-        &mut [RylvTag::from(RylvStr::from_static("page:home"))],
+        &mut [RylvTag::from_static("page:home")],
     );
 
     // Test gauge aggregation
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         50,
-        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
+        &mut [RylvTag::from_static("host:web1")],
     );
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         75,
-        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
+        &mut [RylvTag::from_static("host:web1")],
     );
     collector.gauge_avg(
         RylvStr::from_static("cpu.usage"),
         90,
-        &mut [RylvTag::from(RylvStr::from_static("host:web1"))],
+        &mut [RylvTag::from_static("host:web1")],
     );
 
     // Test histogram aggregation
     collector.histogram(
         RylvStr::from_static("request.duration"),
         100,
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
+        &mut [RylvTag::from_static("endpoint:/users")],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         200,
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
+        &mut [RylvTag::from_static("endpoint:/users")],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         150,
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
+        &mut [RylvTag::from_static("endpoint:/users")],
     );
     collector.histogram(
         RylvStr::from_static("request.duration"),
         300,
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:/users"))],
+        &mut [RylvTag::from_static("endpoint:/users")],
     );
 
     drop(collector);
@@ -454,9 +454,9 @@ fn test_custom_writer_multiple_tags() -> std::io::Result<()> {
     collector.count(
         RylvStr::from_static("multi.tag.metric"),
         &mut [
-            RylvTag::from(RylvStr::from_static("tag3:value3")),
-            RylvTag::from(RylvStr::from_static("tag1:value1")),
-            RylvTag::from(RylvStr::from_static("tag2:value2")),
+            RylvTag::from_static("tag3:value3"),
+            RylvTag::from_static("tag1:value1"),
+            RylvTag::from_static("tag2:value2"),
         ],
     );
 
@@ -501,7 +501,7 @@ fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
     collector.histogram(
         RylvStr::from_static("configurable.histogram"),
         123,
-        &mut [RylvTag::from(RylvStr::from_static("scope:test"))],
+        &mut [RylvTag::from_static("scope:test")],
     );
 
     drop(collector);
@@ -565,7 +565,7 @@ fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()>
     collector.histogram(
         RylvStr::from_static("custom.percentiles.histogram"),
         100,
-        &mut [RylvTag::from(RylvStr::from_static("scope:test"))],
+        &mut [RylvTag::from_static("scope:test")],
     );
 
     drop(collector);

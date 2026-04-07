@@ -9,8 +9,8 @@ use rylv_metrics::{
 fn main() {
     let collector = SharedCollector::default();
     let tags = collector.prepare_sorted_tags([
-        RylvTag::from(RylvStr::from_static("service:api")),
-        RylvTag::from(RylvStr::from_static("env:prod")),
+        RylvTag::from_static("service:api"),
+        RylvTag::from_static("env:prod"),
     ]);
 
     let prepared_count = collector.prepare_metric(RylvStr::from_static("requests.total"), tags);

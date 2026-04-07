@@ -74,12 +74,12 @@ fn main() {
     // Record some metrics
     collector.count(
         RylvStr::from_static("request.count"),
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))],
+        &mut [RylvTag::from_static("endpoint:api")],
     );
     collector.gauge_avg(
         RylvStr::from_static("connections"),
         10,
-        &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
+        &mut [RylvTag::from_static("pool:main")],
     );
 
     // Shutdown triggers a final flush

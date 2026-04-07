@@ -11,17 +11,17 @@ fn main() {
 
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvTag::from(RylvStr::from_static("service:web"))],
+        &mut [RylvTag::from_static("service:web")],
     );
     collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
-        &mut [RylvTag::from(RylvStr::from_static("service:web"))],
+        &mut [RylvTag::from_static("service:web")],
     );
     collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
-        &mut [RylvTag::from(RylvStr::from_static("service:web"))],
+        &mut [RylvTag::from_static("service:web")],
     );
 
     // Drain is non-blocking; first call usually schedules a generation swap.

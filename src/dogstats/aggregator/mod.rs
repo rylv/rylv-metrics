@@ -405,10 +405,7 @@ mod tests {
 
         let bad_separator_entry = AggregatorEntryKey {
             metric: RylvStr::from_static("bench.metric"),
-            tags: SortedTags::new(
-                [RylvTag::from(RylvStr::from_static("env:test,service:api"))],
-                &hasher,
-            ),
+            tags: SortedTags::new([RylvTag::from_static("env:test,service:api")], &hasher),
             hash,
             fingerprint: entry.fingerprint,
             id: entry.id + 1,

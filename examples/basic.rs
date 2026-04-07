@@ -31,29 +31,29 @@ fn main() {
         RylvStr::from_static("request.latency"),
         42,
         &mut [
-            RylvTag::from(RylvStr::from_static("endpoint:api")),
-            RylvTag::from(RylvStr::from_static("method:get")),
+            RylvTag::from_static("endpoint:api"),
+            RylvTag::from_static("method:get"),
         ],
     );
 
     // Counter — increments by one
     collector.count(
         RylvStr::from_static("request.count"),
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))],
+        &mut [RylvTag::from_static("endpoint:api")],
     );
 
     // Counter add — increments by an arbitrary value
     collector.count_add(
         RylvStr::from_static("bytes.sent"),
         1024,
-        &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))],
+        &mut [RylvTag::from_static("endpoint:api")],
     );
 
     // Gauge — records a point-in-time value (averaged when multiple values per flush)
     collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         100,
-        &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
+        &mut [RylvTag::from_static("pool:main")],
     );
 
     // Metrics without tags

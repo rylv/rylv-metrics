@@ -31,15 +31,15 @@ fn main() {
     collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         42,
-        &mut [RylvTag::from(RylvStr::from_static("pool:main"))],
+        &mut [RylvTag::from_static("pool:main")],
     );
 
     collector.gauge_avg(
         RylvStr::from_static("queue.depth"),
         150,
         &mut [
-            RylvTag::from(RylvStr::from_static("queue:jobs")),
-            RylvTag::from(RylvStr::from_static("priority:high")),
+            RylvTag::from_static("queue:jobs"),
+            RylvTag::from_static("priority:high"),
         ],
     );
 

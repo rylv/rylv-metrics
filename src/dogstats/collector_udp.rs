@@ -495,35 +495,33 @@ mod tests {
     fn metric_collector_trait_methods_forward_to_inner_collector() {
         let inner = Arc::new(FakeInner::default());
         let collector = collector_with_inner(Arc::clone(&inner));
-        let sorted = collector.prepare_sorted_tags([
-            RylvTag::from(RylvStr::from_static("b:2")),
-            RylvTag::from(RylvStr::from_static("a:1")),
-        ]);
+        let sorted = collector
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
         let prepared = collector.prepare_metric(RylvStr::from_static("prepared"), sorted.clone());
 
         collector.count(
             RylvStr::from_static("requests"),
-            &mut [RylvTag::from(RylvStr::from_static("tag:test"))],
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.count_add(
             RylvStr::from_static("requests"),
             3,
-            &mut [RylvTag::from(RylvStr::from_static("tag:test"))],
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.gauge_avg(
             RylvStr::from_static("load"),
             9,
-            &mut [RylvTag::from(RylvStr::from_static("tag:test"))],
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.histogram(
             RylvStr::from_static("latency"),
             7,
-            &mut [RylvTag::from(RylvStr::from_static("tag:test"))],
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.timing(
             RylvStr::from_static("duration"),
             13,
-            &mut [RylvTag::from(RylvStr::from_static("tag:test"))],
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.count_add_sorted(RylvStr::from_static("sorted_count"), 2, &sorted);
         collector.gauge_avg_sorted(RylvStr::from_static("sorted_gauge"), 5, &sorted);
@@ -559,13 +557,13 @@ mod tests {
     fn metric_collector_gauge_and_timing_forward_to_inner() {
         let inner = Arc::new(FakeInner::default());
         let collector = collector_with_inner(Arc::clone(&inner));
-        let sorted = collector.prepare_sorted_tags([RylvTag::from(RylvStr::from_static("a:1"))]);
+        let sorted = collector.prepare_sorted_tags([RylvTag::from_static("a:1")]);
         let prepared = collector.prepare_metric(RylvStr::from_static("p"), sorted.clone());
 
         collector.gauge(
             RylvStr::from_static("lww"),
             42,
-            &mut [RylvTag::from(RylvStr::from_static("a:1"))],
+            &mut [RylvTag::from_static("a:1")],
         );
         collector.gauge_sorted(RylvStr::from_static("lww_s"), 43, &sorted);
         collector.gauge_prepared(&prepared, 44);

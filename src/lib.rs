@@ -34,10 +34,10 @@
 //! let collector = MetricCollector::new(bind_addr, dst_addr, options, inner).unwrap();
 //!
 //! // Direct API — use RylvStr::from_static() for zero-copy aggregation keys
-//! collector.histogram(RylvStr::from_static("request.latency"), 42, &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))]);
-//! collector.count(RylvStr::from_static("request.count"), &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))]);
-//! collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from(RylvStr::from_static("endpoint:api"))]);
-//! collector.gauge_avg(RylvStr::from_static("connections.active"), 100, &mut [RylvTag::from(RylvStr::from_static("pool:main"))]);
+//! collector.histogram(RylvStr::from_static("request.latency"), 42, &mut [RylvTag::from_static("endpoint:api")]);
+//! collector.count(RylvStr::from_static("request.count"), &mut [RylvTag::from_static("endpoint:api")]);
+//! collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from_static("endpoint:api")]);
+//! collector.gauge_avg(RylvStr::from_static("connections.active"), 100, &mut [RylvTag::from_static("pool:main")]);
 //!
 //! // Convenience macros — allocate on first key insertion, but more ergonomic
 //! histogram!(collector, "request.latency", 42, "endpoint:api");

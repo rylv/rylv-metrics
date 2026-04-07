@@ -63,10 +63,8 @@ fn test_tls_hashbrown_drain_consumes_prepared_metrics() {
         ..Default::default()
     });
 
-    let sorted = collector.prepare_sorted_tags([
-        RylvTag::from(RylvStr::from_static("b:2")),
-        RylvTag::from(RylvStr::from_static("a:1")),
-    ]);
+    let sorted =
+        collector.prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
     let prepared = collector.prepare_metric(RylvStr::from_static("requests"), sorted);
 
     collector.histogram_prepared(&prepared, 42);

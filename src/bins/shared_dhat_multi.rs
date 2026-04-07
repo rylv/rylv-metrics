@@ -29,8 +29,8 @@ fn main() {
             1,
             [
                 RylvTag::from(RylvStr::from_static(tags_metrics[i])),
-                RylvTag::from(RylvStr::from_static("tag:value")),
-                RylvTag::from(RylvStr::from_static("tag2:value2")),
+                RylvTag::from_static("tag:value"),
+                RylvTag::from_static("tag2:value2"),
             ],
         );
         i = (i + 1) % n;

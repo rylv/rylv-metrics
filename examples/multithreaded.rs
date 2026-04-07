@@ -43,7 +43,7 @@ fn main() {
                     RylvStr::from_static("task.duration"),
                     i * 10,
                     &mut [
-                        RylvTag::from(RylvStr::from_static("pool:workers")),
+                        RylvTag::from_static("pool:workers"),
                         RylvTag::from(RylvStr::from(&*tag)),
                     ],
                 );

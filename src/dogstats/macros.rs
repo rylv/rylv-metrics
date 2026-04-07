@@ -14,7 +14,7 @@
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.histogram(RylvStr::from_static("latency"), 42, &mut [RylvTag::from(RylvStr::from_static("env:prod"))]);
+/// collector.histogram(RylvStr::from_static("latency"), 42, &mut [RylvTag::from_static("env:prod")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// histogram!(collector, "latency", 42, "env:prod");
@@ -86,7 +86,7 @@ macro_rules! histogram {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from(RylvStr::from_static("env:prod"))]);
+/// collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("env:prod")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// count!(collector, "requests", "env:prod");
@@ -152,7 +152,7 @@ macro_rules! count {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from(RylvStr::from_static("env:prod"))]);
+/// collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from_static("env:prod")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// count_add!(collector, "bytes.sent", 1024, "env:prod");
@@ -218,7 +218,7 @@ macro_rules! count_add {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.gauge_avg(RylvStr::from_static("connections"), 42, &mut [RylvTag::from(RylvStr::from_static("pool:main"))]);
+/// collector.gauge_avg(RylvStr::from_static("connections"), 42, &mut [RylvTag::from_static("pool:main")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// gauge_avg!(collector, "connections", 42, "pool:main");

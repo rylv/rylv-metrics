@@ -15,7 +15,7 @@ fn main() {
         collector.histogram(
             RylvStr::from_static("request.latency_ms"),
             value,
-            &mut [RylvTag::from(RylvStr::from_static("route:/users"))],
+            &mut [RylvTag::from_static("route:/users")],
         );
     }
 
