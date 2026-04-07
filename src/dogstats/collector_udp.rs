@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    dogstats::writer::StatsWriterHolder, MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag,
-    SortedTags,
+    dogstats::writer::StatsWriterHolder, MetricCollectorTrait, MetricsError, PreparedMetric,
+    RylvStr, RylvTag, SortedTags,
 };
 
 #[cfg(feature = "custom_writer")]
@@ -121,6 +121,10 @@ where
         options: MetricCollectorOptions,
         inner: MC,
     ) -> MetricResult<Self> {
+        let dst_addr = match dst_addr {
+            SocketAddr::V4(dst_addr) => dst_addr,
+            SocketAddr::V6(_) => return Err(MetricsError::Custom("IPv6 not expected".to_string())),
+        };
         let flush_interval = options.flush_interval;
         let writer = UdpSocketWriter {
             sock: UdpSocket::bind(bind_addr)?,

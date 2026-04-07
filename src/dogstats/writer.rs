@@ -4,7 +4,7 @@ use rustix::net::SocketAddrAny;
 use std::os::fd::AsFd;
 
 use std::io::IoSlice;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{SocketAddrV4, UdpSocket};
 
 use crate::{MetricKind, MetricResult, StatsWriterType};
 
@@ -65,7 +65,7 @@ pub struct UdpSocketWriter {
     pub sock: UdpSocket,
     #[cfg(target_os = "linux")]
     pub destination: SocketAddrAny,
-    pub destination_addr: SocketAddr,
+    pub destination_addr: SocketAddrV4,
 }
 
 impl Writer for UdpSocketWriter {
@@ -94,24 +94,17 @@ impl Writer for UdpSocketWriter {
 
     #[cfg(target_vendor = "apple")]
     fn get_destination_addr(&self) -> libc::sockaddr_in {
-        use std::net::SocketAddr;
-        match self.destination_addr {
-            SocketAddr::V4(addr) => {
-                let octets = addr.ip().octets();
-                #[allow(clippy::cast_possible_truncation)]
-                libc::sockaddr_in {
-                    sin_len: size_of::<libc::sockaddr_in>() as u8,
-                    sin_family: libc::AF_INET as u8,
-                    sin_port: addr.port().to_be(),
-                    sin_addr: libc::in_addr {
-                        s_addr: u32::from_ne_bytes(octets),
-                    },
-                    sin_zero: [0; 8],
-                }
-            }
-            SocketAddr::V6(_) => {
-                unreachable!("IPv6 not supported for Apple batch writer")
-            }
+        let addr = self.destination_addr;
+        let octets = addr.ip().octets();
+        #[allow(clippy::cast_possible_truncation)]
+        libc::sockaddr_in {
+            sin_len: size_of::<libc::sockaddr_in>() as u8,
+            sin_family: libc::AF_INET as u8,
+            sin_port: addr.port().to_be(),
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes(octets),
+            },
+            sin_zero: [0; 8],
         }
     }
 
