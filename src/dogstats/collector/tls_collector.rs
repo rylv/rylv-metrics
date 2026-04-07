@@ -3070,99 +3070,83 @@ mod tests {
             ..Default::default()
         });
 
-        // Use UFCS to explicitly dispatch through &TLSCollector impl
-        type Ref<'a> = &'a TLSCollector;
-
-        <Ref<'_> as MetricCollectorTrait>::count(
-            &&collector,
+        MetricCollectorTrait::count(
+            &collector,
             RylvStr::from_static("cnt"),
             &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
-        <Ref<'_> as MetricCollectorTrait>::count_add(
-            &&collector,
+        MetricCollectorTrait::count_add(
+            &collector,
             RylvStr::from_static("cnt"),
             4,
             &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
-        <Ref<'_> as MetricCollectorTrait>::gauge_avg(
-            &&collector,
+        MetricCollectorTrait::gauge_avg(
+            &collector,
             RylvStr::from_static("gavg"),
             10,
             &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
-        <Ref<'_> as MetricCollectorTrait>::gauge(
-            &&collector,
+        MetricCollectorTrait::gauge(
+            &collector,
             RylvStr::from_static("lww"),
             20,
             &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
-        <Ref<'_> as MetricCollectorTrait>::timing(
-            &&collector,
+        MetricCollectorTrait::timing(
+            &collector,
             RylvStr::from_static("dur"),
             100,
             &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
-        <Ref<'_> as MetricCollectorTrait>::histogram(
-            &&collector,
+        MetricCollectorTrait::histogram(
+            &collector,
             RylvStr::from_static("lat"),
             50,
             &mut [RylvTag::from(RylvStr::from_static("a:1"))],
         );
 
         // sorted via reference UFCS
-        let sorted = <Ref<'_> as MetricCollectorTrait>::prepare_sorted_tags(
-            &&collector,
+        let sorted = MetricCollectorTrait::prepare_sorted_tags(
+            &collector,
             [RylvTag::from(RylvStr::from_static("a:1"))],
         );
 
-        <Ref<'_> as MetricCollectorTrait>::histogram_sorted(
-            &&collector,
+        MetricCollectorTrait::histogram_sorted(
+            &collector,
             RylvStr::from_static("lat_s"),
             50,
             &sorted,
         );
-        <Ref<'_> as MetricCollectorTrait>::count_add_sorted(
-            &&collector,
+        MetricCollectorTrait::count_add_sorted(
+            &collector,
             RylvStr::from_static("cnt_s"),
             2,
             &sorted,
         );
-        <Ref<'_> as MetricCollectorTrait>::gauge_avg_sorted(
-            &&collector,
+        MetricCollectorTrait::gauge_avg_sorted(
+            &collector,
             RylvStr::from_static("gavg_s"),
             30,
             &sorted,
         );
-        <Ref<'_> as MetricCollectorTrait>::gauge_sorted(
-            &&collector,
-            RylvStr::from_static("glww_s"),
-            40,
-            &sorted,
-        );
-        <Ref<'_> as MetricCollectorTrait>::timing_sorted(
-            &&collector,
-            RylvStr::from_static("dur_s"),
-            60,
-            &sorted,
-        );
+        MetricCollectorTrait::gauge_sorted(&collector, RylvStr::from_static("glww_s"), 40, &sorted);
+        MetricCollectorTrait::timing_sorted(&collector, RylvStr::from_static("dur_s"), 60, &sorted);
 
         // prepared via reference UFCS
-        let prepared_h = <Ref<'_> as MetricCollectorTrait>::prepare_metric(
-            &&collector,
+        let prepared_h = MetricCollectorTrait::prepare_metric(
+            &collector,
             RylvStr::from_static("lat_p"),
             sorted.clone(),
         );
-        let prepared_c = <Ref<'_> as MetricCollectorTrait>::prepare_metric(
-            &&collector,
-            RylvStr::from_static("cnt_p"),
-            sorted.clone(),
-        );
+        let prepared_c =
+            MetricCollectorTrait::prepare_metric(&collector, RylvStr::from_static("cnt_p"), sorted);
 
-        <Ref<'_> as MetricCollectorTrait>::histogram_prepared(&&collector, &prepared_h, 70);
-        <Ref<'_> as MetricCollectorTrait>::count_add_prepared(&&collector, &prepared_c, 3);
-        <Ref<'_> as MetricCollectorTrait>::gauge_avg_prepared(&&collector, &prepared_h, 80);
-        <Ref<'_> as MetricCollectorTrait>::gauge_prepared(&&collector, &prepared_h, 90);
-        <Ref<'_> as MetricCollectorTrait>::timing_prepared(&&collector, &prepared_h, 110);
+        MetricCollectorTrait::histogram_prepared(&collector, &prepared_h, 70);
+        MetricCollectorTrait::count_add_prepared(&collector, &prepared_c, 3);
+        MetricCollectorTrait::gauge_avg_prepared(&collector, &prepared_h, 80);
+        MetricCollectorTrait::gauge_prepared(&collector, &prepared_h, 90);
+        MetricCollectorTrait::timing_prepared(&collector, &prepared_h, 110);
 
         let lines = drain_metrics_now(&collector);
         assert!(lines.iter().any(|l| l.contains("cnt")));

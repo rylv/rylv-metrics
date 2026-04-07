@@ -806,7 +806,7 @@ mod tests {
         writer.flush().unwrap();
 
         let written = mock.take_written();
-        assert!(written.len() >= 1);
+        assert!(!written.is_empty());
     }
 
     #[test]
