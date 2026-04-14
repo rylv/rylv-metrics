@@ -17,6 +17,7 @@ A high-performance DogStatsD metrics client for Rust with support for client-sid
 - **Flexible Tags**: Support for static and owned string tags
 - **Configurable Histograms**: Adjustable significant figures, custom percentile lists, and optional base metrics (`count`, `min`, `avg`, `max`)
 - **Shared Collector Mode**: Use `SharedCollector` to aggregate and drain metrics without background threads or network I/O
+- **Thread-Local Collector Mode**: Use `TLSCollector` for per-thread aggregation that scales linearly under contention
 
 ## Installation
 
@@ -24,7 +25,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rylv-metrics = "0.3.0"
+rylv-metrics = "0.3.1"
 ```
 
 Default build enables no transport or collector backend features.
@@ -32,7 +33,7 @@ Enable the APIs you want explicitly. For example, UDP sending with a inner colle
 
 ```toml
 [dependencies]
-rylv-metrics = { version = "0.3.0", features = ["udp", "shared-collector"] }
+rylv-metrics = { version = "0.3.1", features = ["udp", "shared-collector"] }
 ```
 
 ## Quick Start
@@ -163,6 +164,31 @@ loop {
     }
 }
 ```
+
+## TLS Collector
+
+Use `TLSCollector` when you want the lowest possible write latency under
+multi-threaded contention. Each thread aggregates into its own local state
+backed by `hashbrown::HashTable` and `parking_lot`, and drains merge the
+per-thread frames on demand:
+
+```rust
+use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, TLSCollector};
+
+let collector = TLSCollector::default();
+collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:test")]);
+
+if let Some(mut drain) = collector.try_begin_drain() {
+    for frame in drain.by_ref() {
+        // send frame to UDP/HTTP/queue/etc
+        println!("{:?}", frame);
+    }
+}
+```
+
+`TLSCollector` plugs into `MetricCollector` as an inner collector just like
+`SharedCollector`, so it can be combined with any of the UDP writer backends.
+Enable it via the `tls-collector` feature.
 
 ## SortedTags And PreparedMetric
 

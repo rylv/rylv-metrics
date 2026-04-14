@@ -1055,6 +1055,7 @@ where
                     )
                 };
 
+                entry.1 = 0;
                 return Some(MetricFrameRef {
                     prefix: self.prefix,
                     metric,
@@ -1637,6 +1638,28 @@ mod tests {
             ]
         );
         assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn tls_collector_drain_clears_metrics_on_second_drain() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "drain.".to_string(),
+            ..Default::default()
+        });
+
+        collector.count(
+            RylvStr::from_static("requests"),
+            &mut [RylvStr::from_static("env:test")],
+        );
+
+        let first = drain_metrics_now(&collector);
+        assert!(!first.is_empty());
+
+        let second = drain_metrics_now(&collector);
+        assert!(second.is_empty());
+
+        let third = drain_metrics_now(&collector);
+        assert!(third.is_empty());
     }
 
     #[test]
