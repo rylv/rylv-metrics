@@ -380,6 +380,8 @@ jobs:
             cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
 
       - name: Compare benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target-bench
         run: |
           critcmp base pr
           # Fail if any benchmark regressed more than 15%
