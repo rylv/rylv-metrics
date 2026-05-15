@@ -260,6 +260,7 @@ where
         };
 
         // Swap each local quickly and merge into exclusive global.
+        let mut to_remove = self.recycled_remove_keys.lock().pop().unwrap_or_default();
         for buffer in &self.buffers {
             let mut local_guard = buffer.lock();
             let fresh = self
@@ -269,7 +270,6 @@ where
                 .unwrap_or_else(|| local_guard.empty_like());
             let mut local = local_guard.swap_with(fresh);
             drop(local_guard);
-            let mut to_remove = self.recycled_remove_keys.lock().pop().unwrap_or_default();
             merge_local_aggregator_into_global_hashbrown(
                 &mut local,
                 &mut global_to_merge,
@@ -277,9 +277,9 @@ where
                 &mut to_remove,
             );
             to_remove.clear();
-            self.recycled_remove_keys.lock().push(to_remove);
             self.recycle(local);
         }
+        self.recycled_remove_keys.lock().push(to_remove);
 
         global_to_merge
     }
