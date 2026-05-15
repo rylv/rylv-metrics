@@ -111,6 +111,28 @@ fn get_histogram_from_pool(
         return Some(histogram);
     }
 
+    new_histogram_wrapper(pool_id, sig_fig, bounds, percentiles, emit_base_metrics)
+}
+
+fn pop_histogram_from_pool(
+    pool_histograms: &mut [Vec<HistogramWrapper>],
+    pool_id: usize,
+    percentiles: Arc<[f64]>,
+    emit_base_metrics: HistogramBaseMetrics,
+) -> Option<HistogramWrapper> {
+    let mut histogram = pool_histograms[pool_id].pop()?;
+    histogram.percentiles = percentiles;
+    histogram.emit_base_metrics = emit_base_metrics;
+    Some(histogram)
+}
+
+fn new_histogram_wrapper(
+    pool_id: usize,
+    sig_fig: crate::dogstats::aggregator::SigFig,
+    bounds: Bounds,
+    percentiles: Arc<[f64]>,
+    emit_base_metrics: HistogramBaseMetrics,
+) -> Option<HistogramWrapper> {
     if let Ok(histogram) = Histogram::new_with_bounds(bounds.min(), bounds.max(), sig_fig.value()) {
         return Some(HistogramWrapper {
             pool_id,
@@ -939,14 +961,35 @@ fn merge_local_aggregator_into_global_hashbrown<S>(
                 }
             }
             Vacant(entry) => {
-                if let Some(fresh_histogram) = get_histogram_from_pool(
+                let pool_id = local_histogram.pool_id;
+                let pool_spec = &pool_specs[pool_id];
+                let percentiles = local_histogram.percentiles.clone();
+                let emit_base_metrics = local_histogram.emit_base_metrics;
+                let fresh_histogram = pop_histogram_from_pool(
                     &mut local.pool_histograms,
-                    local_histogram.pool_id,
-                    pool_specs[local_histogram.pool_id].sig_fig,
-                    pool_specs[local_histogram.pool_id].bounds,
-                    local_histogram.percentiles.clone(),
-                    local_histogram.emit_base_metrics,
-                ) {
+                    pool_id,
+                    percentiles.clone(),
+                    emit_base_metrics,
+                )
+                .or_else(|| {
+                    pop_histogram_from_pool(
+                        &mut global.pool_histograms,
+                        pool_id,
+                        percentiles.clone(),
+                        emit_base_metrics,
+                    )
+                })
+                .or_else(|| {
+                    new_histogram_wrapper(
+                        pool_id,
+                        pool_spec.sig_fig,
+                        pool_spec.bounds,
+                        percentiles,
+                        emit_base_metrics,
+                    )
+                });
+
+                if let Some(fresh_histogram) = fresh_histogram {
                     let owned_histogram = std::mem::replace(local_histogram, fresh_histogram);
                     entry.insert((key.clone(), owned_histogram));
                 } else {
@@ -1770,5 +1813,70 @@ mod tests {
         assert!(local.gauge.is_empty());
         assert!(local.histograms.is_empty());
         assert_eq!(local.pool_histograms[0].len(), 2);
+    }
+
+    #[test]
+    fn merge_local_aggregator_reuses_global_histogram_pool() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let mut local = LocalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut to_remove = Vec::new();
+
+        let pooled_histogram = get_histogram_from_pool_config(
+            &mut global.pool_histograms,
+            &resolved.default_histogram_config,
+        )
+        .unwrap();
+        global.pool_histograms[resolved.default_histogram_config.pool_id()].push(pooled_histogram);
+
+        let hist_key = build_lookup_key(
+            RylvStr::from_static("latency_from_global_pool"),
+            &[RylvStr::from_static("a:1")],
+            &hasher,
+        )
+        .into_key_with_id(20);
+        let mut histogram = get_histogram_from_pool_config(
+            &mut local.pool_histograms,
+            &resolved.default_histogram_config,
+        )
+        .unwrap();
+        histogram.record(42).unwrap();
+        local
+            .histograms
+            .entry(
+                hist_key.hash,
+                |(key, _)| key == &hist_key,
+                |(key, _)| key.hash,
+            )
+            .insert((hist_key, histogram));
+
+        assert!(local.pool_histograms[resolved.default_histogram_config.pool_id()].is_empty());
+        assert_eq!(
+            global.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            1
+        );
+
+        merge_local_aggregator_into_global_hashbrown(
+            &mut local,
+            &mut global,
+            &resolved.pool_specs,
+            &mut to_remove,
+        );
+
+        assert_eq!(global.histograms.len(), 1);
+        assert!(global.pool_histograms[resolved.default_histogram_config.pool_id()].is_empty());
+        assert!(local
+            .histograms
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .histogram
+            .is_empty());
     }
 }
