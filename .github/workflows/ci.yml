@@ -391,7 +391,12 @@ jobs:
         run: |
           critcmp base pr
           # Fail if any benchmark regressed more than 15%
-          critcmp base pr --threshold 15 || {
+          comparison="$(critcmp base pr --threshold 15 || true)"
+          echo "$comparison"
+          if ! echo "$comparison" | awk '($1 ~ /\// && $6 + 0 >= 1.15) { found = 1 } END { exit found ? 0 : 1 }'; then
+            exit 0
+          fi
+          {
             echo "::warning::Benchmark regression detected (>15%). Review the comparison above."
             exit 1
           }
