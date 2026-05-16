@@ -216,13 +216,15 @@ jobs:
             ${{ runner.os }}-cargo-git-
 
       - name: Cache cargo-fuzz binary
+        id: cargo-fuzz-cache
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-fuzz
           key: ${{ runner.os }}-cargo-fuzz-binary
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked || true
+        if: steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz --locked
 
       - name: Build fuzz targets
         run: cargo +nightly fuzz build fuzz_metric_collector
