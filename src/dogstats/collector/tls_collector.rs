@@ -29,6 +29,8 @@ use parking_lot::Mutex;
 use thread_local::ThreadLocal;
 use tracing::error;
 
+const MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL: Option<usize> = Some(100);
+
 #[derive(Clone, Copy, Default)]
 struct GaugeStateHb {
     sum: u64,
@@ -111,6 +113,28 @@ fn get_histogram_from_pool(
         return Some(histogram);
     }
 
+    new_histogram_wrapper(pool_id, sig_fig, bounds, percentiles, emit_base_metrics)
+}
+
+fn pop_histogram_from_pool(
+    pool_histograms: &mut [Vec<HistogramWrapper>],
+    pool_id: usize,
+    percentiles: Arc<[f64]>,
+    emit_base_metrics: HistogramBaseMetrics,
+) -> Option<HistogramWrapper> {
+    let mut histogram = pool_histograms[pool_id].pop()?;
+    histogram.percentiles = percentiles;
+    histogram.emit_base_metrics = emit_base_metrics;
+    Some(histogram)
+}
+
+fn new_histogram_wrapper(
+    pool_id: usize,
+    sig_fig: crate::dogstats::aggregator::SigFig,
+    bounds: Bounds,
+    percentiles: Arc<[f64]>,
+    emit_base_metrics: HistogramBaseMetrics,
+) -> Option<HistogramWrapper> {
     if let Ok(histogram) = Histogram::new_with_bounds(bounds.min(), bounds.max(), sig_fig.value()) {
         return Some(HistogramWrapper {
             pool_id,
@@ -137,6 +161,42 @@ fn get_histogram_from_pool_config(
         config.percentiles().clone(),
         config.emit_base_metrics(),
     )
+}
+
+fn get_fresh_histogram_for_merge(
+    local_pool_histograms: &mut [Vec<HistogramWrapper>],
+    global_pool_histograms: &mut [Vec<HistogramWrapper>],
+    pool_specs: &[HistogramPoolSpec],
+    current: &HistogramWrapper,
+) -> Option<HistogramWrapper> {
+    let pool_id = current.pool_id;
+    let pool_spec = &pool_specs[pool_id];
+    let percentiles = current.percentiles.clone();
+    let emit_base_metrics = current.emit_base_metrics;
+
+    pop_histogram_from_pool(
+        global_pool_histograms,
+        pool_id,
+        percentiles.clone(),
+        emit_base_metrics,
+    )
+    .or_else(|| {
+        pop_histogram_from_pool(
+            local_pool_histograms,
+            pool_id,
+            percentiles.clone(),
+            emit_base_metrics,
+        )
+    })
+    .or_else(|| {
+        new_histogram_wrapper(
+            pool_id,
+            pool_spec.sig_fig,
+            pool_spec.bounds,
+            percentiles,
+            emit_base_metrics,
+        )
+    })
 }
 
 struct GlobalAggregatorHb<S>
@@ -260,6 +320,7 @@ where
         };
 
         // Swap each local quickly and merge into exclusive global.
+        let mut to_remove = self.recycled_remove_keys.lock().pop().unwrap_or_default();
         for buffer in &self.buffers {
             let mut local_guard = buffer.lock();
             let fresh = self
@@ -269,7 +330,6 @@ where
                 .unwrap_or_else(|| local_guard.empty_like());
             let mut local = local_guard.swap_with(fresh);
             drop(local_guard);
-            let mut to_remove = self.recycled_remove_keys.lock().pop().unwrap_or_default();
             merge_local_aggregator_into_global_hashbrown(
                 &mut local,
                 &mut global_to_merge,
@@ -277,9 +337,9 @@ where
                 &mut to_remove,
             );
             to_remove.clear();
-            self.recycled_remove_keys.lock().push(to_remove);
             self.recycle(local);
         }
+        self.recycled_remove_keys.lock().push(to_remove);
 
         global_to_merge
     }
@@ -939,13 +999,11 @@ fn merge_local_aggregator_into_global_hashbrown<S>(
                 }
             }
             Vacant(entry) => {
-                if let Some(fresh_histogram) = get_histogram_from_pool(
+                if let Some(fresh_histogram) = get_fresh_histogram_for_merge(
                     &mut local.pool_histograms,
-                    local_histogram.pool_id,
-                    pool_specs[local_histogram.pool_id].sig_fig,
-                    pool_specs[local_histogram.pool_id].bounds,
-                    local_histogram.percentiles.clone(),
-                    local_histogram.emit_base_metrics,
+                    &mut global.pool_histograms,
+                    pool_specs,
+                    local_histogram,
                 ) {
                     let owned_histogram = std::mem::replace(local_histogram, fresh_histogram);
                     entry.insert((key.clone(), owned_histogram));
@@ -1345,8 +1403,13 @@ where
                                 |v: HistogramWrapper| {
                                     let index = v.pool_id;
                                     debug_assert!(index < self.pool_histograms.len());
-                                    unsafe { self.pool_histograms.get_unchecked_mut(index) }
-                                        .push(v);
+                                    let pool =
+                                        unsafe { self.pool_histograms.get_unchecked_mut(index) };
+                                    if MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL
+                                        .is_none_or(|cap| pool.len() < cap)
+                                    {
+                                        pool.push(v);
+                                    }
                                 },
                             );
                         }
@@ -1369,7 +1432,8 @@ mod tests {
     use super::{
         build_lookup_key, get_histogram_from_pool, get_histogram_from_pool_config,
         merge_local_aggregator_into_global_hashbrown, GaugeStateHb, GlobalAggregatorHb,
-        LocalAggregatorHb, TLSCollector, TLSCollectorOptions,
+        LocalAggregatorHb, TLSCollector, TLSCollectorOptions, TLSDrain,
+        MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL,
     };
     use crate::dogstats::aggregator::HistogramWrapper;
     use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
@@ -1445,6 +1509,114 @@ mod tests {
                 >(frame)
             });
         format_drained_lines::<S, _>(drain)
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct TlsRetainedStateSnapshot {
+        active_global_capacity: usize,
+        active_global_pool_capacity: usize,
+        recycled_global_capacity: usize,
+        recycled_global_pool_capacity: usize,
+        recycled_global_count: usize,
+        local_capacity: usize,
+        local_pool_capacity: usize,
+        recycled_local_capacity: usize,
+        recycled_local_pool_capacity: usize,
+        recycled_local_count: usize,
+        recycled_remove_key_capacity: usize,
+    }
+
+    impl TlsRetainedStateSnapshot {
+        fn from_collector<S>(collector: &TLSCollector<S>) -> Self
+        where
+            S: std::hash::BuildHasher + Clone + Send,
+        {
+            let active_global = collector.global_aggregator.lock();
+            let active_global_capacity = table_capacity(
+                active_global.count.capacity(),
+                active_global.gauge.capacity(),
+                active_global.histograms.capacity(),
+            );
+            let active_global_pool_capacity = pool_capacity(&active_global.pool_histograms);
+            drop(active_global);
+
+            let recycled_global = collector.recycled_global_aggregators.lock();
+            let recycled_global_capacity = recycled_global
+                .iter()
+                .map(|global| {
+                    table_capacity(
+                        global.count.capacity(),
+                        global.gauge.capacity(),
+                        global.histograms.capacity(),
+                    )
+                })
+                .sum();
+            let recycled_global_pool_capacity = recycled_global
+                .iter()
+                .map(|global| pool_capacity(&global.pool_histograms))
+                .sum();
+            let recycled_global_count = recycled_global.len();
+            drop(recycled_global);
+
+            let mut local_capacity = 0;
+            let mut local_pool_capacity = 0;
+            for buffer in &collector.buffers {
+                let local = buffer.lock();
+                local_capacity += table_capacity(
+                    local.count.capacity(),
+                    local.gauge.capacity(),
+                    local.histograms.capacity(),
+                );
+                local_pool_capacity += pool_capacity(&local.pool_histograms);
+            }
+
+            let recycled_local = collector.recycled_local_aggregators.lock();
+            let recycled_local_capacity = recycled_local
+                .iter()
+                .map(|local| {
+                    table_capacity(
+                        local.count.capacity(),
+                        local.gauge.capacity(),
+                        local.histograms.capacity(),
+                    )
+                })
+                .sum();
+            let recycled_local_pool_capacity = recycled_local
+                .iter()
+                .map(|local| pool_capacity(&local.pool_histograms))
+                .sum();
+            let recycled_local_count = recycled_local.len();
+            drop(recycled_local);
+
+            let recycled_remove_key_capacity = collector
+                .recycled_remove_keys
+                .lock()
+                .iter()
+                .map(Vec::capacity)
+                .sum();
+
+            Self {
+                active_global_capacity,
+                active_global_pool_capacity,
+                recycled_global_capacity,
+                recycled_global_pool_capacity,
+                recycled_global_count,
+                local_capacity,
+                local_pool_capacity,
+                recycled_local_capacity,
+                recycled_local_pool_capacity,
+                recycled_local_count,
+                recycled_remove_key_capacity,
+            }
+        }
+    }
+
+    fn table_capacity(count: usize, gauge: usize, histogram: usize) -> usize {
+        count + gauge + histogram
+    }
+
+    fn pool_capacity(pools: &[Vec<HistogramWrapper>]) -> usize {
+        pools.iter().map(Vec::capacity).sum()
     }
 
     fn assert_regular_reference_lines(lines: &[String]) {
@@ -1663,6 +1835,70 @@ mod tests {
     }
 
     #[test]
+    fn tls_repeated_same_metric_drains_converge_retained_state() {
+        const METRIC_COUNT: usize = 256;
+        const ROUNDS: usize = 6;
+
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "steady.".to_string(),
+            ..Default::default()
+        });
+        let metrics: Vec<&'static str> = (0..METRIC_COUNT)
+            .map(|i| format!("steady.metric.{i}").leak() as &'static str)
+            .collect();
+        let tags: Vec<&'static str> = (0..METRIC_COUNT)
+            .map(|i| format!("id:{i}").leak() as &'static str)
+            .collect();
+
+        let mut previous_frame_count = None;
+        let mut previous_snapshot = None;
+        for round in 0..ROUNDS {
+            for (index, (&metric, &tag)) in metrics.iter().zip(tags.iter()).enumerate() {
+                collector.count_add(
+                    RylvStr::from_static(metric),
+                    1,
+                    &mut [RylvStr::from_static(tag)],
+                );
+                collector.gauge(
+                    RylvStr::from_static(metric),
+                    index as u64,
+                    &mut [RylvStr::from_static(tag)],
+                );
+                collector.histogram(
+                    RylvStr::from_static(metric),
+                    index as u64 + 1,
+                    &mut [RylvStr::from_static(tag)],
+                );
+            }
+
+            let frame_count = collector
+                .try_begin_drain()
+                .expect("tls drain should be available")
+                .count();
+            let snapshot = TlsRetainedStateSnapshot::from_collector(&collector);
+            assert!(
+                frame_count >= METRIC_COUNT * 3,
+                "round {round} emitted too few frames: {frame_count}"
+            );
+
+            if let Some(previous_frame_count) = previous_frame_count {
+                assert_eq!(frame_count, previous_frame_count);
+            }
+
+            if round >= 2 {
+                assert_eq!(
+                    Some(snapshot),
+                    previous_snapshot,
+                    "retained TLS state should converge after warm-up"
+                );
+            }
+
+            previous_frame_count = Some(frame_count);
+            previous_snapshot = Some(snapshot);
+        }
+    }
+
+    #[test]
     fn tls_reference_trait_impls_cover_regular_paths() {
         let collector = TLSCollector::new(TLSCollectorOptions {
             stats_prefix: "ref.".to_string(),
@@ -1770,5 +2006,128 @@ mod tests {
         assert!(local.gauge.is_empty());
         assert!(local.histograms.is_empty());
         assert_eq!(local.pool_histograms[0].len(), 2);
+    }
+
+    #[test]
+    fn merge_local_aggregator_reuses_global_histogram_pool() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let mut local = LocalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut to_remove = Vec::new();
+
+        let pooled_histogram = get_histogram_from_pool_config(
+            &mut global.pool_histograms,
+            &resolved.default_histogram_config,
+        )
+        .unwrap();
+        global.pool_histograms[resolved.default_histogram_config.pool_id()].push(pooled_histogram);
+
+        let hist_key = build_lookup_key(
+            RylvStr::from_static("latency_from_global_pool"),
+            &[RylvStr::from_static("a:1")],
+            &hasher,
+        )
+        .into_key_with_id(20);
+        let mut histogram = get_histogram_from_pool_config(
+            &mut local.pool_histograms,
+            &resolved.default_histogram_config,
+        )
+        .unwrap();
+        histogram.record(42).unwrap();
+        local
+            .histograms
+            .entry(
+                hist_key.hash,
+                |(key, _)| key == &hist_key,
+                |(key, _)| key.hash,
+            )
+            .insert((hist_key, histogram));
+
+        let local_pooled_histogram = get_histogram_from_pool_config(
+            &mut local.pool_histograms,
+            &resolved.default_histogram_config,
+        )
+        .unwrap();
+        local.pool_histograms[resolved.default_histogram_config.pool_id()]
+            .push(local_pooled_histogram);
+
+        assert_eq!(
+            local.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            1
+        );
+        assert_eq!(
+            global.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            1
+        );
+
+        merge_local_aggregator_into_global_hashbrown(
+            &mut local,
+            &mut global,
+            &resolved.pool_specs,
+            &mut to_remove,
+        );
+
+        assert_eq!(global.histograms.len(), 1);
+        assert!(global.pool_histograms[resolved.default_histogram_config.pool_id()].is_empty());
+        assert_eq!(
+            local.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            1
+        );
+        assert!(local
+            .histograms
+            .iter()
+            .next()
+            .unwrap()
+            .1
+            .histogram
+            .is_empty());
+    }
+
+    #[test]
+    fn tls_drain_caps_recycled_global_histogram_pool_to_internal_limit() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+        let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let cap = MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL.unwrap();
+
+        for id in 0..=cap {
+            let metric = format!("empty_latency_{id}");
+            let key = build_lookup_key(
+                RylvStr::from(metric.as_str()),
+                &[RylvStr::from_static("a:1")],
+                &hasher,
+            )
+            .into_key_with_id(id as u64);
+            let histogram = get_histogram_from_pool_config(
+                &mut global.pool_histograms,
+                &resolved.default_histogram_config,
+            )
+            .unwrap();
+            global
+                .histograms
+                .entry(key.hash, |(existing, _)| existing == &key, |(k, _)| k.hash)
+                .insert((key, histogram));
+        }
+
+        {
+            let mut drain = TLSDrain::new(&collector, global);
+            assert!(drain.next().is_none());
+        }
+
+        let recycled = collector.recycled_global_aggregators.lock().pop().unwrap();
+        assert_eq!(
+            recycled.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            cap
+        );
     }
 }

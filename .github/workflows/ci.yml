@@ -216,13 +216,19 @@ jobs:
             ${{ runner.os }}-cargo-git-
 
       - name: Cache cargo-fuzz binary
+        id: cargo-fuzz-cache
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-fuzz
           key: ${{ runner.os }}-cargo-fuzz-binary
 
+      - name: Install Rust stable for cargo-fuzz
+        if: steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
+        run: rustup toolchain install stable --profile minimal --no-self-update
+
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked || true
+        if: steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
+        run: cargo +stable install cargo-fuzz --locked
 
       - name: Build fuzz targets
         run: cargo +nightly fuzz build fuzz_metric_collector
@@ -385,7 +391,12 @@ jobs:
         run: |
           critcmp base pr
           # Fail if any benchmark regressed more than 15%
-          critcmp base pr --threshold 15 || {
+          comparison="$(critcmp base pr --threshold 15 || true)"
+          echo "$comparison"
+          if ! echo "$comparison" | awk '($1 ~ /\// && $6 + 0 >= 1.15) { found = 1 } END { exit found ? 0 : 1 }'; then
+            exit 0
+          fi
+          {
             echo "::warning::Benchmark regression detected (>15%). Review the comparison above."
             exit 1
           }
