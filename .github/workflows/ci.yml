@@ -222,9 +222,13 @@ jobs:
           path: ~/.cargo/bin/cargo-fuzz
           key: ${{ runner.os }}-cargo-fuzz-binary
 
+      - name: Install Rust stable for cargo-fuzz
+        if: steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
+        run: rustup toolchain install stable --profile minimal --no-self-update
+
       - name: Install cargo-fuzz
         if: steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-fuzz --locked
+        run: cargo +stable install cargo-fuzz --locked
 
       - name: Build fuzz targets
         run: cargo +nightly fuzz build fuzz_metric_collector
