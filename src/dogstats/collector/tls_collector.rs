@@ -161,6 +161,42 @@ fn get_histogram_from_pool_config(
     )
 }
 
+fn get_fresh_histogram_for_merge(
+    local_pool_histograms: &mut [Vec<HistogramWrapper>],
+    global_pool_histograms: &mut [Vec<HistogramWrapper>],
+    pool_specs: &[HistogramPoolSpec],
+    current: &HistogramWrapper,
+) -> Option<HistogramWrapper> {
+    let pool_id = current.pool_id;
+    let pool_spec = &pool_specs[pool_id];
+    let percentiles = current.percentiles.clone();
+    let emit_base_metrics = current.emit_base_metrics;
+
+    pop_histogram_from_pool(
+        local_pool_histograms,
+        pool_id,
+        percentiles.clone(),
+        emit_base_metrics,
+    )
+    .or_else(|| {
+        pop_histogram_from_pool(
+            global_pool_histograms,
+            pool_id,
+            percentiles.clone(),
+            emit_base_metrics,
+        )
+    })
+    .or_else(|| {
+        new_histogram_wrapper(
+            pool_id,
+            pool_spec.sig_fig,
+            pool_spec.bounds,
+            percentiles,
+            emit_base_metrics,
+        )
+    })
+}
+
 struct GlobalAggregatorHb<S>
 where
     S: BuildHasher + Clone,
@@ -961,35 +997,12 @@ fn merge_local_aggregator_into_global_hashbrown<S>(
                 }
             }
             Vacant(entry) => {
-                let pool_id = local_histogram.pool_id;
-                let pool_spec = &pool_specs[pool_id];
-                let percentiles = local_histogram.percentiles.clone();
-                let emit_base_metrics = local_histogram.emit_base_metrics;
-                let fresh_histogram = pop_histogram_from_pool(
+                if let Some(fresh_histogram) = get_fresh_histogram_for_merge(
                     &mut local.pool_histograms,
-                    pool_id,
-                    percentiles.clone(),
-                    emit_base_metrics,
-                )
-                .or_else(|| {
-                    pop_histogram_from_pool(
-                        &mut global.pool_histograms,
-                        pool_id,
-                        percentiles.clone(),
-                        emit_base_metrics,
-                    )
-                })
-                .or_else(|| {
-                    new_histogram_wrapper(
-                        pool_id,
-                        pool_spec.sig_fig,
-                        pool_spec.bounds,
-                        percentiles,
-                        emit_base_metrics,
-                    )
-                });
-
-                if let Some(fresh_histogram) = fresh_histogram {
+                    &mut global.pool_histograms,
+                    pool_specs,
+                    local_histogram,
+                ) {
                     let owned_histogram = std::mem::replace(local_histogram, fresh_histogram);
                     entry.insert((key.clone(), owned_histogram));
                 } else {
