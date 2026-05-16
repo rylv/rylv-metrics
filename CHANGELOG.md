@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-16
+
 ### Changed
 - Removed `TLSCollectorOptions::max_recycled_global_histograms_per_pool`; the recycled global histogram pool limit is now an internal constant.
 
