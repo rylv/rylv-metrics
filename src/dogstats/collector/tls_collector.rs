@@ -1511,6 +1511,114 @@ mod tests {
         format_drained_lines::<S, _>(drain)
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct TlsRetainedStateSnapshot {
+        active_global_capacity: usize,
+        active_global_pool_capacity: usize,
+        recycled_global_capacity: usize,
+        recycled_global_pool_capacity: usize,
+        recycled_global_count: usize,
+        local_capacity: usize,
+        local_pool_capacity: usize,
+        recycled_local_capacity: usize,
+        recycled_local_pool_capacity: usize,
+        recycled_local_count: usize,
+        recycled_remove_key_capacity: usize,
+    }
+
+    impl TlsRetainedStateSnapshot {
+        fn from_collector<S>(collector: &TLSCollector<S>) -> Self
+        where
+            S: std::hash::BuildHasher + Clone + Send,
+        {
+            let active_global = collector.global_aggregator.lock();
+            let active_global_capacity = table_capacity(
+                active_global.count.capacity(),
+                active_global.gauge.capacity(),
+                active_global.histograms.capacity(),
+            );
+            let active_global_pool_capacity = pool_capacity(&active_global.pool_histograms);
+            drop(active_global);
+
+            let recycled_global = collector.recycled_global_aggregators.lock();
+            let recycled_global_capacity = recycled_global
+                .iter()
+                .map(|global| {
+                    table_capacity(
+                        global.count.capacity(),
+                        global.gauge.capacity(),
+                        global.histograms.capacity(),
+                    )
+                })
+                .sum();
+            let recycled_global_pool_capacity = recycled_global
+                .iter()
+                .map(|global| pool_capacity(&global.pool_histograms))
+                .sum();
+            let recycled_global_count = recycled_global.len();
+            drop(recycled_global);
+
+            let mut local_capacity = 0;
+            let mut local_pool_capacity = 0;
+            for buffer in &collector.buffers {
+                let local = buffer.lock();
+                local_capacity += table_capacity(
+                    local.count.capacity(),
+                    local.gauge.capacity(),
+                    local.histograms.capacity(),
+                );
+                local_pool_capacity += pool_capacity(&local.pool_histograms);
+            }
+
+            let recycled_local = collector.recycled_local_aggregators.lock();
+            let recycled_local_capacity = recycled_local
+                .iter()
+                .map(|local| {
+                    table_capacity(
+                        local.count.capacity(),
+                        local.gauge.capacity(),
+                        local.histograms.capacity(),
+                    )
+                })
+                .sum();
+            let recycled_local_pool_capacity = recycled_local
+                .iter()
+                .map(|local| pool_capacity(&local.pool_histograms))
+                .sum();
+            let recycled_local_count = recycled_local.len();
+            drop(recycled_local);
+
+            let recycled_remove_key_capacity = collector
+                .recycled_remove_keys
+                .lock()
+                .iter()
+                .map(Vec::capacity)
+                .sum();
+
+            Self {
+                active_global_capacity,
+                active_global_pool_capacity,
+                recycled_global_capacity,
+                recycled_global_pool_capacity,
+                recycled_global_count,
+                local_capacity,
+                local_pool_capacity,
+                recycled_local_capacity,
+                recycled_local_pool_capacity,
+                recycled_local_count,
+                recycled_remove_key_capacity,
+            }
+        }
+    }
+
+    fn table_capacity(count: usize, gauge: usize, histogram: usize) -> usize {
+        count + gauge + histogram
+    }
+
+    fn pool_capacity(pools: &[Vec<HistogramWrapper>]) -> usize {
+        pools.iter().map(Vec::capacity).sum()
+    }
+
     fn assert_regular_reference_lines(lines: &[String]) {
         assert_eq!(
             lines,
@@ -1724,6 +1832,70 @@ mod tests {
 
         let third = drain_metrics_now(&collector);
         assert!(third.is_empty());
+    }
+
+    #[test]
+    fn tls_repeated_same_metric_drains_converge_retained_state() {
+        const METRIC_COUNT: usize = 256;
+        const ROUNDS: usize = 6;
+
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "steady.".to_string(),
+            ..Default::default()
+        });
+        let metrics: Vec<&'static str> = (0..METRIC_COUNT)
+            .map(|i| format!("steady.metric.{i}").leak() as &'static str)
+            .collect();
+        let tags: Vec<&'static str> = (0..METRIC_COUNT)
+            .map(|i| format!("id:{i}").leak() as &'static str)
+            .collect();
+
+        let mut previous_frame_count = None;
+        let mut previous_snapshot = None;
+        for round in 0..ROUNDS {
+            for (index, (&metric, &tag)) in metrics.iter().zip(tags.iter()).enumerate() {
+                collector.count_add(
+                    RylvStr::from_static(metric),
+                    1,
+                    &mut [RylvStr::from_static(tag)],
+                );
+                collector.gauge(
+                    RylvStr::from_static(metric),
+                    index as u64,
+                    &mut [RylvStr::from_static(tag)],
+                );
+                collector.histogram(
+                    RylvStr::from_static(metric),
+                    index as u64 + 1,
+                    &mut [RylvStr::from_static(tag)],
+                );
+            }
+
+            let frame_count = collector
+                .try_begin_drain()
+                .expect("tls drain should be available")
+                .count();
+            let snapshot = TlsRetainedStateSnapshot::from_collector(&collector);
+            assert!(
+                frame_count >= METRIC_COUNT * 3,
+                "round {round} emitted too few frames: {frame_count}"
+            );
+
+            if let Some(previous_frame_count) = previous_frame_count {
+                assert_eq!(frame_count, previous_frame_count);
+            }
+
+            if round >= 2 {
+                assert_eq!(
+                    Some(snapshot),
+                    previous_snapshot,
+                    "retained TLS state should converge after warm-up"
+                );
+            }
+
+            previous_frame_count = Some(frame_count);
+            previous_snapshot = Some(snapshot);
+        }
     }
 
     #[test]
