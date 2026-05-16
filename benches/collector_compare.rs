@@ -22,7 +22,6 @@ fn make_tls() -> TLSCollector<BenchHasher> {
         histogram_configs: std::collections::HashMap::with_hasher(ahash::RandomState::new()),
         default_histogram_config: rylv_metrics::HistogramConfig::default(),
         hasher_builder: ahash::RandomState::new(),
-        max_recycled_global_histograms_per_pool: None,
     })
 }
 

@@ -52,7 +52,6 @@ fn benchmark_record_histogram(c: &mut Criterion) {
             .with_bounds(100, 2_000_000)
             .unwrap(),
         hasher_builder: ahash::RandomState::new(),
-        max_recycled_global_histograms_per_pool: None,
     });
 
     // let inner = SharedCollector::new(SharedCollectorOptions {
