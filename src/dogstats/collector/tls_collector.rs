@@ -173,14 +173,14 @@ fn get_fresh_histogram_for_merge(
     let emit_base_metrics = current.emit_base_metrics;
 
     pop_histogram_from_pool(
-        local_pool_histograms,
+        global_pool_histograms,
         pool_id,
         percentiles.clone(),
         emit_base_metrics,
     )
     .or_else(|| {
         pop_histogram_from_pool(
-            global_pool_histograms,
+            local_pool_histograms,
             pool_id,
             percentiles.clone(),
             emit_base_metrics,
@@ -253,6 +253,7 @@ where
     histogram_configs: HashMap<String, ResolvedHistogramConfig, S>,
     pool_specs: Arc<[HistogramPoolSpec]>,
     default_histogram_config: ResolvedHistogramConfig,
+    max_recycled_global_histograms_per_pool: Option<usize>,
     global_aggregator: Mutex<GlobalAggregatorHb<S>>,
     recycled_global_aggregators: Mutex<Vec<GlobalAggregatorHb<S>>>,
     recycled_local_aggregators: Mutex<Vec<LocalAggregatorHb<S>>>,
@@ -288,6 +289,8 @@ where
             )),
             histogram_configs,
             default_histogram_config,
+            max_recycled_global_histograms_per_pool: options
+                .max_recycled_global_histograms_per_pool,
             hasher_builder: options.hasher_builder,
             recycled_global_aggregators: Mutex::new(Vec::new()),
             recycled_local_aggregators: Mutex::new(Vec::new()),
@@ -673,6 +676,11 @@ where
     pub default_histogram_config: HistogramConfig,
     /// Hasher builder used by internal aggregation maps.
     pub hasher_builder: S,
+    /// Maximum number of histogram wrappers retained per global pool during drain.
+    ///
+    /// `None` leaves the global recycle pool unbounded. `Some(0)` disables retaining
+    /// removed global histogram wrappers.
+    pub max_recycled_global_histograms_per_pool: Option<usize>,
 }
 
 impl Default for TLSCollectorOptions<DefaultMetricHasher> {
@@ -682,6 +690,7 @@ impl Default for TLSCollectorOptions<DefaultMetricHasher> {
             histogram_configs: HashMap::new(),
             default_histogram_config: HistogramConfig::default(),
             hasher_builder: DefaultMetricHasher::new(),
+            max_recycled_global_histograms_per_pool: None,
         }
     }
 }
@@ -1055,6 +1064,7 @@ where
 
     pool_histograms: &'a mut [Vec<HistogramWrapper>],
     keys_to_remove: &'a mut Vec<RemoveKey>,
+    max_recycled_global_histograms_per_pool: Option<usize>,
     pending_histogram: Option<PendingHistogram<'a, S>>,
 
     // SAFETY:
@@ -1083,6 +1093,8 @@ where
             })),
             pool_histograms: unsafe { &mut *addr_of_mut!((*global_ptr).pool_histograms) },
             keys_to_remove: unsafe { &mut *addr_of_mut!((*global_ptr).key_to_remove) },
+            max_recycled_global_histograms_per_pool: collector
+                .max_recycled_global_histograms_per_pool,
             pending_histogram: None,
 
             aggregator: Some(global_ptr),
@@ -1401,8 +1413,14 @@ where
                                 |v: HistogramWrapper| {
                                     let index = v.pool_id;
                                     debug_assert!(index < self.pool_histograms.len());
-                                    unsafe { self.pool_histograms.get_unchecked_mut(index) }
-                                        .push(v);
+                                    let pool =
+                                        unsafe { self.pool_histograms.get_unchecked_mut(index) };
+                                    if self
+                                        .max_recycled_global_histograms_per_pool
+                                        .is_none_or(|cap| pool.len() < cap)
+                                    {
+                                        pool.push(v);
+                                    }
                                 },
                             );
                         }
@@ -1425,7 +1443,7 @@ mod tests {
     use super::{
         build_lookup_key, get_histogram_from_pool, get_histogram_from_pool_config,
         merge_local_aggregator_into_global_hashbrown, GaugeStateHb, GlobalAggregatorHb,
-        LocalAggregatorHb, TLSCollector, TLSCollectorOptions,
+        LocalAggregatorHb, TLSCollector, TLSCollectorOptions, TLSDrain,
     };
     use crate::dogstats::aggregator::HistogramWrapper;
     use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
@@ -1868,7 +1886,18 @@ mod tests {
             )
             .insert((hist_key, histogram));
 
-        assert!(local.pool_histograms[resolved.default_histogram_config.pool_id()].is_empty());
+        let local_pooled_histogram = get_histogram_from_pool_config(
+            &mut local.pool_histograms,
+            &resolved.default_histogram_config,
+        )
+        .unwrap();
+        local.pool_histograms[resolved.default_histogram_config.pool_id()]
+            .push(local_pooled_histogram);
+
+        assert_eq!(
+            local.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            1
+        );
         assert_eq!(
             global.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
             1
@@ -1883,6 +1912,10 @@ mod tests {
 
         assert_eq!(global.histograms.len(), 1);
         assert!(global.pool_histograms[resolved.default_histogram_config.pool_id()].is_empty());
+        assert_eq!(
+            local.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            1
+        );
         assert!(local
             .histograms
             .iter()
@@ -1891,5 +1924,49 @@ mod tests {
             .1
             .histogram
             .is_empty());
+    }
+
+    #[test]
+    fn tls_drain_caps_recycled_global_histogram_pool() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            max_recycled_global_histograms_per_pool: Some(1),
+            ..Default::default()
+        });
+        let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+
+        for (metric, id) in [("empty_latency_1", 30), ("empty_latency_2", 31)] {
+            let key = build_lookup_key(
+                RylvStr::from_static(metric),
+                &[RylvStr::from_static("a:1")],
+                &hasher,
+            )
+            .into_key_with_id(id);
+            let histogram = get_histogram_from_pool_config(
+                &mut global.pool_histograms,
+                &resolved.default_histogram_config,
+            )
+            .unwrap();
+            global
+                .histograms
+                .entry(key.hash, |(existing, _)| existing == &key, |(k, _)| k.hash)
+                .insert((key, histogram));
+        }
+
+        {
+            let mut drain = TLSDrain::new(&collector, global);
+            assert!(drain.next().is_none());
+        }
+
+        let recycled = collector.recycled_global_aggregators.lock().pop().unwrap();
+        assert_eq!(
+            recycled.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+            1
+        );
     }
 }

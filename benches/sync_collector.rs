@@ -197,6 +197,7 @@ fn make_tls_collector(
         histogram_configs: std::collections::HashMap::with_hasher(ahash::RandomState::new()),
         default_histogram_config: rylv_metrics::HistogramConfig::default(),
         hasher_builder: ahash::RandomState::new(),
+        max_recycled_global_histograms_per_pool: None,
     };
     let inner = TLSCollector::new(inner_options);
     MetricCollector::new(bind_addr, datadog_addr, options, inner)
