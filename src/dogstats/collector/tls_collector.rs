@@ -2368,7 +2368,7 @@ mod tests {
 
         collector.count(
             RylvStr::from_static("requests"),
-            &mut [RylvStr::from_static("env:test")],
+            &mut [RylvTag::from_static("env:test")],
         );
 
         let first = drain_metrics_now(&collector);
@@ -2404,17 +2404,17 @@ mod tests {
                 collector.count_add(
                     RylvStr::from_static(metric),
                     1,
-                    &mut [RylvStr::from_static(tag)],
+                    &mut [RylvTag::from_static(tag)],
                 );
                 collector.gauge(
                     RylvStr::from_static(metric),
                     index as u64,
-                    &mut [RylvStr::from_static(tag)],
+                    &mut [RylvTag::from_static(tag)],
                 );
                 collector.histogram(
                     RylvStr::from_static(metric),
                     index as u64 + 1,
-                    &mut [RylvStr::from_static(tag)],
+                    &mut [RylvTag::from_static(tag)],
                 );
             }
 
@@ -2665,7 +2665,7 @@ mod tests {
 
         let hist_key = build_lookup_key(
             RylvStr::from_static("latency_from_global_pool"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             &hasher,
         )
         .into_key_with_id(20);
@@ -2740,7 +2740,7 @@ mod tests {
             let metric = format!("empty_latency_{id}");
             let key = build_lookup_key(
                 RylvStr::from(metric.as_str()),
-                &[RylvStr::from_static("a:1")],
+                &[RylvTag::from_static("a:1")],
                 &hasher,
             )
             .into_key_with_id(id as u64);
