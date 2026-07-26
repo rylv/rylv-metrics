@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-20
+
+### Added
+- `RylvTag` type for tag values
+- `from_static` constructor for tags
+- Last-write-wins gauge method
+- `inline` and `cold` annotations on hot paths
+- More unit tests across collectors
+
+### Changed
+- Renamed `gauge` to `gauge_avg`
+- Dependency updates (see `Cargo.lock`)
+
+### Fixed
+- `tls_collector` tests now use `RylvTag` instead of `RylvStr` for tag arguments
+
+### Internal
+- Cleanup across collector and aggregator modules
+
 ## [0.3.2] - 2026-05-16
 
 ### Changed

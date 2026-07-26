@@ -25,7 +25,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rylv-metrics = "0.3.1"
+rylv-metrics = "0.4.0"
 ```
 
 Default build enables no transport or collector backend features.
@@ -33,7 +33,7 @@ Enable the APIs you want explicitly. For example, UDP sending with a inner colle
 
 ```toml
 [dependencies]
-rylv-metrics = { version = "0.3.1", features = ["udp", "shared-collector"] }
+rylv-metrics = { version = "0.4.0", features = ["udp", "shared-collector"] }
 ```
 
 ## Quick Start
