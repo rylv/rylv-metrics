@@ -1340,12 +1340,9 @@ fn merge_histogram_table_into_global<S>(
                 }
             }
             Vacant(entry) => {
-                if let Some(fresh_histogram) = get_fresh_histogram_for_merge(
-                    local_pool,
-                    global_pool,
-                    pool_specs,
-                    local_histo,
-                ) {
+                if let Some(fresh_histogram) =
+                    get_fresh_histogram_for_merge(local_pool, global_pool, pool_specs, local_histo)
+                {
                     let owned = std::mem::replace(local_histo, fresh_histogram);
                     entry.insert((key.clone(), owned));
                 } else {
