@@ -438,4 +438,48 @@ mod tests {
         );
         assert_eq!(resolved.pool_specs.len(), resolved.pool_count);
     }
+
+    #[test]
+    fn histogram_base_metrics_without_removes_metric() {
+        let metrics = super::HistogramBaseMetrics::from([
+            HistogramBaseMetric::Count,
+            HistogramBaseMetric::Max,
+            HistogramBaseMetric::Min,
+        ]);
+        let reduced = metrics.without(HistogramBaseMetric::Min);
+        assert!(reduced.contains(HistogramBaseMetric::Count));
+        assert!(reduced.contains(HistogramBaseMetric::Max));
+        assert!(!reduced.contains(HistogramBaseMetric::Min));
+    }
+
+    #[test]
+    fn histogram_base_metrics_from_single() {
+        let metrics = super::HistogramBaseMetrics::from(HistogramBaseMetric::Avg);
+        assert!(metrics.contains(HistogramBaseMetric::Avg));
+        assert!(!metrics.contains(HistogramBaseMetric::Count));
+    }
+
+    #[test]
+    fn with_count_true_enables_count_metric() {
+        let config = HistogramConfig::new(SigFig::default(), Vec::new())
+            .unwrap()
+            .with_base_metrics([HistogramBaseMetric::Max])
+            .with_count(true);
+
+        let metrics = config.emit_base_metrics();
+        assert!(metrics.contains(HistogramBaseMetric::Count));
+        assert!(metrics.contains(HistogramBaseMetric::Max));
+        assert!(!metrics.contains(HistogramBaseMetric::Min));
+    }
+
+    #[test]
+    fn with_bounds_sets_histogram_bounds() {
+        let config = HistogramConfig::new(SigFig::default(), vec![0.95])
+            .unwrap()
+            .with_bounds(10, 1000)
+            .unwrap();
+
+        assert_eq!(config.bounds().min(), 10);
+        assert_eq!(config.bounds().max(), 1000);
+    }
 }

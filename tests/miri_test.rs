@@ -1,7 +1,7 @@
 #[cfg(feature = "shared-collector")]
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind as FrameMetricKind, MetricSuffix,
-    RylvStr, SharedCollector,
+    RylvStr, RylvTag, SharedCollector,
 };
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
@@ -38,6 +38,7 @@ impl StatsWriterTrait for MiriCustomWriter {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
             MetricKind::Gauge => "g",
+            MetricKind::Timing => "ms",
         };
         for metric in metrics {
             self.current.push_str(metric);
@@ -119,17 +120,22 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
     let collector = SharedCollector::default();
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from_static("env:test")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from_static("env:test")],
     );
     collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from_static("env:test")],
+    );
+    collector.timing(
+        RylvStr::from_static("duration_ms"),
+        55,
+        &mut [RylvTag::from_static("env:test")],
     );
 
     let mut acquired = None;
@@ -144,6 +150,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
     let mut saw_count = false;
     let mut saw_gauge = false;
     let mut saw_histogram = false;
+    let mut saw_timing = false;
 
     for frame in drain.by_ref() {
         assert!(!frame.metric.is_empty());
@@ -162,12 +169,18 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
                     saw_histogram = true;
                 }
             }
+            FrameMetricKind::Timing => {
+                if frame.metric == "duration_ms" {
+                    saw_timing = true;
+                }
+            }
         }
     }
 
     assert!(saw_count);
     assert!(saw_gauge);
     assert!(saw_histogram);
+    assert!(saw_timing);
 }
 
 #[cfg(feature = "tls-collector")]
@@ -176,17 +189,22 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
     let collector = TLSCollector::new(TLSCollectorOptions::default());
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from_static("env:test")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from_static("env:test")],
     );
     collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
-        &mut [RylvStr::from_static("env:test")],
+        &mut [RylvTag::from_static("env:test")],
+    );
+    collector.timing(
+        RylvStr::from_static("duration_ms"),
+        55,
+        &mut [RylvTag::from_static("env:test")],
     );
 
     let drain = collector.try_begin_drain();
@@ -194,6 +212,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
     let mut saw_count = false;
     let mut saw_gauge = false;
     let mut saw_histogram = false;
+    let mut saw_timing = false;
 
     for frame in drain.by_ref() {
         assert!(!frame.metric.is_empty());
@@ -212,10 +231,16 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
                     saw_histogram = true;
                 }
             }
+            FrameMetricKind::Timing => {
+                if frame.metric == "duration_ms" {
+                    saw_timing = true;
+                }
+            }
         }
     }
 
     assert!(saw_count);
     assert!(saw_gauge);
     assert!(saw_histogram);
+    assert!(saw_timing);
 }

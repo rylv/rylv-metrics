@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::{
-    dogstats::writer::StatsWriterHolder, MetricCollectorTrait, PreparedMetric, RylvStr, SortedTags,
+    dogstats::writer::StatsWriterHolder, MetricCollectorTrait, MetricsError, PreparedMetric,
+    RylvStr, RylvTag, SortedTags,
 };
 
 #[cfg(feature = "custom_writer")]
@@ -120,6 +121,10 @@ where
         options: MetricCollectorOptions,
         inner: MC,
     ) -> MetricResult<Self> {
+        let dst_addr = match dst_addr {
+            SocketAddr::V4(dst_addr) => dst_addr,
+            SocketAddr::V6(_) => return Err(MetricsError::Custom("IPv6 not expected".to_string())),
+        };
         let flush_interval = options.flush_interval;
         let writer = UdpSocketWriter {
             sock: UdpSocket::bind(bind_addr)?,
@@ -180,7 +185,7 @@ where
     #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.inner.histogram(metric, value, tags);
     }
@@ -188,7 +193,7 @@ where
     #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.inner.count(metric, tags);
     }
@@ -196,17 +201,33 @@ where
     #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.inner.count_add(metric, value, tags);
     }
 
     #[inline]
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.inner.gauge_avg(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.inner.gauge(metric, value, tags);
+    }
+
+    #[inline]
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.inner.timing(metric, value, tags);
     }
 
     #[inline]
@@ -220,14 +241,24 @@ where
     }
 
     #[inline]
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+        self.inner.gauge_avg_sorted(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.gauge_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+        self.inner.timing_sorted(metric, value, tags);
     }
 
     #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
-        tags: impl IntoIterator<Item = RylvStr<'a>>,
+        tags: impl IntoIterator<Item = RylvTag<'a>>,
     ) -> SortedTags<Self::Hasher> {
         self.inner.prepare_sorted_tags(tags)
     }
@@ -252,8 +283,18 @@ where
     }
 
     #[inline]
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.inner.gauge_avg_prepared(prepared, value);
+    }
+
+    #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.inner.gauge_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.inner.timing_prepared(prepared, value);
     }
 }
 
@@ -261,7 +302,7 @@ where
 mod tests {
     use super::{MetricCollector, MetricCollectorOptions, StatsWriterType};
     use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricFrameRef};
-    use crate::{MetricCollectorTrait, PreparedMetric, RylvStr, SortedTags};
+    use crate::{MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag, SortedTags};
     use crossbeam::channel::unbounded;
     use std::hash::BuildHasher;
     use std::sync::{Arc, Mutex};
@@ -288,30 +329,44 @@ mod tests {
 
         fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
         where
-            TT: AsMut<[RylvStr<'t>]>,
+            TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("histogram:{}:{value}", metric.as_ref()));
         }
 
         fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, _tags: TT)
         where
-            TT: AsMut<[RylvStr<'t>]>,
+            TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("count:{}", metric.as_ref()));
         }
 
         fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
         where
-            TT: AsMut<[RylvStr<'t>]>,
+            TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("count_add:{}:{value}", metric.as_ref()));
         }
 
+        fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        where
+            TT: AsMut<[RylvTag<'t>]>,
+        {
+            self.record(format!("gauge_avg:{}:{value}", metric.as_ref()));
+        }
+
         fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
         where
-            TT: AsMut<[RylvStr<'t>]>,
+            TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("gauge:{}:{value}", metric.as_ref()));
+        }
+
+        fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        where
+            TT: AsMut<[RylvTag<'t>]>,
+        {
+            self.record(format!("timing:{}:{value}", metric.as_ref()));
         }
 
         fn histogram_sorted(
@@ -332,13 +387,26 @@ mod tests {
             self.record(format!("count_add_sorted:{}:{value}", metric.as_ref()));
         }
 
+        fn gauge_avg_sorted(
+            &self,
+            metric: RylvStr<'_>,
+            value: u64,
+            _tags: &SortedTags<Self::Hasher>,
+        ) {
+            self.record(format!("gauge_avg_sorted:{}:{value}", metric.as_ref()));
+        }
+
         fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
             self.record(format!("gauge_sorted:{}:{value}", metric.as_ref()));
         }
 
+        fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
+            self.record(format!("timing_sorted:{}:{value}", metric.as_ref()));
+        }
+
         fn prepare_sorted_tags<'a>(
             &self,
-            tags: impl IntoIterator<Item = RylvStr<'a>>,
+            tags: impl IntoIterator<Item = RylvTag<'a>>,
         ) -> SortedTags<Self::Hasher> {
             SortedTags::new(tags, &std::hash::BuildHasherDefault::default())
         }
@@ -348,11 +416,7 @@ mod tests {
             metric: RylvStr<'_>,
             tags: SortedTags<Self::Hasher>,
         ) -> PreparedMetric<Self::Hasher> {
-            let metric = match metric {
-                RylvStr::Static(s) => RylvStr::Static(s),
-                RylvStr::Borrowed(s) => RylvStr::from(s.to_owned()),
-                RylvStr::Owned(s) => RylvStr::Owned(s),
-            };
+            let metric = metric.into_static();
             let mut hasher = <Self::Hasher as Default>::default().build_hasher();
             std::hash::Hash::hash(&metric.as_ref(), &mut hasher);
             std::hash::Hash::hash(&tags.tags_hash(), &mut hasher);
@@ -373,9 +437,23 @@ mod tests {
             ));
         }
 
+        fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+            self.record(format!(
+                "gauge_avg_prepared:{}:{value}",
+                prepared.metric().as_ref()
+            ));
+        }
+
         fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
             self.record(format!(
                 "gauge_prepared:{}:{value}",
+                prepared.metric().as_ref()
+            ));
+        }
+
+        fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+            self.record(format!(
+                "timing_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
         }
@@ -418,34 +496,41 @@ mod tests {
         let inner = Arc::new(FakeInner::default());
         let collector = collector_with_inner(Arc::clone(&inner));
         let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
         let prepared = collector.prepare_metric(RylvStr::from_static("prepared"), sorted.clone());
 
         collector.count(
             RylvStr::from_static("requests"),
-            &mut [RylvStr::from_static("tag:test")],
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.count_add(
             RylvStr::from_static("requests"),
             3,
-            &mut [RylvStr::from_static("tag:test")],
+            &mut [RylvTag::from_static("tag:test")],
         );
-        collector.gauge(
+        collector.gauge_avg(
             RylvStr::from_static("load"),
             9,
-            &mut [RylvStr::from_static("tag:test")],
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.histogram(
             RylvStr::from_static("latency"),
             7,
-            &mut [RylvStr::from_static("tag:test")],
+            &mut [RylvTag::from_static("tag:test")],
+        );
+        collector.timing(
+            RylvStr::from_static("duration"),
+            13,
+            &mut [RylvTag::from_static("tag:test")],
         );
         collector.count_add_sorted(RylvStr::from_static("sorted_count"), 2, &sorted);
-        collector.gauge_sorted(RylvStr::from_static("sorted_gauge"), 5, &sorted);
+        collector.gauge_avg_sorted(RylvStr::from_static("sorted_gauge"), 5, &sorted);
         collector.histogram_sorted(RylvStr::from_static("sorted_hist"), 11, &sorted);
+        collector.timing_sorted(RylvStr::from_static("sorted_timing"), 14, &sorted);
         collector.count_add_prepared(&prepared, 4);
-        collector.gauge_prepared(&prepared, 6);
+        collector.gauge_avg_prepared(&prepared, 6);
         collector.histogram_prepared(&prepared, 8);
+        collector.timing_prepared(&prepared, 15);
 
         let calls = inner.take_calls();
         assert_eq!(
@@ -453,15 +538,58 @@ mod tests {
             vec![
                 "count:requests".to_string(),
                 "count_add:requests:3".to_string(),
-                "gauge:load:9".to_string(),
+                "gauge_avg:load:9".to_string(),
                 "histogram:latency:7".to_string(),
+                "timing:duration:13".to_string(),
                 "count_add_sorted:sorted_count:2".to_string(),
-                "gauge_sorted:sorted_gauge:5".to_string(),
+                "gauge_avg_sorted:sorted_gauge:5".to_string(),
                 "histogram_sorted:sorted_hist:11".to_string(),
+                "timing_sorted:sorted_timing:14".to_string(),
                 "count_add_prepared:prepared:4".to_string(),
-                "gauge_prepared:prepared:6".to_string(),
+                "gauge_avg_prepared:prepared:6".to_string(),
                 "histogram_prepared:prepared:8".to_string(),
+                "timing_prepared:prepared:15".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn metric_collector_gauge_and_timing_forward_to_inner() {
+        let inner = Arc::new(FakeInner::default());
+        let collector = collector_with_inner(Arc::clone(&inner));
+        let sorted = collector.prepare_sorted_tags([RylvTag::from_static("a:1")]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("p"), sorted.clone());
+
+        collector.gauge(
+            RylvStr::from_static("lww"),
+            42,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.gauge_sorted(RylvStr::from_static("lww_s"), 43, &sorted);
+        collector.gauge_prepared(&prepared, 44);
+
+        let calls = inner.take_calls();
+        assert_eq!(
+            calls,
+            vec![
+                "gauge:lww:42".to_string(),
+                "gauge_sorted:lww_s:43".to_string(),
+                "gauge_prepared:p:44".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn fake_inner_try_begin_drain() {
+        let inner = FakeInner::default();
+        let drain = inner.try_begin_drain();
+        assert!(drain.is_some());
+        assert_eq!(drain.unwrap().count(), 0);
+    }
+
+    #[test]
+    #[cfg(target_vendor = "apple")]
+    fn stats_writer_type_debug_apple_batch() {
+        assert_eq!(format!("{:?}", StatsWriterType::AppleBatch), "AppleBatch");
     }
 }

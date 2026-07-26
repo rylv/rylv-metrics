@@ -21,8 +21,10 @@ where
     S: BuildHasher + Clone,
 {
     pub histograms: DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
+    pub timings: DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
     pub count: DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
     pub gauge: DashMap<AggregatorEntryKey<S>, GaugeState, S>,
+    pub gauge_last: DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
     pub pool_histograms: Vec<SegQueue<HistogramWrapper>>,
 }
 
@@ -33,8 +35,10 @@ where
     pub(crate) fn with_hasher_builder(hasher_builder: &S, pool_count: usize) -> Self {
         Self {
             histograms: DashMap::with_hasher(hasher_builder.clone()),
+            timings: DashMap::with_hasher(hasher_builder.clone()),
             count: DashMap::with_hasher(hasher_builder.clone()),
             gauge: DashMap::with_hasher(hasher_builder.clone()),
+            gauge_last: DashMap::with_hasher(hasher_builder.clone()),
             pool_histograms: (0..pool_count).map(|_| SegQueue::new()).collect(),
         }
     }
@@ -89,8 +93,10 @@ mod tests {
 
         assert_eq!(aggregator.pool_histograms.len(), 3);
         assert!(aggregator.histograms.is_empty());
+        assert!(aggregator.timings.is_empty());
         assert!(aggregator.count.is_empty());
         assert!(aggregator.gauge.is_empty());
+        assert!(aggregator.gauge_last.is_empty());
     }
 
     #[test]

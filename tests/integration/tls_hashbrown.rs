@@ -1,5 +1,5 @@
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind, MetricSuffix, RylvStr,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind, MetricSuffix, RylvStr, RylvTag,
     TLSCollector, TLSCollectorOptions,
 };
 
@@ -37,6 +37,7 @@ where
         let metric_type = match frame.kind {
             MetricKind::Count => "c",
             MetricKind::Gauge => "g",
+            MetricKind::Timing => "ms",
         };
         if frame.tags.is_empty() {
             lines.push(format!("{metric}:{}|{metric_type}\n", frame.value));
@@ -63,7 +64,7 @@ fn test_tls_hashbrown_drain_consumes_prepared_metrics() {
     });
 
     let sorted =
-        collector.prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        collector.prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
     let prepared = collector.prepare_metric(RylvStr::from_static("requests"), sorted);
 
     collector.histogram_prepared(&prepared, 42);

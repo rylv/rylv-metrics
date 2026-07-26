@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, PreparedMetric, RylvStr, SharedCollector,
-    SharedCollectorOptions, TLSCollector,
+    DrainMetricCollectorTrait, MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag,
+    SharedCollector, SharedCollectorOptions, TLSCollector,
 };
 use std::time::Instant;
 
@@ -40,8 +40,8 @@ fn benchmark_count_add_tls_compare(c: &mut Criterion) {
     group.bench_function("count_add_tls_on", |b| {
         let collector = make_tls_collector();
         let mut tags = [
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("kind:count"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("kind:count"),
         ];
         b.iter(|| {
             collector.count_add(
@@ -55,8 +55,8 @@ fn benchmark_count_add_tls_compare(c: &mut Criterion) {
     group.bench_function("count_add_tls_off", |b| {
         let collector = make_collector();
         let mut tags = [
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("kind:count"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("kind:count"),
         ];
         b.iter(|| {
             collector.count_add(
@@ -77,8 +77,8 @@ fn benchmark_histogram_tls_compare(c: &mut Criterion) {
     group.bench_function("histogram_tls_on", |b| {
         let collector = make_tls_collector();
         let mut tags = [
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("kind:histogram"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("kind:histogram"),
         ];
         b.iter(|| {
             collector.histogram(
@@ -92,8 +92,8 @@ fn benchmark_histogram_tls_compare(c: &mut Criterion) {
     group.bench_function("histogram_tls_off", |b| {
         let collector = make_collector();
         let mut tags = [
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("kind:histogram"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("kind:histogram"),
         ];
         b.iter(|| {
             collector.histogram(
@@ -123,8 +123,8 @@ fn run_parallel_count_add<C: MetricCollectorTrait + Sync>(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 let mut tags = [
-                    RylvStr::from_static("env:bench"),
-                    RylvStr::from_static("kind:parallel"),
+                    RylvTag::from_static("env:bench"),
+                    RylvTag::from_static("kind:parallel"),
                 ];
                 for _ in 0..work {
                     collector.count_add(
@@ -155,8 +155,8 @@ fn run_parallel_histogram<C: MetricCollectorTrait + Sync>(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 let mut tags = [
-                    RylvStr::from_static("env:bench"),
-                    RylvStr::from_static("kind:parallel-h"),
+                    RylvTag::from_static("env:bench"),
+                    RylvTag::from_static("kind:parallel-h"),
                 ];
                 for _ in 0..work {
                     collector.histogram(
@@ -187,8 +187,8 @@ fn run_parallel_histogram_sorted<C: MetricCollectorTrait + Sync>(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 let tags = collector.prepare_sorted_tags([
-                    RylvStr::from_static("env:bench"),
-                    RylvStr::from_static("kind:parallel-h"),
+                    RylvTag::from_static("env:bench"),
+                    RylvTag::from_static("kind:parallel-h"),
                 ]);
                 for _ in 0..work {
                     collector.histogram_sorted(
@@ -219,8 +219,8 @@ fn run_parallel_count_add_sorted<C: MetricCollectorTrait + Sync>(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 let tags = collector.prepare_sorted_tags([
-                    RylvStr::from_static("env:bench"),
-                    RylvStr::from_static("kind:parallel"),
+                    RylvTag::from_static("env:bench"),
+                    RylvTag::from_static("kind:parallel"),
                 ]);
                 for _ in 0..work {
                     collector.count_add_sorted(
@@ -343,9 +343,9 @@ fn benchmark_sorted_tags_compare(c: &mut Criterion) {
     group.bench_function("count_add_regular_tags", |b| {
         let collector = make_collector();
         let mut tags_unsorted = [
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from_static("service:api"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("region:us-east-1"),
         ];
         b.iter(|| {
             collector.count_add(
@@ -359,9 +359,9 @@ fn benchmark_sorted_tags_compare(c: &mut Criterion) {
     group.bench_function("count_add_sorted_tags", |b| {
         let collector = make_collector();
         let sorted_tags = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from_static("service:api"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("region:us-east-1"),
         ]);
         b.iter(|| {
             collector.count_add_sorted(
@@ -375,9 +375,9 @@ fn benchmark_sorted_tags_compare(c: &mut Criterion) {
     group.bench_function("count_add_prepared_metric", |b| {
         let collector = make_collector();
         let sorted_tags = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from_static("service:api"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("region:us-east-1"),
         ]);
         let prepared =
             collector.prepare_metric(RylvStr::from_static("bench.sorted.count"), sorted_tags);
@@ -395,9 +395,9 @@ fn benchmark_histogram_sorted_compare(c: &mut Criterion) {
     group.bench_function("histogram_regular_tags", |b| {
         let collector = make_collector();
         let mut tags_unsorted = [
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from_static("service:api"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("region:us-east-1"),
         ];
         b.iter(|| {
             collector.histogram(
@@ -411,9 +411,9 @@ fn benchmark_histogram_sorted_compare(c: &mut Criterion) {
     group.bench_function("histogram_sorted_tags", |b| {
         let collector = make_collector();
         let sorted_tags = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from_static("service:api"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("region:us-east-1"),
         ]);
         b.iter(|| {
             collector.histogram_sorted(
@@ -427,9 +427,9 @@ fn benchmark_histogram_sorted_compare(c: &mut Criterion) {
     group.bench_function("histogram_prepared_metric", |b| {
         let collector = make_collector();
         let sorted_tags = collector.prepare_sorted_tags([
-            RylvStr::from_static("service:api"),
-            RylvStr::from_static("env:bench"),
-            RylvStr::from_static("region:us-east-1"),
+            RylvTag::from_static("service:api"),
+            RylvTag::from_static("env:bench"),
+            RylvTag::from_static("region:us-east-1"),
         ]);
         let prepared =
             collector.prepare_metric(RylvStr::from_static("bench.sorted.histogram"), sorted_tags);
@@ -467,8 +467,8 @@ fn benchmark_sorted_tags_parallel_compare(c: &mut Criterion) {
         let prepared = collector.prepare_metric(
             RylvStr::from_static("bench.parallel.counter"),
             collector.prepare_sorted_tags([
-                RylvStr::from_static("env:bench"),
-                RylvStr::from_static("kind:parallel"),
+                RylvTag::from_static("env:bench"),
+                RylvTag::from_static("kind:parallel"),
             ]),
         );
         b.iter_custom(|iters| {
@@ -499,8 +499,8 @@ fn benchmark_sorted_tags_parallel_compare(c: &mut Criterion) {
         let prepared = collector.prepare_metric(
             RylvStr::from_static("bench.parallel.counter"),
             collector.prepare_sorted_tags([
-                RylvStr::from_static("env:bench"),
-                RylvStr::from_static("kind:parallel"),
+                RylvTag::from_static("env:bench"),
+                RylvTag::from_static("kind:parallel"),
             ]),
         );
         b.iter_custom(|iters| {
@@ -539,8 +539,8 @@ fn benchmark_histogram_sorted_parallel_compare(c: &mut Criterion) {
         let prepared = collector.prepare_metric(
             RylvStr::from_static("bench.parallel.histogram"),
             collector.prepare_sorted_tags([
-                RylvStr::from_static("env:bench"),
-                RylvStr::from_static("kind:parallel-h"),
+                RylvTag::from_static("env:bench"),
+                RylvTag::from_static("kind:parallel-h"),
             ]),
         );
         b.iter_custom(|iters| {
@@ -571,8 +571,8 @@ fn benchmark_histogram_sorted_parallel_compare(c: &mut Criterion) {
         let prepared = collector.prepare_metric(
             RylvStr::from_static("bench.parallel.histogram"),
             collector.prepare_sorted_tags([
-                RylvStr::from_static("env:bench"),
-                RylvStr::from_static("kind:parallel-h"),
+                RylvTag::from_static("env:bench"),
+                RylvTag::from_static("kind:parallel-h"),
             ]),
         );
         b.iter_custom(|iters| {

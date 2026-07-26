@@ -2,7 +2,9 @@
 //!
 //! Run with: `cargo run --example shared_runtime_retry`
 
-use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, SharedCollector};
+use rylv_metrics::{
+    DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
+};
 use std::thread;
 use std::time::Duration;
 
@@ -13,7 +15,7 @@ fn main() {
         collector.histogram(
             RylvStr::from_static("request.latency_ms"),
             value,
-            &mut [RylvStr::from_static("route:/users")],
+            &mut [RylvTag::from_static("route:/users")],
         );
     }
 

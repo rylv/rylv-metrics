@@ -39,3 +39,20 @@ impl From<&str> for MetricsError {
         Self::Custom(value.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_string() {
+        let err = MetricsError::from("something went wrong".to_string());
+        assert!(err.to_string().contains("something went wrong"));
+    }
+
+    #[test]
+    fn from_str() {
+        let err = MetricsError::from("oops");
+        assert!(err.to_string().contains("oops"));
+    }
+}

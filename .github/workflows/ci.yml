@@ -283,7 +283,7 @@ jobs:
         run: cargo deny check
 
   msrv:
-    name: MSRV (1.85.0) on ${{ matrix.os }}
+    name: MSRV (1.88.0) on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -294,10 +294,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.85.0
+      - name: Install Rust 1.88.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.88.0"
 
       - name: Run cargo check
         run: cargo check --verbose

@@ -3,8 +3,8 @@
 //! Run with: `cargo run --example multithreaded`
 
 use rylv_metrics::{
-    count, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, SharedCollector,
-    SharedCollectorOptions, StatsWriterType,
+    count, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag,
+    SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,7 +42,10 @@ fn main() {
                 collector.histogram(
                     RylvStr::from_static("task.duration"),
                     i * 10,
-                    &mut [RylvStr::from_static("pool:workers"), RylvStr::from(&*tag)],
+                    &mut [
+                        RylvTag::from_static("pool:workers"),
+                        RylvTag::from(RylvStr::from(&*tag)),
+                    ],
                 );
 
                 // Macros work too

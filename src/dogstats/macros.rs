@@ -14,7 +14,7 @@
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.histogram(RylvStr::from_static("latency"), 42, &mut [RylvStr::from_static("env:prod")]);
+/// collector.histogram(RylvStr::from_static("latency"), 42, &mut [RylvTag::from_static("env:prod")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// histogram!(collector, "latency", 42, "env:prod");
@@ -56,7 +56,7 @@ macro_rules! histogram {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.histogram($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -64,7 +64,7 @@ macro_rules! histogram {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.histogram($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -86,7 +86,7 @@ macro_rules! histogram {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:prod")]);
+/// collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("env:prod")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// count!(collector, "requests", "env:prod");
@@ -122,7 +122,7 @@ macro_rules! count {
     ($collector:expr, $metric:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.count($crate::RylvStr::from($metric), &mut tags)
         }
     };
@@ -130,7 +130,7 @@ macro_rules! count {
     ($collector:expr, $metric:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.count($crate::RylvStr::from($metric), &mut tags)
         }
     };
@@ -152,7 +152,7 @@ macro_rules! count {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvStr::from_static("env:prod")]);
+/// collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from_static("env:prod")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
 /// count_add!(collector, "bytes.sent", 1024, "env:prod");
@@ -188,7 +188,7 @@ macro_rules! count_add {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.count_add($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -196,7 +196,7 @@ macro_rules! count_add {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.count_add($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -218,11 +218,59 @@ macro_rules! count_add {
 ///
 /// ```ignore
 /// // Preferred: zero-copy on aggregator storage
-/// collector.gauge(RylvStr::from_static("connections"), 42, &mut [RylvStr::from_static("pool:main")]);
+/// collector.gauge_avg(RylvStr::from_static("connections"), 42, &mut [RylvTag::from_static("pool:main")]);
 ///
 /// // Macro: convenient but allocates when storing new keys
-/// gauge!(collector, "connections", 42, "pool:main");
+/// gauge_avg!(collector, "connections", 42, "pool:main");
 /// ```
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "udp")] {
+/// use rylv_metrics::{
+///     gauge_avg, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
+///     SharedCollector, SharedCollectorOptions, StatsWriterType,
+/// };
+/// use std::time::Duration;
+///
+/// let options = MetricCollectorOptions {
+///     max_udp_packet_size: 1500,
+///     max_udp_batch_size: 100,
+///     flush_interval: Duration::from_millis(100),
+///     writer_type: StatsWriterType::Simple,
+///     ..Default::default()
+/// };
+/// let inner = SharedCollector::default();
+/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options, inner).unwrap();
+///
+/// gauge_avg!(collector, "connections.active", 42, "pool:main");
+/// gauge_avg!(collector, "memory.usage", 512);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! gauge_avg {
+    // With tags
+    ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
+        {
+            #[allow(unused_mut)]
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
+            $collector.gauge_avg($crate::RylvStr::from($metric), $value, &mut tags)
+        }
+    };
+    // Without tags
+    ($collector:expr, $metric:expr, $value:expr) => {
+        {
+            #[allow(unused_mut)]
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
+            $collector.gauge_avg($crate::RylvStr::from($metric), $value, &mut tags)
+        }
+    };
+}
+
+/// Macro for recording a last-write-wins gauge value with variable number of tags.
+///
+/// Only the last value recorded before flush is emitted.
 ///
 /// # Examples
 ///
@@ -254,7 +302,7 @@ macro_rules! gauge {
     ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
         {
             #[allow(unused_mut)]
-            let mut tags = [$($crate::RylvStr::from($tag)),*];
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
             $collector.gauge($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
@@ -262,10 +310,26 @@ macro_rules! gauge {
     ($collector:expr, $metric:expr, $value:expr) => {
         {
             #[allow(unused_mut)]
-            let mut tags: [$crate::RylvStr<'static>; 0] = [];
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
             $collector.gauge($crate::RylvStr::from($metric), $value, &mut tags)
         }
     };
+}
+
+/// Macro for recording a last-write-wins gauge value with pre-sorted tags.
+#[macro_export]
+macro_rules! gauge_sorted {
+    ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
+        $collector.gauge_sorted($crate::RylvStr::from($metric), $value, $tags)
+    }};
+}
+
+/// Macro for recording a last-write-wins gauge value with a prepared metric key.
+#[macro_export]
+macro_rules! gauge_prepared {
+    ($collector:expr, $prepared:expr, $value:expr) => {{
+        $collector.gauge_prepared($prepared, $value)
+    }};
 }
 
 /// Macro for building reusable [`SortedTags`](crate::SortedTags) bound to a collector's hasher.
@@ -285,7 +349,72 @@ macro_rules! gauge {
 #[macro_export]
 macro_rules! sorted_tags {
     ($collector:expr, $($tag:expr),* $(,)?) => {{
-        $collector.prepare_sorted_tags([$($crate::RylvStr::from($tag)),*])
+        $collector.prepare_sorted_tags([$($crate::RylvTag::from($tag)),*])
+    }};
+}
+
+/// Macro for recording timing values with variable number of tags.
+///
+/// Timings are aggregated client-side identically to histograms, but emitted
+/// with the `DogStatsD` `ms` metric type.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "udp")] {
+/// use rylv_metrics::{
+///     timing, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
+///     SharedCollector, StatsWriterType,
+/// };
+/// use std::time::Duration;
+///
+/// let options = MetricCollectorOptions {
+///     max_udp_packet_size: 1500,
+///     max_udp_batch_size: 100,
+///     flush_interval: Duration::from_millis(100),
+///     writer_type: StatsWriterType::Simple,
+///     ..Default::default()
+/// };
+/// let inner = SharedCollector::default();
+/// let collector = MetricCollector::new("0.0.0.0:0".parse().unwrap(), "127.0.0.1:8125".parse().unwrap(), options, inner).unwrap();
+///
+/// timing!(collector, "request.duration", 100, "endpoint:api", "method:get");
+/// timing!(collector, "db.query", 42);
+/// # }
+/// ```
+#[macro_export]
+macro_rules! timing {
+    // With tags
+    ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {
+        {
+            #[allow(unused_mut)]
+            let mut tags = [$($crate::RylvTag::from($tag)),*];
+            $collector.timing($crate::RylvStr::from($metric), $value, &mut tags)
+        }
+    };
+    // Without tags
+    ($collector:expr, $metric:expr, $value:expr) => {
+        {
+            #[allow(unused_mut)]
+            let mut tags: [$crate::RylvTag<'static>; 0] = [];
+            $collector.timing($crate::RylvStr::from($metric), $value, &mut tags)
+        }
+    };
+}
+
+/// Macro for recording timing values with pre-sorted tags.
+#[macro_export]
+macro_rules! timing_sorted {
+    ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
+        $collector.timing_sorted($crate::RylvStr::from($metric), $value, $tags)
+    }};
+}
+
+/// Macro for recording timing values with a prepared metric key.
+#[macro_export]
+macro_rules! timing_prepared {
+    ($collector:expr, $prepared:expr, $value:expr) => {{
+        $collector.timing_prepared($prepared, $value)
     }};
 }
 
@@ -315,9 +444,9 @@ macro_rules! count_add_sorted {
 
 /// Macro for recording a gauge value with pre-sorted tags.
 #[macro_export]
-macro_rules! gauge_sorted {
+macro_rules! gauge_avg_sorted {
     ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
-        $collector.gauge_sorted($crate::RylvStr::from($metric), $value, $tags)
+        $collector.gauge_avg_sorted($crate::RylvStr::from($metric), $value, $tags)
     }};
 }
 
@@ -347,8 +476,8 @@ macro_rules! count_add_prepared {
 
 /// Macro for recording a gauge value with a prepared metric key.
 #[macro_export]
-macro_rules! gauge_prepared {
+macro_rules! gauge_avg_prepared {
     ($collector:expr, $prepared:expr, $value:expr) => {{
-        $collector.gauge_prepared($prepared, $value)
+        $collector.gauge_avg_prepared($prepared, $value)
     }};
 }

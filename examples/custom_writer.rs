@@ -4,7 +4,7 @@
 
 use rylv_metrics::{
     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricKind, MetricResult,
-    RylvStr, SharedCollector, SharedCollectorOptions, StatsWriterTrait, StatsWriterType,
+    RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterTrait, StatsWriterType,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,6 +29,7 @@ impl StatsWriterTrait for InMemoryWriter {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
             MetricKind::Gauge => "g",
+            MetricKind::Timing => "ms",
         };
         let metric_name: String = metrics.iter().copied().collect();
         let line = if tags.is_empty() {
@@ -73,12 +74,12 @@ fn main() {
     // Record some metrics
     collector.count(
         RylvStr::from_static("request.count"),
-        &mut [RylvStr::from_static("endpoint:api")],
+        &mut [RylvTag::from_static("endpoint:api")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("connections"),
         10,
-        &mut [RylvStr::from_static("pool:main")],
+        &mut [RylvTag::from_static("pool:main")],
     );
 
     // Shutdown triggers a final flush

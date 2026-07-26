@@ -45,3 +45,56 @@ pub fn equal_slice(b1: &[u8], b2: &[u8]) -> bool {
 
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equal_empty_slices() {
+        assert!(equal_slice(b"", b""));
+    }
+
+    #[test]
+    fn different_lengths() {
+        assert!(!equal_slice(b"abc", b"abcd"));
+    }
+
+    #[test]
+    fn equal_short() {
+        assert!(equal_slice(b"abc", b"abc"));
+    }
+
+    #[test]
+    fn differ_in_u32_range() {
+        // 9 bytes: 8 bytes match (u64), then differ in u32-sized tail
+        let a = b"12345678abcd";
+        let mut b = *b"12345678abcd";
+        b[9] = b'X';
+        assert!(!equal_slice(a, &b));
+    }
+
+    #[test]
+    fn differ_in_u16_range() {
+        // 14 bytes: 8 (u64) + 4 (u32) + 2 differ in u16
+        let a = b"12345678abcdXY";
+        let mut b = *b"12345678abcdXY";
+        b[13] = b'Z';
+        assert!(!equal_slice(a, &b));
+    }
+
+    #[test]
+    fn differ_in_last_byte() {
+        // 15 bytes: 8 + 4 + 2 + 1 trailing byte
+        let a = b"12345678abcdXYz";
+        let mut b = *b"12345678abcdXYz";
+        b[14] = b'!';
+        assert!(!equal_slice(a, &b));
+    }
+
+    #[test]
+    fn equal_large() {
+        let a = b"12345678abcdXYz";
+        assert!(equal_slice(a, a));
+    }
+}

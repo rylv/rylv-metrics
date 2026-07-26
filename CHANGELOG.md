@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-20
+
+### Added
+- `RylvTag` type for tag values
+- `from_static` constructor for tags
+- Last-write-wins gauge method
+- `inline` and `cold` annotations on hot paths
+- More unit tests across collectors
+
+### Changed
+- Renamed `gauge` to `gauge_avg`
+- Raised Minimum Supported Rust Version (MSRV) to 1.88
+- Dependency updates (see `Cargo.lock`)
+
+### Fixed
+- `tls_collector` tests now use `RylvTag` instead of `RylvStr` for tag arguments
+
+### Internal
+- Cleanup across collector and aggregator modules
+
 ## [0.3.2] - 2026-05-16
 
 ### Changed
@@ -26,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SortedTags` for reusable pre-sorted tag sets that skip per-call sorting
 - `MetricCollector` now generic over any `DrainMetricCollectorTrait` inner collector
 - Batch UDP writers: `LinuxBatch` (sendmmsg) and `AppleBatch` (sendmsg_x)
-- Convenience macros: `histogram!`, `count!`, `count_add!`, `gauge!`
+- Convenience macros: `histogram!`, `count!`, `count_add!`, `gauge_avg!`
 - `HistogramConfig::with_count()`, `with_min()`, `with_avg()`, `with_max()` base metric toggles
 - `Bounds` for inclusive min/max histogram value clamping
 - Miri tests for `SharedCollector` and `TLSCollector` drain lifetime safety
