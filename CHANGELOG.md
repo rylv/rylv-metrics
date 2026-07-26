@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Renamed `gauge` to `gauge_avg`
+- Raised Minimum Supported Rust Version (MSRV) to 1.88
 - Dependency updates (see `Cargo.lock`)
 
 ### Fixed
