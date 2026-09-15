@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, PreparedMetric, RylvStr, RylvTag,
     SharedCollector, SharedCollectorOptions, TLSCollector,
 };
 use std::time::Instant;
@@ -649,7 +649,11 @@ fn benchmark_parallel_histogram_merge_and_iterate(c: &mut Criterion) {
         let collector = &collector;
         b.iter(|| {
             run_parallel_histogram(collector, total_ops, thread_count);
-            black_box(collector.try_begin_drain().into_iter().flatten().count());
+            black_box(
+                collector
+                    .try_begin_drain()
+                    .map_or(0, |mut drain| drain.count_frames()),
+            );
         });
     });
 
@@ -666,8 +670,8 @@ fn benchmark_parallel_histogram_merge_and_iterate(c: &mut Criterion) {
 }
 
 pub fn bench_flush_and_drain_frame_count(collector: impl DrainMetricCollectorTrait) -> usize {
-    if let Some(drain) = collector.try_begin_drain() {
-        return drain.count();
+    if let Some(mut drain) = collector.try_begin_drain() {
+        return drain.count_frames();
     }
     0
 }

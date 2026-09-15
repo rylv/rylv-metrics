@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example shared_runtime_retry`
 
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, RylvStr, RylvTag, SharedCollector,
 };
 use std::thread;
 use std::time::Duration;
@@ -28,7 +28,7 @@ fn main() {
 
         if let Some(mut drain) = collector.try_begin_drain() {
             println!("drain acquired after {attempts} attempt(s)");
-            for frame in drain.by_ref() {
+            while let Some(frame) = drain.next_frame() {
                 println!("{:?}", frame);
             }
             break;

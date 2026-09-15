@@ -138,9 +138,41 @@ pub trait MetricCollectorTrait {
 }
 
 /// Trait for collectors that support draining aggregated metrics.
+pub trait MetricDrain {
+    /// Returns the next frame, borrowing it from this drain handle.
+    ///
+    /// ```compile_fail
+    /// # use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, RylvStr, SharedCollector};
+    /// let collector = SharedCollector::default();
+    /// collector.count(RylvStr::from_static("requests"), &mut []);
+    /// let mut drain = collector.try_begin_drain().unwrap();
+    /// let frame = drain.next_frame().unwrap();
+    /// drop(drain);
+    /// println!("{}", frame.metric);
+    /// ```
+    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>>;
+
+    /// Visits every remaining frame without allowing one to escape the drain.
+    fn for_each_frame(&mut self, mut visit: impl FnMut(MetricFrameRef<'_>)) {
+        while let Some(frame) = self.next_frame() {
+            visit(frame);
+        }
+    }
+
+    /// Consumes and counts all remaining frames.
+    fn count_frames(&mut self) -> usize {
+        let mut count = 0;
+        while self.next_frame().is_some() {
+            count += 1;
+        }
+        count
+    }
+}
+
+/// Trait for collectors that provide a lending metric drain.
 pub trait DrainMetricCollectorTrait: MetricCollectorTrait {
-    /// Drain iterator returned by this collector.
-    type Drain<'a>: Iterator<Item = MetricFrameRef<'a>>
+    /// Lending drain handle returned by this collector.
+    type Drain<'a>: MetricDrain
     where
         Self: 'a;
 

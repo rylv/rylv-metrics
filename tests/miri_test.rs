@@ -1,7 +1,7 @@
 #[cfg(feature = "shared-collector")]
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind as FrameMetricKind, MetricSuffix,
-    RylvStr, RylvTag, SharedCollector,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, MetricKind as FrameMetricKind,
+    MetricSuffix, RylvStr, RylvTag, SharedCollector,
 };
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
@@ -152,7 +152,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
     let mut saw_histogram = false;
     let mut saw_timing = false;
 
-    for frame in drain.by_ref() {
+    while let Some(frame) = drain.next_frame() {
         assert!(!frame.metric.is_empty());
         let rendered = match frame.suffix {
             MetricSuffix::None => frame.metric.to_string(),
@@ -214,7 +214,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
     let mut saw_histogram = false;
     let mut saw_timing = false;
 
-    for frame in drain.by_ref() {
+    while let Some(frame) = drain.next_frame() {
         assert!(!frame.metric.is_empty());
         let rendered = match frame.suffix {
             MetricSuffix::None => frame.metric.to_string(),

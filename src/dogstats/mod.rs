@@ -22,8 +22,8 @@ mod writer_utils;
 pub use aggregator::SigFig;
 #[cfg(feature = "__bench-internals")]
 pub use aggregator::{AggregatorEntryKey, LookupKey};
-pub use collector::DrainMetricCollectorTrait;
 pub use collector::MetricCollectorTrait;
+pub use collector::{DrainMetricCollectorTrait, MetricDrain};
 pub use collector::{MetricFrameRef, MetricKind, MetricSuffix};
 #[cfg(feature = "shared-collector")]
 pub use collector::{SharedCollector, SharedCollectorOptions};

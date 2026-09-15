@@ -77,7 +77,7 @@ mod error;
 pub use dogstats::writer::StatsWriterTrait;
 pub use dogstats::{
     DrainMetricCollectorTrait, HistogramBaseMetric, HistogramConfig, MetricCollectorTrait,
-    MetricFrameRef, MetricKind, MetricSuffix, PreparedMetric, SortedTags,
+    MetricDrain, MetricFrameRef, MetricKind, MetricSuffix, PreparedMetric, SortedTags,
 };
 #[cfg(feature = "udp")]
 pub use dogstats::{

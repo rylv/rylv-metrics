@@ -18,7 +18,7 @@ use std::hash::BuildHasher;
 use std::ptr::addr_of_mut;
 use std::sync::Arc;
 
-use super::{DrainMetricCollectorTrait, MetricCollectorTrait};
+use super::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain};
 use crossbeam::utils::CachePadded;
 use hashbrown::hash_table::Entry::{Occupied, Vacant};
 use hashbrown::HashTable;
@@ -1889,13 +1889,11 @@ impl<'a, T> Iterator for MyIterMut<'a, T> {
     }
 }
 
-impl<'a, S> Iterator for TLSDrain<'a, S>
+impl<S> MetricDrain for TLSDrain<'_, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    type Item = MetricFrameRef<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
         loop {
             match self.stage {
                 DrainStage::Count => {
@@ -1979,7 +1977,9 @@ mod tests {
         MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL,
     };
     use crate::dogstats::aggregator::HistogramWrapper;
-    use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
+    use crate::dogstats::collector::{
+        DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
+    };
     use crate::dogstats::histogram_config::{
         resolve_histogram_configs, Bounds, HistogramBaseMetric, HistogramBaseMetrics,
         HistogramConfig,
@@ -2002,14 +2002,9 @@ mod tests {
         format!(".{percentile_number}percentile")
     }
 
-    fn format_drained_lines<S, I>(drain: I) -> Vec<String>
-    where
-        S: std::hash::BuildHasher + Clone + Send + Sync + 'static,
-        I: IntoIterator<Item = crate::dogstats::collector::MetricFrameRef<'static>>,
-    {
-        let _ = std::marker::PhantomData::<S>;
+    fn format_drained_lines(mut drain: impl MetricDrain) -> Vec<String> {
         let mut lines = Vec::new();
-        for frame in drain {
+        while let Some(frame) = drain.next_frame() {
             let mut metric = String::new();
             metric.push_str(frame.prefix);
             metric.push_str(frame.metric);
@@ -2044,15 +2039,8 @@ mod tests {
     {
         let drain = collector
             .try_begin_drain()
-            .into_iter()
-            .flatten()
-            .map(|frame| unsafe {
-                std::mem::transmute::<
-                    crate::dogstats::collector::MetricFrameRef<'_>,
-                    crate::dogstats::collector::MetricFrameRef<'static>,
-                >(frame)
-            });
-        format_drained_lines::<S, _>(drain)
+            .expect("tls drain should be available");
+        format_drained_lines(drain)
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2418,7 +2406,7 @@ mod tests {
             let frame_count = collector
                 .try_begin_drain()
                 .expect("tls drain should be available")
-                .count();
+                .count_frames();
             let snapshot = TlsRetainedStateSnapshot::from_collector(&collector);
             assert!(
                 frame_count >= METRIC_COUNT * 3,
@@ -2480,15 +2468,9 @@ mod tests {
             &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
         );
 
-        let drain = <&TLSCollector as DrainMetricCollectorTrait>::try_begin_drain(&collector_ref)
-            .unwrap()
-            .map(|frame| unsafe {
-                std::mem::transmute::<
-                    crate::dogstats::collector::MetricFrameRef<'_>,
-                    crate::dogstats::collector::MetricFrameRef<'static>,
-                >(frame)
-            });
-        let lines = format_drained_lines::<crate::DefaultMetricHasher, _>(drain);
+        let drain =
+            <&TLSCollector as DrainMetricCollectorTrait>::try_begin_drain(&collector_ref).unwrap();
+        let lines = format_drained_lines(drain);
         assert_regular_reference_lines(&lines);
     }
 
@@ -2754,7 +2736,7 @@ mod tests {
 
         {
             let mut drain = TLSDrain::new(&collector, global);
-            assert!(drain.next().is_none());
+            assert!(drain.next_frame().is_none());
         }
 
         let recycled = collector.recycled_global_aggregators.lock().pop().unwrap();
@@ -2897,15 +2879,9 @@ mod tests {
             &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
         );
 
-        let drain = <&TLSCollector as DrainMetricCollectorTrait>::try_begin_drain(&collector_ref)
-            .unwrap()
-            .map(|frame| unsafe {
-                std::mem::transmute::<
-                    crate::dogstats::collector::MetricFrameRef<'_>,
-                    crate::dogstats::collector::MetricFrameRef<'static>,
-                >(frame)
-            });
-        let lines = format_drained_lines::<crate::DefaultMetricHasher, _>(drain);
+        let drain =
+            <&TLSCollector as DrainMetricCollectorTrait>::try_begin_drain(&collector_ref).unwrap();
+        let lines = format_drained_lines(drain);
         assert_eq!(
             lines,
             &[

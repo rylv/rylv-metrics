@@ -3,7 +3,7 @@ use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::{DrainMetricCollectorTrait, MetricCollectorTrait};
+use super::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain};
 use crate::dogstats::aggregator::{
     to_agg_entry_key, AggregatorEntryKey, HistogramWrapper, LookupKey, LookupKeySorted, RemoveKey,
 };
@@ -243,14 +243,12 @@ where
     }
 }
 
-impl<'a, S> Iterator for SharedDrain<'a, S>
+impl<S> MetricDrain for SharedDrain<'_, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    type Item = MetricFrameRef<'a>;
-
     #[cold]
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
         self.frames.next_frame()
     }
 }
@@ -1878,7 +1876,9 @@ mod tests {
         SharedCollector, SharedCollectorOptions,
     };
     use crate::dogstats::aggregator::Aggregator;
-    use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
+    use crate::dogstats::collector::{
+        DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
+    };
     use crate::dogstats::histogram_config::{resolve_histogram_configs, HistogramConfig};
     use crate::{MetricCollectorTrait, RylvStr, RylvTag};
     use std::collections::HashMap;
@@ -1897,11 +1897,9 @@ mod tests {
         format!(".{percentile_number}percentile")
     }
 
-    fn drain_to_lines<'a>(
-        drain: impl Iterator<Item = crate::dogstats::collector::MetricFrameRef<'a>>,
-    ) -> Vec<String> {
+    fn drain_to_lines(mut drain: impl MetricDrain) -> Vec<String> {
         let mut lines = Vec::new();
-        for frame in drain {
+        while let Some(frame) = drain.next_frame() {
             let mut metric = String::new();
             metric.push_str(frame.prefix);
             metric.push_str(frame.metric);

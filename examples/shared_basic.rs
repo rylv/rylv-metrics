@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example shared_basic`
 
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, RylvStr, RylvTag, SharedCollector,
 };
 
 fn main() {
@@ -28,7 +28,7 @@ fn main() {
     // Poll until ownership is available, then consume borrowed frames.
     loop {
         if let Some(mut drain) = collector.try_begin_drain() {
-            for frame in drain.by_ref() {
+            while let Some(frame) = drain.next_frame() {
                 println!("{:?}", frame);
             }
             break;

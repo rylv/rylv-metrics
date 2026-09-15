@@ -1,4 +1,6 @@
-use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
+use crate::dogstats::collector::{
+    DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
+};
 use crate::dogstats::writer::{StatsWriterHolder, StatsWriterTrait};
 use crate::MetricResult;
 
@@ -37,14 +39,14 @@ where
     MC::Hasher: BuildHasher + Clone + Send + Sync + 'static,
 {
     fn send_metrics(&mut self) -> SendResult {
-        let Some(drain) = self.collector.try_begin_drain() else {
+        let Some(mut drain) = self.collector.try_begin_drain() else {
             return SendResult::WouldBlock;
         };
 
         let mut percentile_suffix_cache = HashMap::<u64, &str>::new();
         let mut stats_writer = self.stats_writer.acquire();
         let can_use_stack = stats_writer.metric_copied();
-        for metric in drain {
+        while let Some(metric) = drain.next_frame() {
             let value = if can_use_stack {
                 self.buffer.format(metric.value)
             } else {

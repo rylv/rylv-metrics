@@ -1,6 +1,6 @@
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind, MetricSuffix, RylvStr, RylvTag,
-    TLSCollector, TLSCollectorOptions,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
+    RylvStr, RylvTag, TLSCollector, TLSCollectorOptions,
 };
 
 fn percentile_suffix(percentile: f64) -> String {
@@ -20,9 +20,11 @@ fn drain_metrics_now<S>(collector: &TLSCollector<S>) -> Vec<String>
 where
     S: std::hash::BuildHasher + Clone + Send + Sync + 'static,
 {
-    let drain = collector.try_begin_drain().into_iter().flatten();
+    let mut drain = collector
+        .try_begin_drain()
+        .expect("tls drain should be available");
     let mut lines = Vec::new();
-    for frame in drain {
+    while let Some(frame) = drain.next_frame() {
         let mut metric = String::new();
         metric.push_str(frame.prefix);
         metric.push_str(frame.metric);

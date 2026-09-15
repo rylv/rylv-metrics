@@ -149,14 +149,14 @@ impl StatsWriterTrait for MyWriter {
 Use `SharedCollector` when you want to own scheduling and transport externally:
 
 ```rust
-use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, SharedCollector};
+use rylv_metrics::{DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, SharedCollector};
 
 let collector = SharedCollector::default();
 collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:test")]);
 
 loop {
     if let Some(mut drain) = collector.try_begin_drain() {
-        for frame in drain.by_ref() {
+        while let Some(frame) = drain.next_frame() {
             // send frame to UDP/HTTP/queue/etc
             println!("{:?}", frame);
         }
@@ -173,13 +173,13 @@ backed by `hashbrown::HashTable` and `parking_lot`, and drains merge the
 per-thread frames on demand:
 
 ```rust
-use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, TLSCollector};
+use rylv_metrics::{DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, TLSCollector};
 
 let collector = TLSCollector::default();
 collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:test")]);
 
 if let Some(mut drain) = collector.try_begin_drain() {
-    for frame in drain.by_ref() {
+    while let Some(frame) = drain.next_frame() {
         // send frame to UDP/HTTP/queue/etc
         println!("{:?}", frame);
     }

@@ -301,7 +301,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{MetricCollector, MetricCollectorOptions, StatsWriterType};
-    use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricFrameRef};
+    use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricDrain, MetricFrameRef};
     use crate::{MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag, SortedTags};
     use crossbeam::channel::unbounded;
     use std::hash::BuildHasher;
@@ -459,11 +459,19 @@ mod tests {
         }
     }
 
+    struct EmptyDrain;
+
+    impl MetricDrain for EmptyDrain {
+        fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
+            None
+        }
+    }
+
     impl DrainMetricCollectorTrait for FakeInner {
-        type Drain<'a> = std::vec::IntoIter<MetricFrameRef<'a>>;
+        type Drain<'a> = EmptyDrain;
 
         fn try_begin_drain(&self) -> Option<Self::Drain<'_>> {
-            Some(Vec::new().into_iter())
+            Some(EmptyDrain)
         }
     }
 
@@ -584,7 +592,7 @@ mod tests {
         let inner = FakeInner::default();
         let drain = inner.try_begin_drain();
         assert!(drain.is_some());
-        assert_eq!(drain.unwrap().count(), 0);
+        assert_eq!(drain.unwrap().count_frames(), 0);
     }
 
     #[test]

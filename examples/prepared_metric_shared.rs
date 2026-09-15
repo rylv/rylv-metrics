@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example prepared_metric_shared`
 
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, RylvStr, RylvTag, SharedCollector,
 };
 
 fn main() {
@@ -20,7 +20,7 @@ fn main() {
 
     loop {
         if let Some(mut drain) = collector.try_begin_drain() {
-            for frame in drain.by_ref() {
+            while let Some(frame) = drain.next_frame() {
                 println!("{:?}", frame);
             }
             break;

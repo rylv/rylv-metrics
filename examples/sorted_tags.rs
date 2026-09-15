@@ -4,7 +4,7 @@
 
 use rylv_metrics::{
     count_add_sorted, gauge_avg_sorted, histogram_sorted, sorted_tags, DrainMetricCollectorTrait,
-    MetricCollectorTrait, RylvStr, SharedCollector,
+    MetricCollectorTrait, MetricDrain, RylvStr, SharedCollector,
 };
 
 fn main() {
@@ -23,7 +23,7 @@ fn main() {
 
     loop {
         if let Some(mut drain) = collector.try_begin_drain() {
-            for frame in drain.by_ref() {
+            while let Some(frame) = drain.next_frame() {
                 println!("{:?}", frame);
             }
             break;

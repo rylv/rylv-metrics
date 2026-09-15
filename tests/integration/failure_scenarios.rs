@@ -1,6 +1,6 @@
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollector, MetricCollectorOptions, MetricCollectorTrait,
-    RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterType,
+    MetricDrain, RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::net::UdpSocket;
 use std::time::Duration;
@@ -126,7 +126,7 @@ fn test_shared_collector_handles_high_cardinality_tags() {
     let mut frame_count = 0;
     for _ in 0..8 {
         if let Some(mut drain) = collector.try_begin_drain() {
-            for frame in drain.by_ref() {
+            while let Some(frame) = drain.next_frame() {
                 assert_eq!(frame.metric, "high_cardinality.requests");
                 assert_eq!(frame.value, 1);
                 frame_count += 1;
@@ -155,7 +155,7 @@ fn test_shared_collector_handles_high_cardinality_metrics() {
     let mut frame_count = 0;
     for _ in 0..8 {
         if let Some(mut drain) = collector.try_begin_drain() {
-            for _frame in drain.by_ref() {
+            while let Some(_frame) = drain.next_frame() {
                 frame_count += 1;
             }
             break;
@@ -226,7 +226,7 @@ fn test_shared_collector_drain_when_empty() {
         if let Some(mut drain) = collector.try_begin_drain() {
             acquired = true;
             assert!(
-                drain.next().is_none(),
+                drain.next_frame().is_none(),
                 "empty collector should yield no frames"
             );
             break;
@@ -256,8 +256,8 @@ fn test_shared_collector_consecutive_drains_reset_state() {
     // First drain
     let mut first_count = 0;
     for _ in 0..8 {
-        if let Some(drain) = collector.try_begin_drain() {
-            first_count = drain.count();
+        if let Some(mut drain) = collector.try_begin_drain() {
+            first_count = drain.count_frames();
             break;
         }
     }
@@ -272,8 +272,8 @@ fn test_shared_collector_consecutive_drains_reset_state() {
     // Second drain should only see the new metric
     let mut second_count = 0;
     for _ in 0..8 {
-        if let Some(drain) = collector.try_begin_drain() {
-            second_count = drain.count();
+        if let Some(mut drain) = collector.try_begin_drain() {
+            second_count = drain.count_frames();
             break;
         }
     }
