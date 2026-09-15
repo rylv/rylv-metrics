@@ -720,4 +720,37 @@ mod tests {
         let s = RylvStr::OwnedStr(Arc::from("test"));
         assert_eq!(s.as_ref(), "test");
     }
+
+    #[test]
+    fn rylv_tag_unicode_comparison_is_safe() {
+        let unicode = RylvTag::from_static("é:🔑");
+        let equivalent = RylvTag::from_static_compound("é", "🔑");
+        assert_eq!(unicode.cmp(&equivalent), Ordering::Equal);
+
+        let mut tags = [unicode, RylvTag::from_static_compound("a", "value")];
+        tags.sort_unstable();
+    }
+
+    #[test]
+    fn rylv_tag_order_is_transitive_for_previous_cycle() {
+        let first = RylvTag::from_static("a!");
+        let second = RylvTag::from_static("a:");
+        let third = RylvTag::from_static_compound("a", "a");
+
+        assert!(first < second);
+        assert!(second < third);
+        assert!(first < third);
+    }
+
+    #[test]
+    fn rylv_tag_equivalence_uses_complete_resolved_form() {
+        let full = RylvTag::from_static("k::v");
+        let split_in_key = RylvTag::from_static_compound("k:", "v");
+        let split_in_value = RylvTag::from_static_compound("k", ":v");
+
+        assert_eq!(full, split_in_key);
+        assert_eq!(full, split_in_value);
+        assert_eq!(split_in_key, split_in_value);
+        assert_eq!(split_in_key.cmp(&split_in_value), Ordering::Equal);
+    }
 }

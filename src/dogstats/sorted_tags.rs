@@ -369,8 +369,20 @@ mod tests {
             )],
             &hasher,
         );
-        // joined_tags should be identical
         assert_eq!(a.joined_tags(), b.joined_tags());
+        assert_eq!(a, b);
+        assert_eq!(a.tags_hash(), b.tags_hash());
+    }
+
+    #[test]
+    fn sorted_tags_equality_allows_alternative_compound_segmentation() {
+        let hasher = default_hasher();
+        let split_in_key = SortedTags::new([RylvTag::from_static_compound("k:", "v")], &hasher);
+        let split_in_value = SortedTags::new([RylvTag::from_static_compound("k", ":v")], &hasher);
+
+        assert_eq!(split_in_key.joined_tags(), "k::v");
+        assert_eq!(split_in_key, split_in_value);
+        assert_eq!(split_in_key.tags_hash(), split_in_value.tags_hash());
     }
 
     #[test]

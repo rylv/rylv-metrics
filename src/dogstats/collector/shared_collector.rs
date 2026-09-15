@@ -2325,6 +2325,18 @@ mod tests {
     }
 
     #[test]
+    fn gauge_last_emits_u64_max() {
+        let collector = SharedCollector::new(SharedCollectorOptions::default());
+
+        collector.gauge(RylvStr::from_static("max.gauge"), u64::MAX, &mut []);
+
+        assert_eq!(
+            drain_metrics_now(&collector),
+            vec![format!("max.gauge:{}|g\n", u64::MAX)],
+        );
+    }
+
+    #[test]
     fn gauge_last_sorted_and_prepared() {
         let collector = SharedCollector::new(SharedCollectorOptions {
             stats_prefix: "s.".to_string(),
