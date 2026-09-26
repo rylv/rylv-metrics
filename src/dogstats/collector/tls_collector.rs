@@ -12,9 +12,11 @@ use crate::dogstats::{
     RylvStr, RylvTag, SortedTags,
 };
 use crate::DefaultMetricHasher;
+use std::cell::UnsafeCell;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::hash::BuildHasher;
+use std::mem::ManuallyDrop;
 use std::ptr::addr_of_mut;
 use std::sync::Arc;
 
@@ -1386,7 +1388,18 @@ pub struct TLSDrain<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    collector: &'a TLSCollector<S>,
+    // This state contains references into the heap allocation owned by `_aggregator`. Keeping it
+    // behind `UnsafeCell` prevents moves and explicit `drop(drain)` calls from retagging those
+    // internal references as external borrows during destruction.
+    state: UnsafeCell<ManuallyDrop<TLSDrainState<'a, S>>>,
+    // Keep this field last: `Drop` destroys `state` before this guard reconstructs the box.
+    _aggregator: TLSAggregatorRecycleGuard<'a, S>,
+}
+
+struct TLSDrainState<'a, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     prefix: &'a str,
     stage: DrainStage,
     count_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, u64)>>,
@@ -1399,13 +1412,14 @@ where
     keys_to_remove: &'a mut Vec<RemoveKey>,
     pending_histogram: Option<PendingHistogram<'a, S>>,
     pending_timing: Option<PendingHistogram<'a, S>>,
+}
 
-    // SAFETY:
-    // `TLSDrain` is self-referential: the iterators and borrowed slices above point into this
-    // heap-allocated `GlobalAggregatorHb`. Keeping the raw pointer as the final field ensures all
-    // other fields are dropped before we reconstruct and free the box in `Drop`, so those borrows
-    // never outlive the backing aggregator allocation.
-    aggregator: Option<*mut GlobalAggregatorHb<S>>,
+struct TLSAggregatorRecycleGuard<'a, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    collector: &'a TLSCollector<S>,
+    aggregator: *mut GlobalAggregatorHb<S>,
 }
 
 impl<'a, S> TLSDrain<'a, S>
@@ -1416,29 +1430,37 @@ where
         let global = Box::new(aggregator);
         let global_ptr = Box::into_raw(global);
         Self {
-            collector,
-            prefix: collector.stats_prefix.as_str(),
-            stage: DrainStage::Count,
-            count_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).count) })),
-            gauge_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).gauge) })),
-            gauge_last_iter: Some(MyIterMut::new(unsafe {
-                addr_of_mut!((*global_ptr).gauge_last)
+            state: UnsafeCell::new(ManuallyDrop::new(TLSDrainState {
+                prefix: collector.stats_prefix.as_str(),
+                stage: DrainStage::Count,
+                count_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).count) })),
+                gauge_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).gauge) })),
+                gauge_last_iter: Some(MyIterMut::new(unsafe {
+                    addr_of_mut!((*global_ptr).gauge_last)
+                })),
+                histogram_iter: Some(MyIterMut::new(unsafe {
+                    addr_of_mut!((*global_ptr).histograms)
+                })),
+                timing_iter: Some(MyIterMut::new(unsafe {
+                    addr_of_mut!((*global_ptr).timings)
+                })),
+                pool_histograms: unsafe { &mut *addr_of_mut!((*global_ptr).pool_histograms) },
+                keys_to_remove: unsafe { &mut *addr_of_mut!((*global_ptr).key_to_remove) },
+                pending_histogram: None,
+                pending_timing: None,
             })),
-            histogram_iter: Some(MyIterMut::new(unsafe {
-                addr_of_mut!((*global_ptr).histograms)
-            })),
-            timing_iter: Some(MyIterMut::new(unsafe {
-                addr_of_mut!((*global_ptr).timings)
-            })),
-            pool_histograms: unsafe { &mut *addr_of_mut!((*global_ptr).pool_histograms) },
-            keys_to_remove: unsafe { &mut *addr_of_mut!((*global_ptr).key_to_remove) },
-            pending_histogram: None,
-            pending_timing: None,
-
-            aggregator: Some(global_ptr),
+            _aggregator: TLSAggregatorRecycleGuard {
+                collector,
+                aggregator: global_ptr,
+            },
         }
     }
+}
 
+impl<'a, S> TLSDrainState<'a, S>
+where
+    S: BuildHasher + Clone + Send + Sync,
+{
     fn emit_count_metric(&mut self) -> Option<MetricFrameRef<'a>> {
         if let Some(iter) = self.count_iter.as_mut() {
             for entry in iter.by_ref() {
@@ -1824,21 +1846,29 @@ where
     }
 }
 
+impl<S> Drop for TLSAggregatorRecycleGuard<'_, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    #[cold]
+    fn drop(&mut self) {
+        // SAFETY: this guard is the last field of `TLSDrain`, so all fields borrowing from the
+        // allocation have already been dropped. The pointer came from `Box::into_raw` and this
+        // guard is its unique owner.
+        let aggregator = unsafe { *Box::from_raw(self.aggregator) };
+        self.collector.recycle_global(aggregator);
+    }
+}
+
 impl<S> Drop for TLSDrain<'_, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
     #[cold]
     fn drop(&mut self) {
-        self.count_iter = None;
-        self.gauge_iter = None;
-        self.histogram_iter = None;
-        self.timing_iter = None;
-
-        if let Some(aggregator) = self.aggregator.take() {
-            let agg = *unsafe { Box::from_raw(aggregator) };
-            self.collector.recycle_global(agg);
-        }
+        // SAFETY: initialized once in `new` and dropped exactly once here. This releases every
+        // iterator and pending entry before `_aggregator` is dropped.
+        unsafe { ManuallyDrop::drop(&mut *self.state.get()) };
     }
 }
 
@@ -1889,11 +1919,11 @@ impl<'a, T> Iterator for MyIterMut<'a, T> {
     }
 }
 
-impl<S> MetricDrain for TLSDrain<'_, S>
+impl<'a, S> TLSDrainState<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
+    fn next_frame(&mut self) -> Option<MetricFrameRef<'a>> {
         loop {
             match self.stage {
                 DrainStage::Count => {
@@ -1965,6 +1995,17 @@ where
                 DrainStage::Done => return None,
             }
         }
+    }
+}
+
+impl<S> MetricDrain for TLSDrain<'_, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
+        // SAFETY: `&mut self` guarantees exclusive access and `state` remains initialized until
+        // `Drop` runs.
+        TLSDrainState::next_frame(unsafe { &mut *self.state.get() })
     }
 }
 

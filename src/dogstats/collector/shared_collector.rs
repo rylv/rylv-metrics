@@ -1,5 +1,7 @@
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -89,9 +91,20 @@ pub struct SharedDrain<'a, S>
 where
     S: BuildHasher + Clone,
 {
+    // `Frames` borrows from the heap allocation owned by `_aggregator`. Keeping this
+    // self-referential state behind `UnsafeCell` prevents moves and explicit `drop(drain)` calls
+    // from retagging those internal references as external borrows during destruction.
+    frames: UnsafeCell<ManuallyDrop<Frames<'a, S>>>,
+    // Keep this field last: `Drop` destroys `frames` before this guard reconstructs the box.
+    _aggregator: SharedAggregatorRecycleGuard<'a, S>,
+}
+
+struct SharedAggregatorRecycleGuard<'a, S>
+where
+    S: BuildHasher + Clone,
+{
     collector: &'a SharedCollector<S>,
-    aggregator: Option<*mut Aggregator<S>>,
-    frames: Frames<'a, S>,
+    aggregator: *mut Aggregator<S>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -227,12 +240,14 @@ where
             Ok(aggregator) => {
                 let agg_ptr = Box::into_raw(Box::new(aggregator));
                 Some(SharedDrain {
-                    collector: self,
-                    frames: drain_aggregator_frames(
+                    frames: UnsafeCell::new(ManuallyDrop::new(drain_aggregator_frames(
                         unsafe { &*agg_ptr },
                         self.stats_prefix.as_str(),
-                    ),
-                    aggregator: Some(agg_ptr),
+                    ))),
+                    _aggregator: SharedAggregatorRecycleGuard {
+                        collector: self,
+                        aggregator: agg_ptr,
+                    },
                 })
             }
             Err(alloc_agg) => {
@@ -249,7 +264,9 @@ where
 {
     #[cold]
     fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
-        self.frames.next_frame()
+        // SAFETY: `&mut self` guarantees exclusive access. `Drop` destroys this state before the
+        // backing allocation is reclaimed.
+        unsafe { &mut *self.frames.get() }.next_frame()
     }
 }
 
@@ -259,12 +276,24 @@ where
 {
     #[cold]
     fn drop(&mut self) {
-        // SAFETY: because we only add not mutable alias,
-        // There is no order in drop issues here
-        if let Some(aggregator) = self.aggregator.take() {
-            if let Ok(mut available) = self.collector.available_aggregator.try_lock() {
-                *available = Some(unsafe { *Box::from_raw(aggregator) });
-            }
+        // SAFETY: initialized once in `begin_drain` and dropped exactly once here. This releases
+        // all iterator guards before `_aggregator` is dropped.
+        unsafe { ManuallyDrop::drop(&mut *self.frames.get()) };
+    }
+}
+
+impl<S> Drop for SharedAggregatorRecycleGuard<'_, S>
+where
+    S: BuildHasher + Clone,
+{
+    #[cold]
+    fn drop(&mut self) {
+        // SAFETY: this guard is the last field of `SharedDrain`, so all fields borrowing from
+        // the allocation have already been dropped. The pointer came from `Box::into_raw` and
+        // this guard is its unique owner.
+        let aggregator = unsafe { *Box::from_raw(self.aggregator) };
+        if let Ok(mut available) = self.collector.available_aggregator.try_lock() {
+            *available = Some(aggregator);
         }
     }
 }

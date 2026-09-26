@@ -183,6 +183,26 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
     assert!(saw_timing);
 }
 
+#[cfg(feature = "shared-collector")]
+#[test]
+fn miri_shared_drain_can_be_dropped_before_exhaustion() {
+    let collector = SharedCollector::default();
+    collector.histogram(
+        RylvStr::from_static("latency_ms"),
+        42,
+        &mut [RylvTag::from_static("env:test")],
+    );
+
+    let mut drain = collector
+        .try_begin_drain()
+        .expect("shared drain should become available");
+    assert!(drain.next_frame().is_some());
+    drop(drain);
+
+    collector.count(RylvStr::from_static("after_drop"), &mut []);
+    assert!(collector.try_begin_drain().is_some());
+}
+
 #[cfg(feature = "tls-collector")]
 #[test]
 fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
@@ -243,4 +263,24 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
     assert!(saw_gauge);
     assert!(saw_histogram);
     assert!(saw_timing);
+}
+
+#[cfg(feature = "tls-collector")]
+#[test]
+fn miri_tls_drain_can_be_dropped_before_exhaustion() {
+    let collector = TLSCollector::new(TLSCollectorOptions::default());
+    collector.histogram(
+        RylvStr::from_static("latency_ms"),
+        42,
+        &mut [RylvTag::from_static("env:test")],
+    );
+
+    let mut drain = collector
+        .try_begin_drain()
+        .expect("tls drain should be immediately available");
+    assert!(drain.next_frame().is_some());
+    drop(drain);
+
+    collector.count(RylvStr::from_static("after_drop"), &mut []);
+    assert!(collector.try_begin_drain().is_some());
 }
