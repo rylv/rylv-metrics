@@ -6,9 +6,11 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_vendor = "apple")]
+use crate::MetricsError;
 use crate::{
-    dogstats::writer::StatsWriterHolder, MetricCollectorTrait, MetricsError, PreparedMetric,
-    RylvStr, RylvTag, SortedTags,
+    dogstats::writer::StatsWriterHolder, MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag,
+    SortedTags,
 };
 
 #[cfg(feature = "custom_writer")]
@@ -121,10 +123,13 @@ where
         options: MetricCollectorOptions,
         inner: MC,
     ) -> MetricResult<Self> {
-        let dst_addr = match dst_addr {
-            SocketAddr::V4(dst_addr) => dst_addr,
-            SocketAddr::V6(_) => return Err(MetricsError::Custom("IPv6 not expected".to_string())),
-        };
+        #[cfg(target_vendor = "apple")]
+        if dst_addr.is_ipv6() && matches!(&options.writer_type, StatsWriterType::AppleBatch) {
+            return Err(MetricsError::Custom(
+                "AppleBatch does not support IPv6 destinations".to_string(),
+            ));
+        }
+
         let flush_interval = options.flush_interval;
         let writer = UdpSocketWriter {
             sock: UdpSocket::bind(bind_addr)?,
@@ -302,6 +307,8 @@ where
 mod tests {
     use super::{MetricCollector, MetricCollectorOptions, StatsWriterType};
     use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricDrain, MetricFrameRef};
+    #[cfg(target_vendor = "apple")]
+    use crate::MetricsError;
     use crate::{MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag, SortedTags};
     use crossbeam::channel::unbounded;
     use std::hash::BuildHasher;
@@ -497,6 +504,37 @@ mod tests {
     #[test]
     fn stats_writer_type_debug_matches_variant_name() {
         assert_eq!(format!("{:?}", StatsWriterType::Simple), "Simple");
+    }
+
+    #[test]
+    fn simple_writer_accepts_ipv6_destination() {
+        let collector = MetricCollector::new(
+            "[::1]:0".parse().unwrap(),
+            "[::1]:8125".parse().unwrap(),
+            MetricCollectorOptions {
+                flush_interval: Duration::from_secs(60),
+                ..MetricCollectorOptions::default()
+            },
+            FakeInner::default(),
+        );
+
+        assert!(collector.is_ok());
+    }
+
+    #[test]
+    #[cfg(target_vendor = "apple")]
+    fn apple_batch_rejects_ipv6_destination_without_panicking() {
+        let result = MetricCollector::new(
+            "[::1]:0".parse().unwrap(),
+            "[::1]:8125".parse().unwrap(),
+            MetricCollectorOptions {
+                writer_type: StatsWriterType::AppleBatch,
+                ..MetricCollectorOptions::default()
+            },
+            FakeInner::default(),
+        );
+
+        assert!(matches!(result, Err(MetricsError::Custom(message)) if message.contains("IPv6")));
     }
 
     #[test]

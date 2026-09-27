@@ -40,8 +40,8 @@ rylv-metrics = { version = "0.4.0", features = ["udp", "shared-collector"] }
 
 ```rust
 use rylv_metrics::{
-    count, count_add, gauge, histogram, MetricCollector, MetricCollectorOptions,
-    MetricCollectorTrait, RylvStr, SharedCollector,
+    count, count_add, gauge_avg, histogram, MetricCollector, MetricCollectorOptions,
+    MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
 };
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -65,16 +65,16 @@ fn main() {
     collector.histogram(
         RylvStr::from_static("request.latency"),
         42,
-        &mut [RylvStr::from_static("endpoint:api"), RylvStr::from_static("method:GET")],
+        &mut [RylvTag::from_static("endpoint:api"), RylvTag::from_static("method:GET")],
     );
     collector.count(
         RylvStr::from_static("request.count"),
-        &mut [RylvStr::from_static("endpoint:api")],
+        &mut [RylvTag::from_static("endpoint:api")],
     );
     collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         100,
-        &mut [RylvStr::from_static("pool:main")],
+        &mut [RylvTag::from_static("pool:main")],
     );
 
     // Or use convenience macros with string literals
@@ -149,10 +149,10 @@ impl StatsWriterTrait for MyWriter {
 Use `SharedCollector` when you want to own scheduling and transport externally:
 
 ```rust
-use rylv_metrics::{DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, SharedCollector};
+use rylv_metrics::{DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector};
 
 let collector = SharedCollector::default();
-collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:test")]);
+collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("env:test")]);
 
 loop {
     if let Some(mut drain) = collector.try_begin_drain() {
@@ -173,10 +173,13 @@ backed by `hashbrown::HashTable` and `parking_lot`, and drains merge the
 per-thread frames on demand:
 
 ```rust
-use rylv_metrics::{DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, TLSCollector};
+use rylv_metrics::{
+    DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, RylvTag,
+    TLSCollector, TLSCollectorOptions,
+};
 
-let collector = TLSCollector::default();
-collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:test")]);
+let collector = TLSCollector::new(TLSCollectorOptions::default());
+collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("env:test")]);
 
 if let Some(mut drain) = collector.try_begin_drain() {
     while let Some(frame) = drain.next_frame() {

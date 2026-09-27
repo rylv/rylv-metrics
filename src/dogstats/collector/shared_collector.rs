@@ -2,7 +2,7 @@ use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
 use std::mem::ManuallyDrop;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain};
@@ -24,6 +24,60 @@ use tracing::error;
 pub struct GaugeState {
     pub sum: AtomicU64,
     pub count: AtomicU64,
+}
+
+pub struct GaugeLastState {
+    value: AtomicU64,
+    state: AtomicU8,
+}
+
+impl GaugeLastState {
+    const LOCKED: u8 = 1;
+    const PRESENT: u8 = 2;
+
+    const fn empty() -> Self {
+        Self {
+            value: AtomicU64::new(0),
+            state: AtomicU8::new(0),
+        }
+    }
+
+    #[inline]
+    fn lock(&self) -> u8 {
+        let mut state = self.state.load(Ordering::Relaxed);
+        loop {
+            if state & Self::LOCKED != 0 {
+                std::hint::spin_loop();
+                state = self.state.load(Ordering::Relaxed);
+                continue;
+            }
+
+            match self.state.compare_exchange_weak(
+                state,
+                state | Self::LOCKED,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(previous) => return previous,
+                Err(actual) => state = actual,
+            }
+        }
+    }
+
+    #[inline]
+    fn store(&self, value: u64) {
+        self.lock();
+        self.value.store(value, Ordering::Relaxed);
+        self.state.store(Self::PRESENT, Ordering::Release);
+    }
+
+    #[inline]
+    fn take(&self) -> Option<u64> {
+        let previous = self.lock();
+        let value = (previous & Self::PRESENT != 0).then(|| self.value.load(Ordering::Relaxed));
+        self.state.store(0, Ordering::Release);
+        value
+    }
 }
 
 /// Configuration options for the metric collector.
@@ -134,9 +188,9 @@ type GaugeDrainIter<'a, S> = dashmap::iter::Iter<
 type GaugeLastDrainIter<'a, S> = dashmap::iter::Iter<
     'a,
     AggregatorEntryKey<S>,
-    AtomicU64,
+    GaugeLastState,
     S,
-    DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
+    DashMap<AggregatorEntryKey<S>, GaugeLastState, S>,
 >;
 type HistogramDrainIter<'a, S> = dashmap::iter::IterMut<
     'a,
@@ -167,7 +221,7 @@ where
     timing_iter: Option<TimingDrainIter<'a, S>>,
     count: &'a DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
     gauge: &'a DashMap<AggregatorEntryKey<S>, GaugeState, S>,
-    gauge_last: &'a DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
+    gauge_last: &'a DashMap<AggregatorEntryKey<S>, GaugeLastState, S>,
     histogram: &'a DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
     timing: &'a DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
     pool_histograms: &'a [crossbeam::queue::SegQueue<HistogramWrapper>],
@@ -632,11 +686,10 @@ where
     fn emit_gauge_last_metric(&mut self) -> Option<MetricFrameRef<'a>> {
         if let Some(iter) = self.gauge_last_iter.as_mut() {
             for entry in iter.by_ref() {
-                let value = entry.value().swap(u64::MAX, Ordering::SeqCst);
-                if value == u64::MAX {
+                let Some(value) = entry.value().take() else {
                     self.keys_to_remove.push(entry.key().remove_key());
                     continue;
-                }
+                };
 
                 let key = entry.key();
                 let (metric, tags) = unsafe {
@@ -1844,10 +1897,10 @@ fn record_gauge_last_in_aggregator<S>(
         value,
         &aggregator.gauge_last,
         |v, value| {
-            v.store(value, Ordering::Relaxed);
+            v.store(value);
             Ok(())
         },
-        || Some(AtomicU64::new(u64::MAX)),
+        || Some(GaugeLastState::empty()),
     );
 }
 
@@ -1865,10 +1918,10 @@ fn record_gauge_last_in_aggregator_sorted<S>(
         value,
         &aggregator.gauge_last,
         |v, value| {
-            v.store(value, Ordering::Relaxed);
+            v.store(value);
             Ok(())
         },
-        || Some(AtomicU64::new(u64::MAX)),
+        || Some(GaugeLastState::empty()),
     );
 }
 
@@ -1884,10 +1937,10 @@ fn record_gauge_last_in_aggregator_prepared<S>(
         value,
         &aggregator.gauge_last,
         |v, value| {
-            v.store(value, Ordering::Relaxed);
+            v.store(value);
             Ok(())
         },
-        || Some(AtomicU64::new(u64::MAX)),
+        || Some(GaugeLastState::empty()),
     );
 }
 
@@ -1902,7 +1955,7 @@ mod tests {
         record_histogram_in_aggregator, record_histogram_in_aggregator_prepared,
         record_histogram_in_aggregator_sorted, record_timing_in_aggregator,
         record_timing_in_aggregator_prepared, record_timing_in_aggregator_sorted, remove_from_map,
-        SharedCollector, SharedCollectorOptions,
+        GaugeLastState, SharedCollector, SharedCollectorOptions,
     };
     use crate::dogstats::aggregator::Aggregator;
     use crate::dogstats::collector::{
@@ -1911,7 +1964,8 @@ mod tests {
     use crate::dogstats::histogram_config::{resolve_histogram_configs, HistogramConfig};
     use crate::{MetricCollectorTrait, RylvStr, RylvTag};
     use std::collections::HashMap;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn percentile_suffix(percentile: f64) -> String {
         let mut percentile_number = (percentile * 100.0).to_string();
@@ -1955,6 +2009,41 @@ mod tests {
         }
         lines.sort_unstable();
         lines
+    }
+
+    #[test]
+    fn gauge_last_state_handles_concurrent_store_and_take() {
+        let state = Arc::new(GaugeLastState::empty());
+        let done = Arc::new(AtomicBool::new(false));
+        let drain_state = Arc::clone(&state);
+        let drain_done = Arc::clone(&done);
+        let drainer = std::thread::spawn(move || {
+            while !drain_done.load(Ordering::Acquire) {
+                let _ = drain_state.take();
+                std::thread::yield_now();
+            }
+        });
+
+        let writers: Vec<_> = (0..4)
+            .map(|worker| {
+                let state = Arc::clone(&state);
+                std::thread::spawn(move || {
+                    for value in 0..1_000 {
+                        state.store((worker << 32) | value);
+                    }
+                })
+            })
+            .collect();
+
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        done.store(true, Ordering::Release);
+        drainer.join().unwrap();
+
+        state.store(u64::MAX);
+        assert_eq!(state.take(), Some(u64::MAX));
+        assert_eq!(state.take(), None);
     }
 
     fn frames_to_lines<S>(mut frames: super::Frames<'_, S>) -> Vec<String>
@@ -2463,14 +2552,8 @@ mod tests {
             10,
             &mut [RylvTag::from_static("a:1")],
         );
-        // Set to sentinel (u64::MAX) to simulate "no writes this cycle"
-        aggregator
-            .gauge_last
-            .iter()
-            .next()
-            .unwrap()
-            .value()
-            .store(u64::MAX, Ordering::SeqCst);
+        // Clear the pending value to simulate "no writes this cycle".
+        let _ = aggregator.gauge_last.iter().next().unwrap().value().take();
 
         let mut frames = drain_aggregator_frames(&aggregator, "");
         assert!(frames.next_frame().is_none());

@@ -85,18 +85,69 @@ fn hash_tag<const PRIME: u64>(mut hash: u64, tag: &RylvTag) -> u64 {
 pub fn hash_tags<S: BuildHasher>(hasher_builder: &S, tags: &[RylvTag<'_>]) -> u64 {
     let mut hasher = hasher_builder.build_hasher();
     for tag in tags {
-        match tag {
-            RylvTag::Full(t) => {
-                t.as_ref().hash(&mut hasher);
+        hash_resolved_tag(&mut hasher, tag);
+    }
+    hasher.finish()
+}
+
+#[inline]
+fn hash_resolved_tag(hasher: &mut impl Hasher, tag: &RylvTag<'_>) {
+    const CHUNK_SIZE: usize = 64;
+
+    match tag {
+        RylvTag::Full(full) if full.as_ref().len() <= CHUNK_SIZE => {
+            full.as_ref().hash(hasher);
+            return;
+        }
+        RylvTag::Compound(key, value) if key.as_ref().len() + value.as_ref().len() < CHUNK_SIZE => {
+            let key = key.as_ref().as_bytes();
+            let value = value.as_ref().as_bytes();
+            let resolved_len = key.len() + value.len() + 1;
+            let mut resolved = [0_u8; CHUNK_SIZE];
+            resolved[..key.len()].copy_from_slice(key);
+            resolved[key.len()] = b':';
+            resolved[key.len() + 1..resolved_len].copy_from_slice(value);
+
+            let resolved = std::str::from_utf8(&resolved[..resolved_len]);
+            debug_assert!(resolved.is_ok());
+            if let Ok(resolved) = resolved {
+                resolved.hash(hasher);
+                return;
             }
-            RylvTag::Compound(key, value) => {
-                key.as_ref().hash(&mut hasher);
-                ':'.hash(&mut hasher);
-                value.as_ref().hash(&mut hasher);
+        }
+        _ => {}
+    }
+
+    tag.len().hash(hasher);
+    match tag {
+        RylvTag::Full(tag) => {
+            for chunk in tag.as_ref().as_bytes().chunks(CHUNK_SIZE) {
+                hasher.write(chunk);
+            }
+        }
+        RylvTag::Compound(key, value) => {
+            let mut chunk = [0_u8; CHUNK_SIZE];
+            let mut used = 0;
+
+            for mut segment in [key.as_ref().as_bytes(), b":", value.as_ref().as_bytes()] {
+                while !segment.is_empty() {
+                    let copy_len = (CHUNK_SIZE - used).min(segment.len());
+                    chunk[used..used + copy_len].copy_from_slice(&segment[..copy_len]);
+                    used += copy_len;
+                    segment = &segment[copy_len..];
+
+                    if used == CHUNK_SIZE {
+                        hasher.write(&chunk);
+                        used = 0;
+                    }
+                }
+            }
+
+            if used != 0 {
+                hasher.write(&chunk[..used]);
             }
         }
     }
-    hasher.finish()
 }
 
 /// Combine a metric name with a precomputed tags hash into a single lookup hash.
@@ -429,6 +480,26 @@ mod tests {
         // Just verify it produces a non-zero hash without panicking
         let h = hash_tags(&hasher, &compound_tags);
         assert_ne!(h, 0);
+    }
+
+    #[test]
+    fn hash_tags_long_full_and_compound_forms_match() {
+        use super::hash_tags;
+
+        let hasher = default_hasher();
+        let key = "key".repeat(30);
+        let value = "value".repeat(30);
+        let full = format!("{key}:{value}");
+        let full_tags = [RylvTag::from(full.as_str())];
+        let compound_tags = [RylvTag::Compound(
+            RylvStr::from(key.as_str()),
+            RylvStr::from(value.as_str()),
+        )];
+
+        assert_eq!(
+            hash_tags(&hasher, &full_tags),
+            hash_tags(&hasher, &compound_tags)
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ mod shared_collector;
 mod tls_collector;
 
 #[cfg(feature = "shared-collector")]
-pub(super) use shared_collector::GaugeState;
+pub(super) use shared_collector::{GaugeLastState, GaugeState};
 #[cfg(feature = "shared-collector")]
 pub use shared_collector::{SharedCollector, SharedCollectorOptions};
 #[cfg(feature = "tls-collector")]

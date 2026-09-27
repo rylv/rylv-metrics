@@ -1,6 +1,5 @@
 #[cfg(feature = "shared-collector")]
 pub use aggregator::Aggregator;
-use std::cmp::min;
 use std::{borrow::Cow, cmp::Ordering, sync::Arc};
 
 mod aggregator;
@@ -246,6 +245,17 @@ impl RylvTag<'_> {
         }
     }
 
+    #[inline]
+    pub(crate) fn resolved_bytes(&self) -> impl Iterator<Item = u8> + '_ {
+        let parts: [&[u8]; 3] = match self {
+            RylvTag::Full(tag) => [tag.as_ref().as_bytes(), b"", b""],
+            RylvTag::Compound(key, value) => {
+                [key.as_ref().as_bytes(), b":", value.as_ref().as_bytes()]
+            }
+        };
+        parts.into_iter().flatten().copied()
+    }
+
     /// Converts this tag into a `'static` variant, cloning borrowed data.
     #[inline]
     #[must_use]
@@ -284,15 +294,15 @@ impl Eq for RylvTag<'_> {}
 impl PartialEq for RylvTag<'_> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        match self {
-            RylvTag::Full(r1) => match other {
-                RylvTag::Full(r2) => r1.eq(r2),
-                RylvTag::Compound(k2, v2) => eq(r1, k2, v2),
-            },
-            RylvTag::Compound(k1, v1) => match other {
-                RylvTag::Full(r2) => eq(r2, k1, v1),
-                RylvTag::Compound(k2, v2) => k1.eq(k2) && v1.eq(v2),
-            },
+        match (self, other) {
+            (RylvTag::Full(left), RylvTag::Full(right)) => left == right,
+            (
+                RylvTag::Compound(left_key, left_value),
+                RylvTag::Compound(right_key, right_value),
+            ) if left_key.as_ref().len() == right_key.as_ref().len() => {
+                left_key == right_key && left_value == right_value
+            }
+            _ => self.resolved_bytes().eq(other.resolved_bytes()),
         }
     }
 }
@@ -300,21 +310,15 @@ impl PartialEq for RylvTag<'_> {
 impl Ord for RylvTag<'_> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        match self {
-            RylvTag::Full(r1) => match other {
-                RylvTag::Full(r2) => r1.cmp(r2),
-                RylvTag::Compound(k2, v2) => cmp(r1, k2, v2),
-            },
-            RylvTag::Compound(k1, v1) => match other {
-                RylvTag::Full(r2) => cmp(r2, k1, v1).reverse(),
-                RylvTag::Compound(k2, v2) => {
-                    let ordering = k1.cmp(k2);
-                    if ordering != Ordering::Equal {
-                        return ordering;
-                    }
-                    v1.cmp(v2)
-                }
-            },
+        match (self, other) {
+            (RylvTag::Full(left), RylvTag::Full(right)) => left.cmp(right),
+            (
+                RylvTag::Compound(left_key, left_value),
+                RylvTag::Compound(right_key, right_value),
+            ) if left_key.as_ref().len() == right_key.as_ref().len() => left_key
+                .cmp(right_key)
+                .then_with(|| left_value.cmp(right_value)),
+            _ => self.resolved_bytes().cmp(other.resolved_bytes()),
         }
     }
 }
@@ -324,63 +328,6 @@ impl PartialOrd for RylvTag<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
-}
-
-// FIXME: revisar bien esta funcion
-fn cmp(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> Ordering {
-    let r = r.as_ref();
-    let k = k.as_ref();
-    let v = v.as_ref();
-
-    let m = min(r.len(), k.len());
-    let ordering = r[0..m].cmp(k);
-
-    // prefijo distinto, retorno inmediatamente
-    if ordering != Ordering::Equal {
-        return ordering;
-    }
-
-    // rylvStr es más largo, entonces esperemos que sea ":" para chequear luego el value
-    let Some(expected_sep_in_r) = r.as_bytes().get(m) else {
-        // Si no tiene mas caracteres, entonces es un string raro
-        // r="mykey" <- invalid?
-        // k="mykey" v="myvalue" => "mykey:myvalue"
-        return Ordering::Less;
-    };
-
-    // Si no es un limitador
-    if *expected_sep_in_r != b':' {
-        // r="mykeyy:myvalue"
-        // k="mykey" v="myvalue"
-        return Ordering::Greater;
-    }
-
-    let Some(rest) = r.get(m + 1..) else {
-        return if v.is_empty() {
-            // r="mykey:"
-            // k="mykey" v=""
-            Ordering::Equal
-        } else {
-            // r="mykey:"
-            // k="mykey" v="myvalue"
-            Ordering::Less
-        };
-    };
-
-    // r="mykey:myvalue"
-    // k="mykey" v="myvalue"
-    rest.cmp(v)
-}
-
-#[inline]
-fn eq(r: &RylvStr, k: &RylvStr, v: &RylvStr) -> bool {
-    let r = r.as_ref();
-    let k = k.as_ref();
-    let v = v.as_ref();
-    (r.len() == k.len() + v.len() + 1)
-        && r[0..k.len()].eq(k)
-        && r.as_bytes()[k.len()] == b':'
-        && r[k.len() + 1..].eq(v)
 }
 
 #[cfg(test)]
@@ -594,71 +541,63 @@ mod tests {
         assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
     }
 
-    // --- cmp/eq helper function tests ---
+    // --- resolved form comparison tests ---
 
     #[test]
     fn helper_eq_matching() {
-        let r = RylvStr::from_static("env:prod");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("prod");
-        assert!(eq(&r, &k, &v));
+        let full = RylvTag::from_static("env:prod");
+        let compound = RylvTag::from_static_compound("env", "prod");
+        assert_eq!(full, compound);
     }
 
     #[test]
     fn helper_eq_different_key() {
-        let r = RylvStr::from_static("env:prod");
-        let k = RylvStr::from_static("az");
-        let v = RylvStr::from_static("prod");
-        assert!(!eq(&r, &k, &v));
+        let full = RylvTag::from_static("env:prod");
+        let compound = RylvTag::from_static_compound("az", "prod");
+        assert_ne!(full, compound);
     }
 
     #[test]
     fn helper_eq_different_value() {
-        let r = RylvStr::from_static("env:prod");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("staging");
-        assert!(!eq(&r, &k, &v));
+        let full = RylvTag::from_static("env:prod");
+        let compound = RylvTag::from_static_compound("env", "staging");
+        assert_ne!(full, compound);
     }
 
     #[test]
     fn helper_cmp_equal() {
-        let r = RylvStr::from_static("env:prod");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("prod");
-        assert_eq!(cmp(&r, &k, &v), Ordering::Equal);
+        let full = RylvTag::from_static("env:prod");
+        let compound = RylvTag::from_static_compound("env", "prod");
+        assert_eq!(full.cmp(&compound), Ordering::Equal);
     }
 
     #[test]
     fn helper_cmp_key_less() {
-        let r = RylvStr::from_static("az:use1");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("prod");
-        assert_eq!(cmp(&r, &k, &v), Ordering::Less);
+        let full = RylvTag::from_static("az:use1");
+        let compound = RylvTag::from_static_compound("env", "prod");
+        assert_eq!(full.cmp(&compound), Ordering::Less);
     }
 
     #[test]
     fn helper_cmp_key_greater() {
-        let r = RylvStr::from_static("zzz:val");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("prod");
-        assert_eq!(cmp(&r, &k, &v), Ordering::Greater);
+        let full = RylvTag::from_static("zzz:val");
+        let compound = RylvTag::from_static_compound("env", "prod");
+        assert_eq!(full.cmp(&compound), Ordering::Greater);
     }
 
     #[test]
     fn helper_cmp_r_shorter_than_key() {
-        let r = RylvStr::from_static("en");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("prod");
-        assert_eq!(cmp(&r, &k, &v), Ordering::Less);
+        let full = RylvTag::from_static("en");
+        let compound = RylvTag::from_static_compound("env", "prod");
+        assert_eq!(full.cmp(&compound), Ordering::Less);
     }
 
     #[test]
     fn helper_cmp_separator_mismatch() {
         // 'e' < ':' is false, 'e' > ':' in ASCII
-        let r = RylvStr::from_static("enveprod");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("prod");
-        assert_eq!(cmp(&r, &k, &v), Ordering::Greater);
+        let full = RylvTag::from_static("enveprod");
+        let compound = RylvTag::from_static_compound("env", "prod");
+        assert_eq!(full.cmp(&compound), Ordering::Greater);
     }
 
     // --- resolve_tags ---
@@ -681,19 +620,17 @@ mod tests {
     #[test]
     fn helper_cmp_r_equals_key_no_separator() {
         // r == k exactly, no separator → Less
-        let r = RylvStr::from_static("env");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("prod");
-        assert_eq!(cmp(&r, &k, &v), Ordering::Less);
+        let full = RylvTag::from_static("env");
+        let compound = RylvTag::from_static_compound("env", "prod");
+        assert_eq!(full.cmp(&compound), Ordering::Less);
     }
 
     #[test]
     fn helper_cmp_empty_value() {
         // r = "env:", k = "env", v = "" → rest="" == v="" → Equal
-        let r = RylvStr::from_static("env:");
-        let k = RylvStr::from_static("env");
-        let v = RylvStr::from_static("");
-        assert_eq!(cmp(&r, &k, &v), Ordering::Equal);
+        let full = RylvTag::from_static("env:");
+        let compound = RylvTag::from_static_compound("env", "");
+        assert_eq!(full.cmp(&compound), Ordering::Equal);
     }
 
     // --- From<String> for RylvTag ---

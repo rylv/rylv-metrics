@@ -1,5 +1,5 @@
 use super::{AggregatorEntryKey, HistogramWrapper};
-use crate::dogstats::collector::GaugeState;
+use crate::dogstats::collector::{GaugeLastState, GaugeState};
 use crate::dogstats::histogram_config::ResolvedHistogramConfig;
 use crate::DefaultMetricHasher;
 use crossbeam::queue::SegQueue;
@@ -24,7 +24,7 @@ where
     pub timings: DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
     pub count: DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
     pub gauge: DashMap<AggregatorEntryKey<S>, GaugeState, S>,
-    pub gauge_last: DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
+    pub gauge_last: DashMap<AggregatorEntryKey<S>, GaugeLastState, S>,
     pub pool_histograms: Vec<SegQueue<HistogramWrapper>>,
 }
 
