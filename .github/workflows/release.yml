@@ -67,10 +67,15 @@ jobs:
       - name: List package contents
         run: cargo package --list
 
+      - name: Prepare published semver baseline
+        id: semver-baseline
+        run: python3 .github/scripts/prepare-semver-baseline.py "$RUNNER_TEMP/semver-baseline" >> "$GITHUB_OUTPUT"
+
       - name: Run cargo-semver-checks
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           feature-group: all-features
+          baseline-root: ${{ steps.semver-baseline.outputs.path }}
 
       - name: Dry-run publish
         run: cargo publish --dry-run

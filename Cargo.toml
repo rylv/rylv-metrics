@@ -28,7 +28,8 @@ tracing = { version = "0.1", default-features = false }
 parking_lot = { version = "0.12", default-features = false, optional=true }
 thread_local = { version = "1.1.9", default-features = false, optional = true }
 
-rustix = { version = "1.1.2", default-features = false, features = ["std", "net"], optional = true }
+# rustix 1.1.5 socket timeout code needs the timespec module behind `time`.
+rustix = { version = "1.1.2", default-features = false, features = ["std", "net", "time"], optional = true }
 libc = { version = "0.2", default-features=false, optional = true }
 bumpalo = { version = "3.19.0", default-features = false}
 
