@@ -87,6 +87,24 @@ fn main() {
 }
 ```
 
+## Tags
+
+Use `RylvTag::Compound` when the tag key is static and its value is generated at runtime. It serializes the same way as a full `"route:/users"` tag:
+
+```rust
+use rylv_metrics::{MetricCollectorTrait, RylvStr, RylvTag, SharedCollector};
+
+let collector = SharedCollector::default();
+let route = String::from("/users");
+let tags = collector.prepare_sorted_tags([
+    RylvTag::from_static("service:web"),
+    RylvTag::Compound(RylvStr::from_static("route"), RylvStr::from(route)),
+]);
+collector.count_add_sorted(RylvStr::from_static("requests.total"), 1, &tags);
+```
+
+`prepare_sorted_tags` resolves and sorts the tags once, so `tags` can be reused across metric calls. For two static parts, use `RylvTag::from_static_compound("env", "prod")`.
+
 ## Metric Types
 
 ### Histogram
