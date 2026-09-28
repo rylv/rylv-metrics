@@ -2,31 +2,33 @@
 //!
 //! Run with: `cargo run --example shared_basic`
 
-use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, SharedCollector};
+use rylv_metrics::{
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, RylvStr, RylvTag, SharedCollector,
+};
 
 fn main() {
     let collector = SharedCollector::default();
 
     collector.count(
         RylvStr::from_static("requests"),
-        &mut [RylvStr::from_static("service:web")],
+        &mut [RylvTag::from_static("service:web")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("memory_mb"),
         256,
-        &mut [RylvStr::from_static("service:web")],
+        &mut [RylvTag::from_static("service:web")],
     );
     collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
-        &mut [RylvStr::from_static("service:web")],
+        &mut [RylvTag::from_static("service:web")],
     );
 
     // Drain is non-blocking; first call usually schedules a generation swap.
     // Poll until ownership is available, then consume borrowed frames.
     loop {
         if let Some(mut drain) = collector.try_begin_drain() {
-            for frame in drain.by_ref() {
+            for frame in drain.frames() {
                 println!("{:?}", frame);
             }
             break;

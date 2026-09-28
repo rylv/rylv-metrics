@@ -1,6 +1,7 @@
 use std::hash::BuildHasher;
 
 use crate::dogstats::RylvStr;
+use crate::dogstats::RylvTag;
 use crate::dogstats::{PreparedMetric, SortedTags};
 
 #[cfg(feature = "shared-collector")]
@@ -9,7 +10,7 @@ mod shared_collector;
 mod tls_collector;
 
 #[cfg(feature = "shared-collector")]
-pub(super) use shared_collector::GaugeState;
+pub(super) use shared_collector::{GaugeLastState, GaugeState};
 #[cfg(feature = "shared-collector")]
 pub use shared_collector::{SharedCollector, SharedCollectorOptions};
 #[cfg(feature = "tls-collector")]
@@ -31,7 +32,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Increments a counter by one.
     ///
@@ -40,7 +41,7 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Increments a counter by the specified value.
     ///
@@ -49,16 +50,35 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a gauge value representing a point-in-time measurement.
     ///
     /// Multiple gauge values for the same metric/tags are averaged on flush.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>;
+
+    /// Records a gauge value representing a point-in-time measurement.
+    ///
+    /// Only the last value recorded before flush is emitted (last-write-wins).
+    ///
+    /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>;
+
+    /// Records a timing value for duration tracking.
+    ///
+    /// Timings are aggregated client-side identically to histograms, but emitted
+    /// with the `DogStatsD` `ms` metric type instead of gauge.
+    ///
+    /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a histogram using pre-sorted tags.
     fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
@@ -71,13 +91,19 @@ pub trait MetricCollectorTrait {
     /// Increments a counter by value using pre-sorted tags.
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
-    /// Records a gauge using pre-sorted tags.
+    /// Records an averaged gauge using pre-sorted tags.
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+
+    /// Records a last-write-wins gauge using pre-sorted tags.
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+
+    /// Records a timing using pre-sorted tags.
+    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
     /// Builds a [`SortedTags`] bound to this collector's hasher.
     fn prepare_sorted_tags<'a>(
         &self,
-        tags: impl IntoIterator<Item = RylvStr<'a>>,
+        tags: impl IntoIterator<Item = RylvTag<'a>>,
     ) -> SortedTags<Self::Hasher>;
 
     /// Precomputes a collector-bound metric key for hot paths.
@@ -101,19 +127,75 @@ pub trait MetricCollectorTrait {
     /// Increments a counter by value using a prepared metric key.
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
 
-    /// Records a gauge using a prepared metric key.
+    /// Records an averaged gauge using a prepared metric key.
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+
+    /// Records a last-write-wins gauge using a prepared metric key.
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+
+    /// Records a timing using a prepared metric key.
+    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
 }
 
-/// Trait for collectors that support draining aggregated metrics.
-pub trait DrainMetricCollectorTrait: MetricCollectorTrait {
-    /// Drain iterator returned by this collector.
-    type Drain<'a>: Iterator<Item = MetricFrameRef<'a>>
+/// Owns a drained generation and lends a separate frame cursor.
+///
+/// Frames borrow this owner, so they may outlive the cursor and be queued for
+/// batch I/O. The owner cannot be recycled while any of those frames are in use.
+/// Implementors store frame data in the owner; the cursor only traverses it.
+/// A cursor cannot yield references into a scratch buffer it reuses on `next()`:
+///
+/// ```compile_fail
+/// use rylv_metrics::{MetricFrameRef, MetricKind, MetricSuffix};
+/// struct ScratchCursor<'a> { name: &'a mut String }
+/// impl<'a> Iterator for ScratchCursor<'a> {
+///     type Item = MetricFrameRef<'a>;
+///     fn next(&mut self) -> Option<Self::Item> {
+///         self.name.clear();
+///         self.name.push_str("other");
+///         Some(MetricFrameRef {
+///             prefix: "", metric: &self.name, tags: "", value: 1,
+///             kind: MetricKind::Count, suffix: MetricSuffix::None,
+///         })
+///     }
+/// }
+/// ```
+pub trait MetricDrain {
+    /// Cursor borrowing this drained generation.
+    type Cursor<'a>: Iterator<Item = MetricFrameRef<'a>>
     where
         Self: 'a;
 
-    /// Tries to begin a drain cycle, returning a handle to iterate over
-    /// aggregated metric frames.
+    /// Borrows the generation to traverse its pending metrics.
+    ///
+    /// ```compile_fail
+    /// # use rylv_metrics::MetricDrain;
+    /// fn recycle_too_early(mut drain: impl MetricDrain) {
+    /// let frame = drain.frames().next().unwrap();
+    /// drop(drain);
+    /// println!("{}", frame.metric);
+    /// }
+    /// ```
+    fn frames(&mut self) -> Self::Cursor<'_>;
+
+    /// Visits the remaining metrics through a borrowed cursor.
+    fn for_each_frame<'a>(&'a mut self, visit: impl FnMut(MetricFrameRef<'a>)) {
+        self.frames().for_each(visit);
+    }
+
+    /// Consumes and counts the remaining frames.
+    fn count_frames(&mut self) -> usize {
+        self.frames().count()
+    }
+}
+
+/// Trait for collectors that provide owned drained generations.
+pub trait DrainMetricCollectorTrait: MetricCollectorTrait {
+    /// Owner of a drained generation, recycled when dropped.
+    type Drain<'a>: MetricDrain
+    where
+        Self: 'a;
+
+    /// Tries to detach a generation for draining through its borrowed cursor.
     fn try_begin_drain(&self) -> Option<Self::Drain<'_>>;
 }
 
@@ -152,4 +234,6 @@ pub enum MetricKind {
     Count,
     /// Gauge metric (`|g`).
     Gauge,
+    /// Timing metric (`|ms`).
+    Timing,
 }

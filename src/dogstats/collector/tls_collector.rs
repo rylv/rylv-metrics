@@ -3,24 +3,21 @@ use crate::dogstats::histogram_config::{
     resolve_histogram_configs, Bounds, HistogramBaseMetric, HistogramBaseMetrics, HistogramConfig,
     HistogramPoolSpec, ResolvedHistogramConfig, ResolvedHistogramConfigs,
 };
-use crate::dogstats::sorted_tags::{
-    combine_metric_tags_hash, hash_tags, to_static_metric, PreparedMetric,
-};
+use crate::dogstats::sorted_tags::{combine_metric_tags_hash, hash_tags, PreparedMetric};
 use crate::dogstats::{
     aggregator::{
         to_agg_entry_key, AggregatorEntryKey, HistogramWrapper, LookupKey, LookupKeySorted,
         RemoveKey,
     },
-    RylvStr, SortedTags,
+    RylvStr, RylvTag, SortedTags,
 };
 use crate::DefaultMetricHasher;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::hash::BuildHasher;
-use std::ptr::addr_of_mut;
 use std::sync::Arc;
 
-use super::{DrainMetricCollectorTrait, MetricCollectorTrait};
+use super::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain};
 use crossbeam::utils::CachePadded;
 use hashbrown::hash_table::Entry::{Occupied, Vacant};
 use hashbrown::HashTable;
@@ -41,7 +38,9 @@ struct GaugeStateHb {
 enum DrainStage {
     Count,
     Gauge,
+    GaugeLast,
     Histogram,
+    Timing,
     Done,
 }
 
@@ -50,13 +49,20 @@ where
     S: BuildHasher + Clone,
 {
     histograms: HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
+    timings: HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
     count: HashTable<(AggregatorEntryKey<S>, u64)>,
     gauge: HashTable<(AggregatorEntryKey<S>, GaugeStateHb)>,
+    gauge_last: HashTable<(AggregatorEntryKey<S>, Option<u64>)>,
     pool_histograms: Vec<Vec<HistogramWrapper>>,
 }
 
 struct AggregatorSplitBorrow<'a, S: BuildHasher + Clone> {
     histograms: &'a mut HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
+    pool_histograms: &'a mut [Vec<HistogramWrapper>],
+}
+
+struct TimingSplitBorrow<'a, S: BuildHasher + Clone> {
+    timings: &'a mut HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
     pool_histograms: &'a mut [Vec<HistogramWrapper>],
 }
 
@@ -68,8 +74,10 @@ where
         let _ = hasher_builder;
         Self {
             histograms: HashTable::new(),
+            timings: HashTable::new(),
             count: HashTable::new(),
             gauge: HashTable::new(),
+            gauge_last: HashTable::new(),
             pool_histograms: (0..pool_count).map(|_| Vec::new()).collect(),
         }
     }
@@ -77,8 +85,10 @@ where
     fn empty_like(&self) -> Self {
         Self {
             histograms: HashTable::with_capacity(self.histograms.len()),
+            timings: HashTable::with_capacity(self.timings.len()),
             count: HashTable::with_capacity(self.count.len()),
             gauge: HashTable::with_capacity(self.gauge.len()),
+            gauge_last: HashTable::with_capacity(self.gauge_last.len()),
             pool_histograms: self
                 .pool_histograms
                 .iter()
@@ -90,6 +100,13 @@ where
     fn split_borrow(&mut self) -> AggregatorSplitBorrow<'_, S> {
         AggregatorSplitBorrow {
             histograms: &mut self.histograms,
+            pool_histograms: &mut self.pool_histograms,
+        }
+    }
+
+    fn split_borrow_timings(&mut self) -> TimingSplitBorrow<'_, S> {
+        TimingSplitBorrow {
+            timings: &mut self.timings,
             pool_histograms: &mut self.pool_histograms,
         }
     }
@@ -204,10 +221,12 @@ where
     S: BuildHasher + Clone,
 {
     histograms: HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
+    timings: HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
     count: HashTable<(AggregatorEntryKey<S>, u64)>,
     gauge: HashTable<(AggregatorEntryKey<S>, GaugeStateHb)>,
+    gauge_last: HashTable<(AggregatorEntryKey<S>, Option<u64>)>,
     pool_histograms: Vec<Vec<HistogramWrapper>>,
-    key_to_remove: Vec<RemoveKey>,
+    key_to_remove: Vec<(DrainStage, RemoveKey)>,
 }
 
 impl<S> GlobalAggregatorHb<S>
@@ -218,8 +237,10 @@ where
         let _ = hasher_builder;
         Self {
             histograms: HashTable::new(),
+            timings: HashTable::new(),
             count: HashTable::new(),
             gauge: HashTable::new(),
+            gauge_last: HashTable::new(),
             pool_histograms: (0..pool_count).map(|_| Vec::new()).collect(),
             key_to_remove: Vec::new(),
         }
@@ -228,8 +249,10 @@ where
     fn empty_like(&self) -> Self {
         Self {
             histograms: HashTable::with_capacity(self.histograms.len()),
+            timings: HashTable::with_capacity(self.timings.len()),
             count: HashTable::with_capacity(self.count.len()),
             gauge: HashTable::with_capacity(self.gauge.len()),
+            gauge_last: HashTable::with_capacity(self.gauge_last.len()),
             pool_histograms: self
                 .pool_histograms
                 .iter()
@@ -360,45 +383,6 @@ where
         TLSDrain::new(self, global)
     }
 
-    fn record_histogram(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvStr<'_>]) {
-        if tags.len() > 1 {
-            tags.sort_unstable();
-        }
-        let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
-        let buffer = self.get_or_create_thread_local_aggregator();
-
-        {
-            let mut aggregator = buffer.lock();
-            let split = aggregator.split_borrow();
-            match split.histograms.entry(
-                lookup.hash,
-                |(key, _)| lookup.compare(key),
-                |(key, _)| key.hash,
-            ) {
-                Occupied(mut entry) => {
-                    if let Err(err) = entry.get_mut().1.record(value) {
-                        error!("Fail to record: {err}");
-                    }
-                }
-                Vacant(entry) => {
-                    let histogram_config = self
-                        .histogram_configs
-                        .get(lookup.metric.as_ref())
-                        .unwrap_or(&self.default_histogram_config);
-                    if let Some(mut histogram) =
-                        get_histogram_from_pool_config(split.pool_histograms, histogram_config)
-                    {
-                        if let Err(err) = histogram.record(value) {
-                            error!("Fail to record: {err}");
-                        }
-                        entry.insert((lookup.into_key(), histogram));
-                    }
-                }
-            }
-            drop(aggregator);
-        }
-    }
-
     fn record_histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
@@ -486,7 +470,133 @@ where
         drop(aggregator);
     }
 
-    fn record_count_add(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvStr<'_>]) {
+    fn record_timing(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvTag<'_>]) {
+        if tags.len() > 1 {
+            tags.sort_unstable();
+        }
+        let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
+        let buffer = self.get_or_create_thread_local_aggregator();
+
+        {
+            let mut aggregator = buffer.lock();
+            let split = aggregator.split_borrow_timings();
+            match split.timings.entry(
+                lookup.hash,
+                |(key, _)| lookup.compare(key),
+                |(key, _)| key.hash,
+            ) {
+                Occupied(mut entry) => {
+                    if let Err(err) = entry.get_mut().1.record(value) {
+                        error!("Fail to record: {err}");
+                    }
+                }
+                Vacant(entry) => {
+                    let histogram_config = self
+                        .histogram_configs
+                        .get(lookup.metric.as_ref())
+                        .unwrap_or(&self.default_histogram_config);
+                    if let Some(mut histogram) =
+                        get_histogram_from_pool_config(split.pool_histograms, histogram_config)
+                    {
+                        if let Err(err) = histogram.record(value) {
+                            error!("Fail to record: {err}");
+                        }
+                        entry.insert((lookup.into_key(), histogram));
+                    }
+                }
+            }
+            drop(aggregator);
+        }
+    }
+
+    fn record_timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        let hash =
+            combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
+        let lookup = LookupKeySorted {
+            metric,
+            sorted_tags: tags,
+            hash,
+        };
+
+        let buffer = self.get_or_create_thread_local_aggregator();
+
+        {
+            let mut aggregator = buffer.lock();
+            let split = aggregator.split_borrow_timings();
+            match split.timings.entry(
+                lookup.hash,
+                |(key, _)| lookup.compare(key),
+                |(key, _)| key.hash,
+            ) {
+                Occupied(mut entry) => {
+                    if let Err(err) = entry.get_mut().1.record(value) {
+                        error!("Fail to record: {err}");
+                    }
+                }
+                Vacant(entry) => {
+                    let histogram_config = self
+                        .histogram_configs
+                        .get(lookup.metric.as_ref())
+                        .unwrap_or(&self.default_histogram_config);
+                    if let Some(mut histogram) =
+                        get_histogram_from_pool_config(split.pool_histograms, histogram_config)
+                    {
+                        if let Err(err) = histogram.record(value) {
+                            error!("Fail to record: {err}");
+                        }
+                        entry.insert((lookup.into_key(), histogram));
+                    }
+                }
+            }
+            drop(aggregator);
+        }
+    }
+
+    fn record_timing_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+        let buffer = self.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+        let split = aggregator.split_borrow_timings();
+        let entry_id = prepared.prepared_id();
+        if let Some((_, histogram)) = split
+            .timings
+            .find_mut(prepared.hash(), |(key, _)| key.id == entry_id)
+        {
+            if let Err(err) = histogram.record(value) {
+                error!("Fail to record: {err}");
+            }
+            return;
+        }
+
+        match split.timings.entry(
+            prepared.hash(),
+            |(key, _)| match_prepared_agg_key(key, prepared),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                if let Err(err) = entry.get_mut().1.record(value) {
+                    error!("Fail to record: {err}");
+                }
+            }
+            Vacant(entry) => {
+                let histogram_config = self
+                    .histogram_configs
+                    .get(prepared.metric().as_ref())
+                    .unwrap_or(&self.default_histogram_config);
+
+                if let Some(mut histogram) =
+                    get_histogram_from_pool_config(split.pool_histograms, histogram_config)
+                {
+                    if let Err(err) = histogram.record(value) {
+                        error!("Fail to record: {err}");
+                    }
+                    entry.insert((to_agg_entry_key(prepared), histogram));
+                }
+            }
+        }
+        drop(aggregator);
+    }
+
+    fn record_count_add(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvTag<'_>]) {
         if tags.len() > 1 {
             tags.sort_unstable();
         }
@@ -560,7 +670,7 @@ where
         drop(aggregator);
     }
 
-    fn record_gauge(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvStr<'_>]) {
+    fn record_gauge(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvTag<'_>]) {
         if tags.len() > 1 {
             tags.sort_unstable();
         }
@@ -659,6 +769,81 @@ where
         }
         drop(aggregator);
     }
+
+    fn record_gauge_last(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvTag<'_>]) {
+        if tags.len() > 1 {
+            tags.sort_unstable();
+        }
+        let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
+        let buffer = self.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+
+        match aggregator.gauge_last.entry(
+            lookup.hash,
+            |(key, _)| lookup.compare(key),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                entry.get_mut().1 = Some(value);
+            }
+            Vacant(entry) => {
+                entry.insert((lookup.into_key(), Some(value)));
+            }
+        }
+    }
+
+    fn record_gauge_last_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        let hash =
+            combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
+        let lookup = LookupKeySorted {
+            metric,
+            sorted_tags: tags,
+            hash,
+        };
+
+        let buffer = self.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+
+        match aggregator.gauge_last.entry(
+            lookup.hash,
+            |(key, _)| lookup.compare(key),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                entry.get_mut().1 = Some(value);
+            }
+            Vacant(entry) => {
+                entry.insert((lookup.into_key(), Some(value)));
+            }
+        }
+    }
+
+    fn record_gauge_last_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+        let buffer = self.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+
+        let entry_id = prepared.prepared_id();
+        if let Some((_, gauge)) = aggregator
+            .gauge_last
+            .find_mut(prepared.hash(), |(key, _)| key.id == entry_id)
+        {
+            *gauge = Some(value);
+            return;
+        }
+        match aggregator.gauge_last.entry(
+            prepared.hash(),
+            |(key, _)| match_prepared_agg_key(key, prepared),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                entry.get_mut().1 = Some(value);
+            }
+            Vacant(entry) => {
+                entry.insert((to_agg_entry_key(prepared), Some(value)));
+            }
+        }
+        drop(aggregator);
+    }
 }
 
 /// Configuration options for the hashbrown + mutex TLS collector.
@@ -697,15 +882,49 @@ where
     #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
-        self.record_histogram(metric, value, tags.as_mut());
+        let tags = tags.as_mut();
+        if tags.len() > 1 {
+            tags.sort_unstable();
+        }
+        let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
+        let buffer = self.get_or_create_thread_local_aggregator();
+
+        let mut aggregator = buffer.lock();
+        let split = aggregator.split_borrow();
+        match split.histograms.entry(
+            lookup.hash,
+            |(key, _)| lookup.compare(key),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => {
+                if let Err(err) = entry.get_mut().1.record(value) {
+                    error!("Fail to record: {err}");
+                }
+            }
+            Vacant(entry) => {
+                let histogram_config = self
+                    .histogram_configs
+                    .get(lookup.metric.as_ref())
+                    .unwrap_or(&self.default_histogram_config);
+                if let Some(mut histogram) =
+                    get_histogram_from_pool_config(split.pool_histograms, histogram_config)
+                {
+                    if let Err(err) = histogram.record(value) {
+                        error!("Fail to record: {err}");
+                    }
+                    entry.insert((lookup.into_key(), histogram));
+                }
+            }
+        }
+        drop(aggregator);
     }
 
     #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.count_add(metric, 1, tags);
     }
@@ -713,17 +932,33 @@ where
     #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.record_count_add(metric, value, tags.as_mut());
     }
 
     #[inline]
-    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         self.record_gauge(metric, value, tags.as_mut());
+    }
+
+    #[inline]
+    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.record_gauge_last(metric, value, tags.as_mut());
+    }
+
+    #[inline]
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.record_timing(metric, value, tags.as_mut());
     }
 
     #[inline]
@@ -737,14 +972,24 @@ where
     }
 
     #[inline]
-    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         self.record_gauge_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        self.record_gauge_last_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        self.record_timing_sorted(metric, value, tags);
     }
 
     #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
-        tags: impl IntoIterator<Item = RylvStr<'a>>,
+        tags: impl IntoIterator<Item = RylvTag<'a>>,
     ) -> SortedTags<Self::Hasher> {
         SortedTags::new(tags, &self.hasher_builder)
     }
@@ -755,7 +1000,7 @@ where
         metric: RylvStr<'_>,
         tags: SortedTags<Self::Hasher>,
     ) -> PreparedMetric<Self::Hasher> {
-        let metric = to_static_metric(metric);
+        let metric = metric.into_static();
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
         PreparedMetric::new(metric, tags, hash)
@@ -772,8 +1017,18 @@ where
     }
 
     #[inline]
-    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.record_gauge_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.record_gauge_last_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.record_timing_prepared(prepared, value);
     }
 }
 
@@ -786,7 +1041,7 @@ where
     #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).histogram(metric, value, tags);
     }
@@ -794,7 +1049,7 @@ where
     #[inline]
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).count(metric, tags);
     }
@@ -802,17 +1057,33 @@ where
     #[inline]
     fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).count_add(metric, value, tags);
     }
 
     #[inline]
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        (*self).gauge_avg(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
-        TT: AsMut<[RylvStr<'t>]>,
+        TT: AsMut<[RylvTag<'t>]>,
     {
         (*self).gauge(metric, value, tags);
+    }
+
+    #[inline]
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        (*self).timing(metric, value, tags);
     }
 
     #[inline]
@@ -826,14 +1097,24 @@ where
     }
 
     #[inline]
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        (*self).gauge_avg_sorted(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).gauge_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        (*self).timing_sorted(metric, value, tags);
     }
 
     #[cold]
     fn prepare_sorted_tags<'a>(
         &self,
-        tags: impl IntoIterator<Item = RylvStr<'a>>,
+        tags: impl IntoIterator<Item = RylvTag<'a>>,
     ) -> SortedTags<Self::Hasher> {
         (*self).prepare_sorted_tags(tags)
     }
@@ -858,8 +1139,18 @@ where
     }
 
     #[inline]
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        (*self).gauge_avg_prepared(prepared, value);
+    }
+
+    #[inline]
     fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).gauge_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        (*self).timing_prepared(prepared, value);
     }
 }
 
@@ -895,7 +1186,7 @@ where
 
 fn build_lookup_key<'a, S>(
     metric: RylvStr<'a>,
-    tags: &'a [RylvStr<'a>],
+    tags: &'a [RylvTag<'a>],
     hasher_builder: &S,
 ) -> LookupKey<'a>
 where
@@ -979,47 +1270,93 @@ fn merge_local_aggregator_into_global_hashbrown<S>(
 
     remove_from_table(&mut local.gauge, to_remove);
 
-    to_remove.clear();
-    for (key, local_histogram) in &mut local.histograms {
-        if local_histogram.histogram.is_empty() {
+    for (key, value) in &mut local.gauge_last {
+        if value.is_none() {
             to_remove.push(key.remove_key());
             continue;
         }
 
         match global
-            .histograms
-            .entry(key.hash, |(existing, _)| key == existing, |(k, _)| k.hash)
+            .gauge_last
+            .entry(key.hash, |(existing, _)| existing == key, |(k, _)| k.hash)
         {
             Occupied(mut entry) => {
-                let global_histogram = &mut entry.get_mut().1;
-                global_histogram.min = min(global_histogram.min, local_histogram.min);
-                global_histogram.max = max(global_histogram.max, local_histogram.max);
-                if let Err(err) = global_histogram.histogram.add(&local_histogram.histogram) {
+                entry.get_mut().1 = *value;
+            }
+            Vacant(entry) => {
+                entry.insert((key.clone(), *value));
+            }
+        }
+
+        *value = None;
+    }
+
+    remove_from_table(&mut local.gauge_last, to_remove);
+
+    merge_histogram_table_into_global(
+        &mut local.histograms,
+        &mut global.histograms,
+        &mut local.pool_histograms,
+        &mut global.pool_histograms,
+        pool_specs,
+        to_remove,
+    );
+
+    merge_histogram_table_into_global(
+        &mut local.timings,
+        &mut global.timings,
+        &mut local.pool_histograms,
+        &mut global.pool_histograms,
+        pool_specs,
+        to_remove,
+    );
+}
+
+fn merge_histogram_table_into_global<S>(
+    local_table: &mut HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
+    global_table: &mut HashTable<(AggregatorEntryKey<S>, HistogramWrapper)>,
+    local_pool: &mut [Vec<HistogramWrapper>],
+    global_pool: &mut [Vec<HistogramWrapper>],
+    pool_specs: &[HistogramPoolSpec],
+    to_remove: &mut Vec<RemoveKey>,
+) where
+    S: BuildHasher + Clone,
+{
+    to_remove.clear();
+    for (key, local_histo) in &mut *local_table {
+        if local_histo.histogram.is_empty() {
+            to_remove.push(key.remove_key());
+            continue;
+        }
+
+        match global_table.entry(key.hash, |(existing, _)| key == existing, |(k, _)| k.hash) {
+            Occupied(mut entry) => {
+                let global_histo = &mut entry.get_mut().1;
+                global_histo.min = min(global_histo.min, local_histo.min);
+                global_histo.max = max(global_histo.max, local_histo.max);
+                if let Err(err) = global_histo.histogram.add(&local_histo.histogram) {
                     error!("Fail to merge histogram: {err}");
                 }
             }
             Vacant(entry) => {
-                if let Some(fresh_histogram) = get_fresh_histogram_for_merge(
-                    &mut local.pool_histograms,
-                    &mut global.pool_histograms,
-                    pool_specs,
-                    local_histogram,
-                ) {
-                    let owned_histogram = std::mem::replace(local_histogram, fresh_histogram);
-                    entry.insert((key.clone(), owned_histogram));
+                if let Some(fresh_histogram) =
+                    get_fresh_histogram_for_merge(local_pool, global_pool, pool_specs, local_histo)
+                {
+                    let owned = std::mem::replace(local_histo, fresh_histogram);
+                    entry.insert((key.clone(), owned));
                 } else {
                     error!("Fail to allocate histogram while merging local aggregator");
                     continue;
                 }
             }
         }
-        local_histogram.reset();
+        local_histo.reset();
     }
 
-    remove_from_table_callback(&mut local.histograms, to_remove, |histogram_wrapper| {
+    remove_from_table_callback(local_table, to_remove, |histogram_wrapper| {
         let index = histogram_wrapper.pool_id;
-        debug_assert!(index < local.pool_histograms.len());
-        unsafe { local.pool_histograms.get_unchecked_mut(index) }.push(histogram_wrapper);
+        debug_assert!(index < local_pool.len());
+        unsafe { local_pool.get_unchecked_mut(index) }.push(histogram_wrapper);
     });
 }
 
@@ -1044,74 +1381,91 @@ fn remove_from_table_callback<S: BuildHasher + Clone, V>(
     to_remove.clear();
 }
 
+/// Owns one drained generation, recycling it after all frame borrows end.
 pub struct TLSDrain<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
     collector: &'a TLSCollector<S>,
+    aggregator: Option<GlobalAggregatorHb<S>>,
+}
+
+/// Cursor borrowing a detached TLS aggregator.
+pub struct TLSFrames<'a, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
     prefix: &'a str,
     stage: DrainStage,
-    count_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, u64)>>,
-    gauge_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, GaugeStateHb)>>,
-    histogram_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
-
-    pool_histograms: &'a mut [Vec<HistogramWrapper>],
-    keys_to_remove: &'a mut Vec<RemoveKey>,
-    pending_histogram: Option<PendingHistogram<'a, S>>,
-
-    // SAFETY:
-    // `TLSDrain` is self-referential: the iterators and borrowed slices above point into this
-    // heap-allocated `GlobalAggregatorHb`. Keeping the raw pointer as the final field ensures all
-    // other fields are dropped before we reconstruct and free the box in `Drop`, so those borrows
-    // never outlive the backing aggregator allocation.
-    aggregator: Option<*mut GlobalAggregatorHb<S>>,
+    count_iter: Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, u64)>>,
+    gauge_iter: Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, GaugeStateHb)>>,
+    gauge_last_iter:
+        Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, Option<u64>)>>,
+    histogram_iter:
+        Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
+    timing_iter:
+        Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
+    keys_to_remove: &'a mut Vec<(DrainStage, RemoveKey)>,
+    pending_histogram: Option<PendingHistogram<'a>>,
+    pending_timing: Option<PendingHistogram<'a>>,
 }
 
 impl<'a, S> TLSDrain<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync,
 {
-    fn new(collector: &'a TLSCollector<S>, aggregator: GlobalAggregatorHb<S>) -> Self {
-        let global = Box::new(aggregator);
-        let global_ptr = Box::into_raw(global);
+    const fn new(collector: &'a TLSCollector<S>, aggregator: GlobalAggregatorHb<S>) -> Self {
         Self {
             collector,
-            prefix: collector.stats_prefix.as_str(),
-            stage: DrainStage::Count,
-            count_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).count) })),
-            gauge_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).gauge) })),
-            histogram_iter: Some(MyIterMut::new(unsafe {
-                addr_of_mut!((*global_ptr).histograms)
-            })),
-            pool_histograms: unsafe { &mut *addr_of_mut!((*global_ptr).pool_histograms) },
-            keys_to_remove: unsafe { &mut *addr_of_mut!((*global_ptr).key_to_remove) },
-            pending_histogram: None,
-
-            aggregator: Some(global_ptr),
+            aggregator: Some(aggregator),
         }
     }
+}
 
+impl<S> MetricDrain for TLSDrain<'_, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    type Cursor<'a>
+        = TLSFrames<'a, S>
+    where
+        Self: 'a;
+
+    #[allow(clippy::unreachable)]
+    fn frames(&mut self) -> Self::Cursor<'_> {
+        let Some(global) = self.aggregator.as_mut() else {
+            unreachable!("drained aggregator is only taken during drop");
+        };
+        TLSFrames {
+            prefix: &self.collector.stats_prefix,
+            stage: DrainStage::Count,
+            count_iter: Some(global.count.iter_mut()),
+            gauge_iter: Some(global.gauge.iter_mut()),
+            gauge_last_iter: Some(global.gauge_last.iter_mut()),
+            histogram_iter: Some(global.histograms.iter_mut()),
+            timing_iter: Some(global.timings.iter_mut()),
+            keys_to_remove: &mut global.key_to_remove,
+            pending_histogram: None,
+            pending_timing: None,
+        }
+    }
+}
+
+impl<'a, S> TLSFrames<'a, S>
+where
+    S: BuildHasher + Clone + Send + Sync,
+{
     fn emit_count_metric(&mut self) -> Option<MetricFrameRef<'a>> {
         if let Some(iter) = self.count_iter.as_mut() {
             for entry in iter.by_ref() {
                 let key = &mut entry.0;
                 let value = entry.1;
                 if value == 0 {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 }
 
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
-                // lifetime of `TLSDrain`. Non-empty count entries are not removed until the
-                // current count stage finishes, and the backing `GlobalAggregatorHb` is owned by
-                // `TLSDrain`, so the borrowed strings remain valid for the yielded frame.
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
 
                 entry.1 = 0;
                 return Some(MetricFrameRef {
@@ -1125,10 +1479,7 @@ where
             }
         }
 
-        if let Some(table) = self.count_iter.take().map(|iter| iter.table) {
-            let table = unsafe { &mut *table };
-            remove_from_table(table, self.keys_to_remove);
-        }
+        self.count_iter = None;
         self.stage = DrainStage::Gauge;
         None
     }
@@ -1140,22 +1491,12 @@ where
                 let gauge = &mut entry.1;
                 let count = gauge.count;
                 if count == 0 {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 }
 
                 let value = gauge.sum / count;
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
-                // lifetime of `TLSDrain`. Non-empty gauge entries are reset in place but are not
-                // removed until after the gauge stage, and the backing aggregator allocation stays
-                // owned by `TLSDrain`, so the borrowed strings remain valid for the yielded frame.
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
                 gauge.sum = 0;
                 gauge.count = 0;
 
@@ -1170,10 +1511,36 @@ where
             }
         }
 
-        if let Some(table) = self.gauge_iter.take().map(|iter| iter.table) {
-            let table = unsafe { &mut *table };
-            remove_from_table(table, self.keys_to_remove);
+        self.gauge_iter = None;
+
+        self.stage = DrainStage::GaugeLast;
+        None
+    }
+
+    fn emit_gauge_last_metric(&mut self) -> Option<MetricFrameRef<'a>> {
+        if let Some(iter) = self.gauge_last_iter.as_mut() {
+            for entry in iter.by_ref() {
+                let key = &mut entry.0;
+                let gauge_val = &mut entry.1;
+                let Some(value) = gauge_val.take() else {
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
+                    continue;
+                };
+
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
+
+                return Some(MetricFrameRef {
+                    prefix: self.prefix,
+                    metric,
+                    suffix: MetricSuffix::None,
+                    tags,
+                    value,
+                    kind: MetricKind::Gauge,
+                });
+            }
         }
+
+        self.gauge_last_iter = None;
 
         self.stage = DrainStage::Histogram;
         None
@@ -1185,28 +1552,16 @@ where
                 let key = &mut histogram_entry.0;
                 let histo_wrapper = &mut histogram_entry.1;
                 if histo_wrapper.histogram.is_empty() {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 }
 
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
-                // lifetime of `TLSDrain`. Non-empty histogram entries are not removed until the
-                // histogram stage completes, and the backing `GlobalAggregatorHb` is owned by
-                // `TLSDrain`, so the borrowed strings remain valid across all percentile/base
-                // metric frames emitted from `pending_histogram`. The Miri TLS-drain test covers
-                // this invariant by reading borrowed frame fields across iteration.
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
 
                 let pending = PendingHistogram {
                     metric,
                     tags,
-                    entry: histogram_entry,
+                    entry: histo_wrapper,
                     step: 0,
                 };
                 self.pending_histogram = Some(pending);
@@ -1220,7 +1575,7 @@ where
     fn emit_pending_histogram(&mut self) -> Option<MetricFrameRef<'a>> {
         let mut pending = self.pending_histogram.take()?;
         loop {
-            let histo_wrapper = &mut pending.entry.1;
+            let histo_wrapper = &mut *pending.entry;
             let percentile_count = histo_wrapper.percentiles.len();
             let frame = match pending.step {
                 0 => {
@@ -1308,6 +1663,124 @@ where
             }
         }
     }
+
+    fn load_next_timing(&mut self) -> bool {
+        if let Some(iter) = self.timing_iter.as_mut() {
+            for timing_entry in iter.by_ref() {
+                let key = &mut timing_entry.0;
+                let histo_wrapper = &mut timing_entry.1;
+                if histo_wrapper.histogram.is_empty() {
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
+                    continue;
+                }
+
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
+
+                let pending = PendingHistogram {
+                    metric,
+                    tags,
+                    entry: histo_wrapper,
+                    step: 0,
+                };
+                self.pending_timing = Some(pending);
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn emit_pending_timing(&mut self) -> Option<MetricFrameRef<'a>> {
+        let mut pending = self.pending_timing.take()?;
+        loop {
+            let histo_wrapper = &mut *pending.entry;
+            let percentile_count = histo_wrapper.percentiles.len();
+            let frame = match pending.step {
+                0 => {
+                    pending.step += 1;
+                    if histo_wrapper.emits(HistogramBaseMetric::Count) {
+                        Some(MetricFrameRef {
+                            prefix: self.prefix,
+                            metric: pending.metric,
+                            suffix: MetricSuffix::Static(".count"),
+                            tags: pending.tags,
+                            value: histo_wrapper.histogram.len(),
+                            kind: MetricKind::Count,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                1 => {
+                    pending.step += 1;
+                    if histo_wrapper.emits(HistogramBaseMetric::Min) {
+                        Some(MetricFrameRef {
+                            prefix: self.prefix,
+                            metric: pending.metric,
+                            suffix: MetricSuffix::Static(".min"),
+                            tags: pending.tags,
+                            value: histo_wrapper.min,
+                            kind: MetricKind::Timing,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                2 => {
+                    pending.step += 1;
+                    if histo_wrapper.emits(HistogramBaseMetric::Avg) {
+                        Some(MetricFrameRef {
+                            prefix: self.prefix,
+                            metric: pending.metric,
+                            suffix: MetricSuffix::Static(".avg"),
+                            tags: pending.tags,
+                            value: histo_wrapper.histogram.value_at_quantile(0.50),
+                            kind: MetricKind::Timing,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                index if index < 3 + percentile_count => {
+                    pending.step += 1;
+                    let percentile_index = index - 3;
+                    let percentile = histo_wrapper.percentiles[percentile_index];
+                    Some(MetricFrameRef {
+                        prefix: self.prefix,
+                        metric: pending.metric,
+                        suffix: MetricSuffix::Percentile(percentile),
+                        tags: pending.tags,
+                        value: histo_wrapper.histogram.value_at_quantile(percentile),
+                        kind: MetricKind::Timing,
+                    })
+                }
+                index if index == 3 + percentile_count => {
+                    pending.step += 1;
+                    if histo_wrapper.emits(HistogramBaseMetric::Max) {
+                        Some(MetricFrameRef {
+                            prefix: self.prefix,
+                            metric: pending.metric,
+                            suffix: MetricSuffix::Static(".max"),
+                            tags: pending.tags,
+                            value: histo_wrapper.max,
+                            kind: MetricKind::Timing,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => {
+                    histo_wrapper.reset();
+                    return None;
+                }
+            };
+
+            if let Some(frame) = frame {
+                self.pending_timing = Some(pending);
+                return Some(frame);
+            }
+        }
+    }
 }
 
 impl<S> Drop for TLSDrain<'_, S>
@@ -1316,71 +1789,64 @@ where
 {
     #[cold]
     fn drop(&mut self) {
-        self.count_iter = None;
-        self.gauge_iter = None;
-        self.histogram_iter = None;
-
-        if let Some(aggregator) = self.aggregator.take() {
-            let agg = *unsafe { Box::from_raw(aggregator) };
-            self.collector.recycle_global(agg);
+        if let Some(mut aggregator) = self.aggregator.take() {
+            for (stage, key) in aggregator.key_to_remove.drain(..) {
+                match stage {
+                    DrainStage::Count => remove_drained_key(&mut aggregator.count, &key),
+                    DrainStage::Gauge => remove_drained_key(&mut aggregator.gauge, &key),
+                    DrainStage::GaugeLast => remove_drained_key(&mut aggregator.gauge_last, &key),
+                    DrainStage::Histogram | DrainStage::Timing => {
+                        let table = if stage == DrainStage::Histogram {
+                            &mut aggregator.histograms
+                        } else {
+                            &mut aggregator.timings
+                        };
+                        if let Some((_, histogram)) = take_drained_key(table, &key) {
+                            let pool = &mut aggregator.pool_histograms[histogram.pool_id];
+                            if MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL
+                                .is_none_or(|cap| pool.len() < cap)
+                            {
+                                pool.push(histogram);
+                            }
+                        }
+                    }
+                    DrainStage::Done => {}
+                }
+            }
+            self.collector.recycle_global(aggregator);
         }
     }
 }
 
-struct PendingHistogram<'a, S>
-where
-    S: BuildHasher + Clone,
-{
+fn take_drained_key<S: BuildHasher + Clone, V>(
+    table: &mut HashTable<(AggregatorEntryKey<S>, V)>,
+    key: &RemoveKey,
+) -> Option<(AggregatorEntryKey<S>, V)> {
+    table
+        .find_entry(key.hash, |(k, _)| k.id == key.id)
+        .ok()
+        .map(|entry| entry.remove().0)
+}
+
+fn remove_drained_key<S: BuildHasher + Clone, V>(
+    table: &mut HashTable<(AggregatorEntryKey<S>, V)>,
+    key: &RemoveKey,
+) {
+    let _ = take_drained_key(table, key);
+}
+
+struct PendingHistogram<'a> {
     metric: &'a str,
     tags: &'a str,
-    entry: &'a mut (AggregatorEntryKey<S>, HistogramWrapper),
+    entry: &'a mut HistogramWrapper,
     step: usize,
 }
 
-struct MyIterMut<'a, T>
-where
-    T: 'a,
-{
-    table: *mut hashbrown::HashTable<T>,
-    iter_mut: hashbrown::hash_table::IterMut<'a, T>,
-}
-
-impl<T> MyIterMut<'_, T> {
-    fn new(table_ptr: *mut HashTable<T>) -> Self {
-        let iter_mut = unsafe { (*table_ptr).iter_mut() };
-        let static_iter = unsafe {
-            // SAFETY: `iter_mut` only gets stored inside `MyIterMut`, which itself is embedded in
-            // `TLSDrain<'a, _>`. `TLSDrain` owns the pointed-to table allocation through
-            // `aggregator`, so the table outlives the iterator for `'a`. `Drop` clears all
-            // iterators before freeing the backing `GlobalAggregatorHb`.
-            std::mem::transmute::<
-                hashbrown::hash_table::IterMut<'_, T>,
-                hashbrown::hash_table::IterMut<'_, T>,
-            >(iter_mut)
-        };
-
-        Self {
-            table: table_ptr,
-            iter_mut: static_iter,
-        }
-    }
-}
-
-impl<'a, T> Iterator for MyIterMut<'a, T> {
-    type Item = &'a mut T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter_mut.next()
-    }
-}
-
-impl<'a, S> Iterator for TLSDrain<'a, S>
+impl<'a, S> TLSFrames<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    type Item = MetricFrameRef<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next_frame(&mut self) -> Option<MetricFrameRef<'a>> {
         loop {
             match self.stage {
                 DrainStage::Count => {
@@ -1393,27 +1859,15 @@ where
                         return Some(frame);
                     }
                 }
+                DrainStage::GaugeLast => {
+                    if let Some(frame) = self.emit_gauge_last_metric() {
+                        return Some(frame);
+                    }
+                }
                 DrainStage::Histogram => {
                     if self.pending_histogram.is_none() && !self.load_next_histogram() {
-                        if let Some(table) = self.histogram_iter.take().map(|iter| iter.table) {
-                            let table = unsafe { &mut *table };
-                            remove_from_table_callback(
-                                table,
-                                self.keys_to_remove,
-                                |v: HistogramWrapper| {
-                                    let index = v.pool_id;
-                                    debug_assert!(index < self.pool_histograms.len());
-                                    let pool =
-                                        unsafe { self.pool_histograms.get_unchecked_mut(index) };
-                                    if MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL
-                                        .is_none_or(|cap| pool.len() < cap)
-                                    {
-                                        pool.push(v);
-                                    }
-                                },
-                            );
-                        }
-                        self.stage = DrainStage::Done;
+                        self.histogram_iter = None;
+                        self.stage = DrainStage::Timing;
                         continue;
                     }
 
@@ -1421,9 +1875,31 @@ where
                         return Some(frame);
                     }
                 }
+                DrainStage::Timing => {
+                    if self.pending_timing.is_none() && !self.load_next_timing() {
+                        self.timing_iter = None;
+                        self.stage = DrainStage::Done;
+                        continue;
+                    }
+
+                    if let Some(frame) = self.emit_pending_timing() {
+                        return Some(frame);
+                    }
+                }
                 DrainStage::Done => return None,
             }
         }
+    }
+}
+
+impl<'a, S> Iterator for TLSFrames<'a, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    type Item = MetricFrameRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_frame()
     }
 }
 
@@ -1436,12 +1912,14 @@ mod tests {
         MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL,
     };
     use crate::dogstats::aggregator::HistogramWrapper;
-    use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
+    use crate::dogstats::collector::{
+        DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
+    };
     use crate::dogstats::histogram_config::{
         resolve_histogram_configs, Bounds, HistogramBaseMetric, HistogramBaseMetrics,
         HistogramConfig,
     };
-    use crate::{MetricCollectorTrait, RylvStr};
+    use crate::{MetricCollectorTrait, RylvStr, RylvTag};
     use hdrhistogram::Histogram;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1459,14 +1937,9 @@ mod tests {
         format!(".{percentile_number}percentile")
     }
 
-    fn format_drained_lines<S, I>(drain: I) -> Vec<String>
-    where
-        S: std::hash::BuildHasher + Clone + Send + Sync + 'static,
-        I: IntoIterator<Item = crate::dogstats::collector::MetricFrameRef<'static>>,
-    {
-        let _ = std::marker::PhantomData::<S>;
+    fn format_drained_lines(mut drain: impl MetricDrain) -> Vec<String> {
         let mut lines = Vec::new();
-        for frame in drain {
+        for frame in drain.frames() {
             let mut metric = String::new();
             metric.push_str(frame.prefix);
             metric.push_str(frame.metric);
@@ -1480,6 +1953,7 @@ mod tests {
             let metric_type = match frame.kind {
                 MetricKind::Count => "c",
                 MetricKind::Gauge => "g",
+                MetricKind::Timing => "ms",
             };
             if frame.tags.is_empty() {
                 lines.push(format!("{metric}:{}|{metric_type}\n", frame.value));
@@ -1500,15 +1974,8 @@ mod tests {
     {
         let drain = collector
             .try_begin_drain()
-            .into_iter()
-            .flatten()
-            .map(|frame| unsafe {
-                std::mem::transmute::<
-                    crate::dogstats::collector::MetricFrameRef<'_>,
-                    crate::dogstats::collector::MetricFrameRef<'static>,
-                >(frame)
-            });
-        format_drained_lines::<S, _>(drain)
+            .expect("tls drain should be available");
+        format_drained_lines(drain)
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1644,7 +2111,7 @@ mod tests {
     ) {
         let count_key = build_lookup_key(
             RylvStr::from_static("requests"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(10);
@@ -1659,7 +2126,7 @@ mod tests {
 
         let zero_count_key = build_lookup_key(
             RylvStr::from_static("empty_requests"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(11);
@@ -1674,7 +2141,7 @@ mod tests {
 
         let gauge_key = build_lookup_key(
             RylvStr::from_static("load"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(12);
@@ -1689,7 +2156,7 @@ mod tests {
 
         let zero_gauge_key = build_lookup_key(
             RylvStr::from_static("empty_load"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(13);
@@ -1704,7 +2171,7 @@ mod tests {
 
         let hist_key = build_lookup_key(
             RylvStr::from_static("latency"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(14);
@@ -1726,7 +2193,7 @@ mod tests {
 
         let empty_hist_key = build_lookup_key(
             RylvStr::from_static("empty_latency"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             hasher,
         )
         .into_key_with_id(15);
@@ -1782,7 +2249,7 @@ mod tests {
         });
 
         let sorted = collector
-            .prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
         let prepared_count =
             collector.prepare_metric(RylvStr::from_static("requests"), sorted.clone());
         let prepared_gauge = collector.prepare_metric(RylvStr::from_static("load"), sorted.clone());
@@ -1791,8 +2258,8 @@ mod tests {
 
         collector.count_add_sorted(RylvStr::from_static("requests"), 2, &sorted);
         collector.count_add_prepared(&prepared_count, 3);
-        collector.gauge_sorted(RylvStr::from_static("load"), 10, &sorted);
-        collector.gauge_prepared(&prepared_gauge, 20);
+        collector.gauge_avg_sorted(RylvStr::from_static("load"), 10, &sorted);
+        collector.gauge_avg_prepared(&prepared_gauge, 20);
         collector.histogram_sorted(RylvStr::from_static("latency"), 40, &sorted);
         collector.histogram_prepared(&prepared_hist, 60);
 
@@ -1821,7 +2288,7 @@ mod tests {
 
         collector.count(
             RylvStr::from_static("requests"),
-            &mut [RylvStr::from_static("env:test")],
+            &mut [RylvTag::from_static("env:test")],
         );
 
         let first = drain_metrics_now(&collector);
@@ -1857,24 +2324,24 @@ mod tests {
                 collector.count_add(
                     RylvStr::from_static(metric),
                     1,
-                    &mut [RylvStr::from_static(tag)],
+                    &mut [RylvTag::from_static(tag)],
                 );
                 collector.gauge(
                     RylvStr::from_static(metric),
                     index as u64,
-                    &mut [RylvStr::from_static(tag)],
+                    &mut [RylvTag::from_static(tag)],
                 );
                 collector.histogram(
                     RylvStr::from_static(metric),
                     index as u64 + 1,
-                    &mut [RylvStr::from_static(tag)],
+                    &mut [RylvTag::from_static(tag)],
                 );
             }
 
             let frame_count = collector
                 .try_begin_drain()
                 .expect("tls drain should be available")
-                .count();
+                .count_frames();
             let snapshot = TlsRetainedStateSnapshot::from_collector(&collector);
             assert!(
                 frame_count >= METRIC_COUNT * 3,
@@ -1908,43 +2375,37 @@ mod tests {
 
         collector_ref.count(
             RylvStr::from_static("requests"),
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
         collector_ref.count_add(
             RylvStr::from_static("requests"),
             4,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
         );
-        collector_ref.gauge(
+        collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             10,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
-        collector_ref.gauge(
+        collector_ref.gauge_avg(
             RylvStr::from_static("load"),
             20,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
         );
         collector_ref.histogram(
             RylvStr::from_static("latency"),
             40,
-            &mut [RylvStr::from_static("b:2"), RylvStr::from_static("a:1")],
+            &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
         collector_ref.histogram(
             RylvStr::from_static("latency"),
             60,
-            &mut [RylvStr::from_static("a:1"), RylvStr::from_static("b:2")],
+            &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
         );
 
-        let drain = <&TLSCollector as DrainMetricCollectorTrait>::try_begin_drain(&collector_ref)
-            .unwrap()
-            .map(|frame| unsafe {
-                std::mem::transmute::<
-                    crate::dogstats::collector::MetricFrameRef<'_>,
-                    crate::dogstats::collector::MetricFrameRef<'static>,
-                >(frame)
-            });
-        let lines = format_drained_lines::<crate::DefaultMetricHasher, _>(drain);
+        let drain =
+            <&TLSCollector as DrainMetricCollectorTrait>::try_begin_drain(&collector_ref).unwrap();
+        let lines = format_drained_lines(drain);
         assert_regular_reference_lines(&lines);
     }
 
@@ -2009,6 +2470,95 @@ mod tests {
     }
 
     #[test]
+    fn tls_gauge_last_emits_last_value_not_average() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "app.".to_string(),
+            ..Default::default()
+        });
+
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            100,
+            &mut [RylvTag::from_static("pool:main")],
+        );
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            200,
+            &mut [RylvTag::from_static("pool:main")],
+        );
+        collector.gauge(
+            RylvStr::from_static("connections"),
+            50,
+            &mut [RylvTag::from_static("pool:main")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["app.connections:50|g|#pool:main\n".to_string()]);
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn tls_gauge_last_without_tags() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.gauge(RylvStr::from_static("cpu.usage"), 73, &mut []);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["cpu.usage:73|g\n".to_string()]);
+    }
+
+    #[test]
+    fn tls_gauge_last_sorted_and_prepared() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "s.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
+        let prepared =
+            collector.prepare_metric(RylvStr::from_static("temperature"), sorted.clone());
+
+        collector.gauge_sorted(RylvStr::from_static("temperature"), 10, &sorted);
+        collector.gauge_sorted(RylvStr::from_static("temperature"), 30, &sorted);
+        collector.gauge_prepared(&prepared, 20);
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["s.temperature:20|g|#a:1,b:2\n".to_string()]);
+    }
+
+    #[test]
+    fn tls_gauge_last_and_gauge_avg_are_independent() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.gauge_avg(
+            RylvStr::from_static("load"),
+            10,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.gauge_avg(
+            RylvStr::from_static("load"),
+            20,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.gauge(
+            RylvStr::from_static("load"),
+            10,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.gauge(
+            RylvStr::from_static("load"),
+            20,
+            &mut [RylvTag::from_static("a:1")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines.len(), 2);
+        assert!(lines.contains(&"load:15|g|#a:1\n".to_string()));
+        assert!(lines.contains(&"load:20|g|#a:1\n".to_string()));
+    }
+
+    #[test]
     fn merge_local_aggregator_reuses_global_histogram_pool() {
         let hasher = crate::DefaultMetricHasher::new();
         let resolved = resolve_histogram_configs(
@@ -2029,7 +2579,7 @@ mod tests {
 
         let hist_key = build_lookup_key(
             RylvStr::from_static("latency_from_global_pool"),
-            &[RylvStr::from_static("a:1")],
+            &[RylvTag::from_static("a:1")],
             &hasher,
         )
         .into_key_with_id(20);
@@ -2089,45 +2639,421 @@ mod tests {
     }
 
     #[test]
-    fn tls_drain_caps_recycled_global_histogram_pool_to_internal_limit() {
+    fn tls_drain_caps_recycled_global_histogram_and_timing_pools() {
+        for timing in [false, true] {
+            let hasher = crate::DefaultMetricHasher::new();
+            let resolved = resolve_histogram_configs(
+                HistogramConfig::default(),
+                HashMap::with_hasher(hasher.clone()),
+                &hasher,
+            );
+            let collector = TLSCollector::new(TLSCollectorOptions::default());
+            let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+            let cap = MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL.unwrap();
+
+            for id in 0..=cap {
+                let metric = format!("empty_latency_{id}");
+                let key = build_lookup_key(
+                    RylvStr::from(metric.as_str()),
+                    &[RylvTag::from_static("a:1")],
+                    &hasher,
+                )
+                .into_key_with_id(id as u64);
+                let histogram = get_histogram_from_pool_config(
+                    &mut global.pool_histograms,
+                    &resolved.default_histogram_config,
+                )
+                .unwrap();
+                let table = if timing {
+                    &mut global.timings
+                } else {
+                    &mut global.histograms
+                };
+                table
+                    .entry(key.hash, |(existing, _)| existing == &key, |(k, _)| k.hash)
+                    .insert((key, histogram));
+            }
+
+            {
+                let mut drain = TLSDrain::new(&collector, global);
+                assert!(drain.frames().next().is_none());
+            }
+
+            let recycled = collector.recycled_global_aggregators.lock().pop().unwrap();
+            assert_eq!(
+                recycled.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+                cap
+            );
+        }
+    }
+
+    #[test]
+    fn tls_merge_gauge_last_local_into_global() {
         let hasher = crate::DefaultMetricHasher::new();
         let resolved = resolve_histogram_configs(
             HistogramConfig::default(),
             HashMap::with_hasher(hasher.clone()),
             &hasher,
         );
-        let collector = TLSCollector::new(TLSCollectorOptions::default());
+        let mut local = LocalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
         let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
-        let cap = MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL.unwrap();
+        let mut to_remove = Vec::new();
 
-        for id in 0..=cap {
-            let metric = format!("empty_latency_{id}");
-            let key = build_lookup_key(
-                RylvStr::from(metric.as_str()),
-                &[RylvStr::from_static("a:1")],
-                &hasher,
-            )
-            .into_key_with_id(id as u64);
-            let histogram = get_histogram_from_pool_config(
-                &mut global.pool_histograms,
-                &resolved.default_histogram_config,
-            )
-            .unwrap();
-            global
-                .histograms
-                .entry(key.hash, |(existing, _)| existing == &key, |(k, _)| k.hash)
-                .insert((key, histogram));
-        }
+        let tags = [RylvTag::from_static("a:1")];
+        let lookup = build_lookup_key(RylvStr::from_static("temp"), &tags, &hasher);
+        local
+            .gauge_last
+            .insert_unique(lookup.hash, (lookup.into_key(), Some(42)), |(k, _)| k.hash);
 
-        {
-            let mut drain = TLSDrain::new(&collector, global);
-            assert!(drain.next().is_none());
-        }
-
-        let recycled = collector.recycled_global_aggregators.lock().pop().unwrap();
-        assert_eq!(
-            recycled.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
-            cap
+        merge_local_aggregator_into_global_hashbrown(
+            &mut local,
+            &mut global,
+            &resolved.pool_specs,
+            &mut to_remove,
         );
+
+        let global_val = &global.gauge_last.iter().next().unwrap().1;
+        assert_eq!(*global_val, Some(42));
+        // local should be reset to None
+        assert!(local.gauge_last.is_empty() || local.gauge_last.iter().next().unwrap().1.is_none());
+    }
+
+    #[test]
+    fn tls_timing_emits_ms_metric_kind() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "app.".to_string(),
+            ..Default::default()
+        });
+
+        collector.timing(
+            RylvStr::from_static("request.duration"),
+            100,
+            &mut [RylvTag::from_static("endpoint:api")],
+        );
+        collector.timing(
+            RylvStr::from_static("request.duration"),
+            200,
+            &mut [RylvTag::from_static("endpoint:api")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.contains(&"app.request.duration.count:2|c|#endpoint:api\n".to_string()));
+        assert!(lines.contains(&"app.request.duration.min:100|ms|#endpoint:api\n".to_string()));
+        assert!(lines.contains(&"app.request.duration.max:200|ms|#endpoint:api\n".to_string()));
+        assert!(
+            lines.contains(&"app.request.duration.95percentile:200|ms|#endpoint:api\n".to_string())
+        );
+        assert!(
+            lines.contains(&"app.request.duration.99percentile:200|ms|#endpoint:api\n".to_string())
+        );
+        assert!(lines.contains(&"app.request.duration.avg:100|ms|#endpoint:api\n".to_string()));
+    }
+
+    #[test]
+    fn tls_timing_without_tags() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.timing(RylvStr::from_static("db.query"), 42, &mut []);
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.contains(&"db.query.count:1|c\n".to_string()));
+        assert!(lines.contains(&"db.query.min:42|ms\n".to_string()));
+        assert!(lines.contains(&"db.query.max:42|ms\n".to_string()));
+    }
+
+    #[test]
+    fn tls_timing_sorted_and_prepared() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "s.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("duration"), sorted.clone());
+
+        collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
+        collector.timing_prepared(&prepared, 60);
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.contains(&"s.duration.count:2|c|#a:1,b:2\n".to_string()));
+        assert!(lines.contains(&"s.duration.min:40|ms|#a:1,b:2\n".to_string()));
+        assert!(lines.contains(&"s.duration.max:60|ms|#a:1,b:2\n".to_string()));
+    }
+
+    #[test]
+    fn tls_timing_and_histogram_are_independent() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.histogram(
+            RylvStr::from_static("latency"),
+            100,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.timing(
+            RylvStr::from_static("latency"),
+            200,
+            &mut [RylvTag::from_static("a:1")],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.contains(&"latency.min:100|g|#a:1\n".to_string()));
+        assert!(lines.contains(&"latency.min:200|ms|#a:1\n".to_string()));
+    }
+
+    #[test]
+    fn tls_reference_timing_trait_impls_cover_regular_paths() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "ref.".to_string(),
+            ..Default::default()
+        });
+        let collector_ref = &collector;
+
+        collector_ref.timing(
+            RylvStr::from_static("duration"),
+            40,
+            &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
+        );
+        collector_ref.timing(
+            RylvStr::from_static("duration"),
+            60,
+            &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
+        );
+
+        let drain =
+            <&TLSCollector as DrainMetricCollectorTrait>::try_begin_drain(&collector_ref).unwrap();
+        let lines = format_drained_lines(drain);
+        assert_eq!(
+            lines,
+            &[
+                "ref.duration.95percentile:60|ms|#a:1,b:2\n".to_string(),
+                "ref.duration.99percentile:60|ms|#a:1,b:2\n".to_string(),
+                "ref.duration.avg:40|ms|#a:1,b:2\n".to_string(),
+                "ref.duration.count:2|c|#a:1,b:2\n".to_string(),
+                "ref.duration.max:60|ms|#a:1,b:2\n".to_string(),
+                "ref.duration.min:40|ms|#a:1,b:2\n".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn tls_timing_collector_drains_sorted_and_prepared_metrics() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "tls.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("duration"), sorted.clone());
+
+        collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
+        collector.timing_prepared(&prepared, 60);
+
+        assert_eq!(
+            drain_metrics_now(&collector),
+            vec![
+                "tls.duration.95percentile:60|ms|#a:1,b:2\n".to_string(),
+                "tls.duration.99percentile:60|ms|#a:1,b:2\n".to_string(),
+                "tls.duration.avg:40|ms|#a:1,b:2\n".to_string(),
+                "tls.duration.count:2|c|#a:1,b:2\n".to_string(),
+                "tls.duration.max:60|ms|#a:1,b:2\n".to_string(),
+                "tls.duration.min:40|ms|#a:1,b:2\n".to_string(),
+            ]
+        );
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn tls_merge_timing_local_into_global() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let mut local = LocalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut to_remove = Vec::new();
+
+        let timing_key = build_lookup_key(
+            RylvStr::from_static("duration"),
+            &[RylvTag::from_static("a:1")],
+            &hasher,
+        )
+        .into_key_with_id(20);
+        let mut timing_hist = get_histogram_from_pool_config(
+            &mut local.pool_histograms,
+            &resolved.default_histogram_config,
+        )
+        .unwrap();
+        timing_hist.record(100).unwrap();
+        timing_hist.record(200).unwrap();
+        local
+            .timings
+            .entry(
+                timing_key.hash,
+                |(key, _)| key == &timing_key,
+                |(key, _)| key.hash,
+            )
+            .insert((timing_key, timing_hist));
+
+        merge_local_aggregator_into_global_hashbrown(
+            &mut local,
+            &mut global,
+            &resolved.pool_specs,
+            &mut to_remove,
+        );
+
+        assert_eq!(global.timings.len(), 1);
+        let global_hist = &global.timings.iter().next().unwrap().1;
+        assert_eq!(global_hist.histogram.len(), 2);
+        assert_eq!(global_hist.min, 100);
+        assert_eq!(global_hist.max, 200);
+    }
+
+    #[test]
+    fn tls_histogram_and_timing_share_pool_and_recycle_wrappers() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let pool_id = resolved.default_histogram_config.pool_id();
+
+        // Manually seed the shared pool with a wrapper (simulates a recycled histogram wrapper).
+        let mut pool = vec![Vec::new(); resolved.pool_count];
+        let seeded =
+            get_histogram_from_pool_config(&mut pool, &resolved.default_histogram_config).unwrap();
+        pool[pool_id].push(seeded);
+        assert_eq!(pool[pool_id].len(), 1);
+
+        // A timing allocation should consume that wrapper from the shared pool.
+        let mut timing_hist =
+            get_histogram_from_pool_config(&mut pool, &resolved.default_histogram_config).unwrap();
+        timing_hist.record(100).unwrap();
+        assert!(pool[pool_id].is_empty());
+
+        // Return it to pool (simulates drain recycling).
+        pool[pool_id].push(timing_hist);
+
+        // A histogram allocation should reuse the wrapper that was last used by timing.
+        let hist =
+            get_histogram_from_pool_config(&mut pool, &resolved.default_histogram_config).unwrap();
+        assert!(pool[pool_id].is_empty());
+        assert_eq!(hist.pool_id, pool_id);
+    }
+
+    #[test]
+    fn tls_ref_covers_all_sorted_prepared_and_unsorted_paths() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "rp.".to_string(),
+            ..Default::default()
+        });
+
+        MetricCollectorTrait::count(
+            &collector,
+            RylvStr::from_static("cnt"),
+            &mut [RylvTag::from_static("a:1")],
+        );
+        MetricCollectorTrait::count_add(
+            &collector,
+            RylvStr::from_static("cnt"),
+            4,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        MetricCollectorTrait::gauge_avg(
+            &collector,
+            RylvStr::from_static("gavg"),
+            10,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        MetricCollectorTrait::gauge(
+            &collector,
+            RylvStr::from_static("lww"),
+            20,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        MetricCollectorTrait::timing(
+            &collector,
+            RylvStr::from_static("dur"),
+            100,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        MetricCollectorTrait::histogram(
+            &collector,
+            RylvStr::from_static("lat"),
+            50,
+            &mut [RylvTag::from_static("a:1")],
+        );
+
+        // sorted via reference UFCS
+        let sorted =
+            MetricCollectorTrait::prepare_sorted_tags(&collector, [RylvTag::from_static("a:1")]);
+
+        MetricCollectorTrait::histogram_sorted(
+            &collector,
+            RylvStr::from_static("lat_s"),
+            50,
+            &sorted,
+        );
+        MetricCollectorTrait::count_add_sorted(
+            &collector,
+            RylvStr::from_static("cnt_s"),
+            2,
+            &sorted,
+        );
+        MetricCollectorTrait::gauge_avg_sorted(
+            &collector,
+            RylvStr::from_static("gavg_s"),
+            30,
+            &sorted,
+        );
+        MetricCollectorTrait::gauge_sorted(&collector, RylvStr::from_static("glww_s"), 40, &sorted);
+        MetricCollectorTrait::timing_sorted(&collector, RylvStr::from_static("dur_s"), 60, &sorted);
+
+        // prepared via reference UFCS
+        let prepared_h = MetricCollectorTrait::prepare_metric(
+            &collector,
+            RylvStr::from_static("lat_p"),
+            sorted.clone(),
+        );
+        let prepared_c =
+            MetricCollectorTrait::prepare_metric(&collector, RylvStr::from_static("cnt_p"), sorted);
+
+        MetricCollectorTrait::histogram_prepared(&collector, &prepared_h, 70);
+        MetricCollectorTrait::count_add_prepared(&collector, &prepared_c, 3);
+        MetricCollectorTrait::gauge_avg_prepared(&collector, &prepared_h, 80);
+        MetricCollectorTrait::gauge_prepared(&collector, &prepared_h, 90);
+        MetricCollectorTrait::timing_prepared(&collector, &prepared_h, 110);
+
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.iter().any(|l| l.contains("cnt")));
+        assert!(lines.iter().any(|l| l.contains("lww") && l.contains("|g")));
+        assert!(lines.iter().any(|l| l.contains("dur") && l.contains("|ms")));
+        assert!(lines.iter().any(|l| l.contains("lat_s")));
+        assert!(lines.iter().any(|l| l.contains("cnt_s")));
+        assert!(lines.iter().any(|l| l.contains("gavg_s")));
+        assert!(lines.iter().any(|l| l.contains("glww_s")));
+        assert!(lines.iter().any(|l| l.contains("dur_s")));
+        assert!(lines.iter().any(|l| l.contains("lat_p")));
+        assert!(lines.iter().any(|l| l.contains("cnt_p")));
+    }
+
+    #[test]
+    fn tls_compound_tags_through_collector() {
+        let collector = TLSCollector::new(TLSCollectorOptions::default());
+
+        collector.count(
+            RylvStr::from_static("requests"),
+            &mut [
+                RylvTag::Compound(RylvStr::from_static("env"), RylvStr::from_static("prod")),
+                RylvTag::from_static("az:use1"),
+            ],
+        );
+
+        let lines = drain_metrics_now(&collector);
+        assert_eq!(lines, vec!["requests:1|c|#az:use1,env:prod\n".to_string()]);
     }
 }

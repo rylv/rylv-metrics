@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use rylv_metrics::{
-    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
+    HistogramConfig, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag,
     SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::time::Duration;
@@ -51,9 +51,9 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Test with various tag combinations
-    let mut tag_refs: Vec<RylvStr<'_>> = tags.iter().map(|t| RylvStr::from(t.as_str())).collect();
+    let mut tag_refs: Vec<RylvTag<'_>> = tags.iter().map(|t| RylvTag::from(t.as_str())).collect();
     collector.count(RylvStr::from_static("fuzz.metric"), &mut tag_refs);
-    collector.gauge(RylvStr::from_static("fuzz.gauge"), 42, &mut tag_refs);
+    collector.gauge_avg(RylvStr::from_static("fuzz.gauge"), 42, &mut tag_refs);
     collector.histogram(RylvStr::from_static("fuzz.histogram"), 100, &mut tag_refs);
 
     drop(collector);

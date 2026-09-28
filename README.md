@@ -25,7 +25,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rylv-metrics = "0.3.1"
+rylv-metrics = "0.4.0"
 ```
 
 Default build enables no transport or collector backend features.
@@ -33,15 +33,15 @@ Enable the APIs you want explicitly. For example, UDP sending with a inner colle
 
 ```toml
 [dependencies]
-rylv-metrics = { version = "0.3.1", features = ["udp", "shared-collector"] }
+rylv-metrics = { version = "0.4.0", features = ["udp", "shared-collector"] }
 ```
 
 ## Quick Start
 
 ```rust
 use rylv_metrics::{
-    count, count_add, gauge, histogram, MetricCollector, MetricCollectorOptions,
-    MetricCollectorTrait, RylvStr, SharedCollector,
+    count, count_add, gauge_avg, histogram, MetricCollector, MetricCollectorOptions,
+    MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
 };
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -65,27 +65,45 @@ fn main() {
     collector.histogram(
         RylvStr::from_static("request.latency"),
         42,
-        &mut [RylvStr::from_static("endpoint:api"), RylvStr::from_static("method:GET")],
+        &mut [RylvTag::from_static("endpoint:api"), RylvTag::from_static("method:GET")],
     );
     collector.count(
         RylvStr::from_static("request.count"),
-        &mut [RylvStr::from_static("endpoint:api")],
+        &mut [RylvTag::from_static("endpoint:api")],
     );
-    collector.gauge(
+    collector.gauge_avg(
         RylvStr::from_static("connections.active"),
         100,
-        &mut [RylvStr::from_static("pool:main")],
+        &mut [RylvTag::from_static("pool:main")],
     );
 
     // Or use convenience macros with string literals
     histogram!(collector, "request.latency", 42, "endpoint:api", "method:GET");
     count!(collector, "request.count", "endpoint:api");
     count_add!(collector, "bytes.sent", 1024, "endpoint:api");
-    gauge!(collector, "connections.active", 100, "pool:main");
+    gauge_avg!(collector, "connections.active", 100, "pool:main");
 
     // Drop triggers a final best-effort flush
 }
 ```
+
+## Tags
+
+Use `RylvTag::Compound` when the tag key is static and its value is generated at runtime. It serializes the same way as a full `"route:/users"` tag:
+
+```rust
+use rylv_metrics::{MetricCollectorTrait, RylvStr, RylvTag, SharedCollector};
+
+let collector = SharedCollector::default();
+let route = String::from("/users");
+let tags = collector.prepare_sorted_tags([
+    RylvTag::from_static("service:web"),
+    RylvTag::Compound(RylvStr::from_static("route"), RylvStr::from(route)),
+]);
+collector.count_add_sorted(RylvStr::from_static("requests.total"), 1, &tags);
+```
+
+`prepare_sorted_tags` resolves and sorts the tags once, so `tags` can be reused across metric calls. For two static parts, use `RylvTag::from_static_compound("env", "prod")`.
 
 ## Metric Types
 
@@ -114,7 +132,7 @@ count_add!(collector, "bytes.sent", 1024, "endpoint:upload");
 Records point-in-time values:
 
 ```rust
-gauge!(collector, "memory.used", 1024000, "host:server1");
+gauge_avg!(collector, "memory.used", 1024000, "host:server1");
 ```
 
 ## Custom Writer
@@ -149,14 +167,14 @@ impl StatsWriterTrait for MyWriter {
 Use `SharedCollector` when you want to own scheduling and transport externally:
 
 ```rust
-use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, SharedCollector};
+use rylv_metrics::{DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector};
 
 let collector = SharedCollector::default();
-collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:test")]);
+collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("env:test")]);
 
 loop {
     if let Some(mut drain) = collector.try_begin_drain() {
-        for frame in drain.by_ref() {
+        for frame in drain.frames() {
             // send frame to UDP/HTTP/queue/etc
             println!("{:?}", frame);
         }
@@ -164,6 +182,12 @@ loop {
     }
 }
 ```
+
+The drain owns the detached aggregator; `drain.frames()` returns a separate
+iterator borrowing it. Frames can outlive the iterator, for example while a
+transport batches them, but must be released before the drain is dropped or
+borrowed again. Names and tags reference the existing storage. Empty entries
+are removed when the drain is dropped, after all frame borrows have ended.
 
 ## TLS Collector
 
@@ -173,13 +197,16 @@ backed by `hashbrown::HashTable` and `parking_lot`, and drains merge the
 per-thread frames on demand:
 
 ```rust
-use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, RylvStr, TLSCollector};
+use rylv_metrics::{
+    DrainMetricCollectorTrait, MetricDrain, MetricCollectorTrait, RylvStr, RylvTag,
+    TLSCollector, TLSCollectorOptions,
+};
 
-let collector = TLSCollector::default();
-collector.count(RylvStr::from_static("requests"), &mut [RylvStr::from_static("env:test")]);
+let collector = TLSCollector::new(TLSCollectorOptions::default());
+collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("env:test")]);
 
 if let Some(mut drain) = collector.try_begin_drain() {
-    for frame in drain.by_ref() {
+    for frame in drain.frames() {
         // send frame to UDP/HTTP/queue/etc
         println!("{:?}", frame);
     }

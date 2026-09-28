@@ -1,4 +1,6 @@
-use rylv_metrics::{HistogramConfig, MetricCollectorTrait, RylvStr, SharedCollector, SigFig};
+use rylv_metrics::{
+    HistogramConfig, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector, SigFig,
+};
 
 #[cfg(not(feature = "allocationcounter"))]
 #[global_allocator]
@@ -17,8 +19,8 @@ fn main() {
             RylvStr::from_static("some.metric"),
             1,
             [
-                RylvStr::from_static("tag:value"),
-                RylvStr::from_static("tag2:value2"),
+                RylvTag::from_static("tag:value"),
+                RylvTag::from_static("tag2:value2"),
             ],
         );
     }

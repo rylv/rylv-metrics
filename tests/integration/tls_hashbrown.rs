@@ -1,6 +1,6 @@
 use rylv_metrics::{
-    DrainMetricCollectorTrait, MetricCollectorTrait, MetricKind, MetricSuffix, RylvStr,
-    TLSCollector, TLSCollectorOptions,
+    DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
+    RylvStr, RylvTag, TLSCollector, TLSCollectorOptions,
 };
 
 fn percentile_suffix(percentile: f64) -> String {
@@ -20,9 +20,11 @@ fn drain_metrics_now<S>(collector: &TLSCollector<S>) -> Vec<String>
 where
     S: std::hash::BuildHasher + Clone + Send + Sync + 'static,
 {
-    let drain = collector.try_begin_drain().into_iter().flatten();
+    let mut drain = collector
+        .try_begin_drain()
+        .expect("tls drain should be available");
     let mut lines = Vec::new();
-    for frame in drain {
+    for frame in drain.frames() {
         let mut metric = String::new();
         metric.push_str(frame.prefix);
         metric.push_str(frame.metric);
@@ -37,6 +39,7 @@ where
         let metric_type = match frame.kind {
             MetricKind::Count => "c",
             MetricKind::Gauge => "g",
+            MetricKind::Timing => "ms",
         };
         if frame.tags.is_empty() {
             lines.push(format!("{metric}:{}|{metric_type}\n", frame.value));
@@ -63,7 +66,7 @@ fn test_tls_hashbrown_drain_consumes_prepared_metrics() {
     });
 
     let sorted =
-        collector.prepare_sorted_tags([RylvStr::from_static("b:2"), RylvStr::from_static("a:1")]);
+        collector.prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
     let prepared = collector.prepare_metric(RylvStr::from_static("requests"), sorted);
 
     collector.histogram_prepared(&prepared, 42);

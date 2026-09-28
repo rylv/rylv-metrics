@@ -1,6 +1,6 @@
 use rylv_metrics::{
     histogram, DrainMetricCollectorTrait, MetricCollector, MetricCollectorOptions,
-    MetricCollectorTrait, RylvStr, SharedCollector, StatsWriterType,
+    MetricCollectorTrait, RylvStr, RylvTag, SharedCollector, StatsWriterType,
 };
 use std::hash::BuildHasher;
 use std::sync::Arc;
@@ -45,8 +45,8 @@ fn test_parallel_histogram_stress() {
                         RylvStr::from_static("parallel.histogram.static"),
                         value,
                         [
-                            RylvStr::from_static("thread:static"),
-                            RylvStr::from_static("test:parallel"),
+                            RylvTag::from_static("thread:static"),
+                            RylvTag::from_static("test:parallel"),
                         ],
                     );
 
@@ -55,8 +55,8 @@ fn test_parallel_histogram_stress() {
                         RylvStr::from_static("parallel.histogram.dynamic"),
                         value,
                         [
-                            RylvStr::from(format!("thread:{}", thread_id)),
-                            RylvStr::from(format!("iteration:{}", i)),
+                            RylvTag::from(RylvStr::from(format!("thread:{}", thread_id))),
+                            RylvTag::from(RylvStr::from(format!("iteration:{}", i))),
                         ],
                     );
 
@@ -65,8 +65,8 @@ fn test_parallel_histogram_stress() {
                         RylvStr::from_static("parallel.histogram.mixed"),
                         value,
                         [
-                            RylvStr::from(String::from("static:tag")),
-                            RylvStr::from(format!("thread:{}", thread_id)),
+                            RylvTag::from(RylvStr::from(String::from("static:tag"))),
+                            RylvTag::from(RylvStr::from(format!("thread:{}", thread_id))),
                         ],
                     );
                 }
@@ -122,14 +122,14 @@ fn test_parallel_mixed_metrics() {
                             collector.histogram(
                                 RylvStr::from_static("parallel.mixed.histogram"),
                                 value,
-                                [RylvStr::from(tag.clone())],
+                                [RylvTag::from(RylvStr::from(tag.clone()))],
                             );
                         }
                         1 => {
                             // Counter increment by one
                             collector.count(
                                 RylvStr::from_static("parallel.mixed.counter"),
-                                [RylvStr::from(tag.clone())],
+                                [RylvTag::from(RylvStr::from(tag.clone()))],
                             );
                         }
                         2 => {
@@ -137,15 +137,15 @@ fn test_parallel_mixed_metrics() {
                             collector.count_add(
                                 RylvStr::from_static("parallel.mixed.counter_value"),
                                 value,
-                                [RylvStr::from(tag.clone())],
+                                [RylvTag::from(RylvStr::from(tag.clone()))],
                             );
                         }
                         3 => {
                             // Gauge
-                            collector.gauge(
+                            collector.gauge_avg(
                                 RylvStr::from_static("parallel.mixed.gauge"),
                                 value,
-                                [RylvStr::from(tag.clone())],
+                                [RylvTag::from(RylvStr::from(tag.clone()))],
                             );
                         }
                         _ => unreachable!(),
@@ -180,8 +180,8 @@ fn test_parallel_high_contention() {
                         RylvStr::from_static("parallel.contention.same_metric"),
                         (thread_id * iterations_per_thread + i) as u64,
                         [
-                            RylvStr::from_static("contention:high"),
-                            RylvStr::from_static("test:stress"),
+                            RylvTag::from_static("contention:high"),
+                            RylvTag::from_static("test:stress"),
                         ],
                     );
                 }
@@ -212,7 +212,7 @@ fn test_parallel_many_unique_metrics() {
                     collector.histogram(
                         RylvStr::from(metric_name),
                         i as u64,
-                        [RylvStr::from_static("unique:metric")],
+                        [RylvTag::from_static("unique:metric")],
                     );
                 }
             })
@@ -293,7 +293,10 @@ fn test_parallel_rapid_fire() {
                     collector.histogram(
                         RylvStr::from_static("parallel.rapid"),
                         i as u64,
-                        [RylvStr::from(format!("thread:{}", thread_id))],
+                        [RylvTag::from(RylvStr::from(format!(
+                            "thread:{}",
+                            thread_id
+                        )))],
                     );
                 }
             })
@@ -324,7 +327,7 @@ fn test_parallel_varying_tag_counts() {
                     match i % 5 {
                         0 => {
                             // No tags
-                            let mut tags: [RylvStr<'_>; 0] = [];
+                            let mut tags: [RylvTag<'_>; 0] = [];
                             collector.histogram(
                                 RylvStr::from_static("parallel.tags.none"),
                                 value,
@@ -336,7 +339,7 @@ fn test_parallel_varying_tag_counts() {
                             collector.histogram(
                                 RylvStr::from_static("parallel.tags.one"),
                                 value,
-                                [RylvStr::from_static("tag:one")],
+                                [RylvTag::from_static("tag:one")],
                             );
                         }
                         2 => {
@@ -345,8 +348,8 @@ fn test_parallel_varying_tag_counts() {
                                 RylvStr::from_static("parallel.tags.two"),
                                 value,
                                 [
-                                    RylvStr::from_static("tag:one"),
-                                    RylvStr::from_static("tag:two"),
+                                    RylvTag::from_static("tag:one"),
+                                    RylvTag::from_static("tag:two"),
                                 ],
                             );
                         }
@@ -356,9 +359,12 @@ fn test_parallel_varying_tag_counts() {
                                 RylvStr::from_static("parallel.tags.three"),
                                 value,
                                 [
-                                    RylvStr::from(String::from("tag:static")),
-                                    RylvStr::from(format!("tag:dynamic{}", thread_id)),
-                                    RylvStr::from(String::from("tag:mixed")),
+                                    RylvTag::from(RylvStr::from(String::from("tag:static"))),
+                                    RylvTag::from(RylvStr::from(format!(
+                                        "tag:dynamic{}",
+                                        thread_id
+                                    ))),
+                                    RylvTag::from(RylvStr::from(String::from("tag:mixed"))),
                                 ],
                             );
                         }
@@ -368,11 +374,14 @@ fn test_parallel_varying_tag_counts() {
                                 RylvStr::from_static("parallel.tags.many"),
                                 value,
                                 [
-                                    RylvStr::from(String::from("tag1:value1")),
-                                    RylvStr::from(String::from("tag2:value2")),
-                                    RylvStr::from(String::from("tag3:value3")),
-                                    RylvStr::from(format!("tag4:thread{}", thread_id)),
-                                    RylvStr::from(format!("tag5:iter{}", i)),
+                                    RylvTag::from(RylvStr::from(String::from("tag1:value1"))),
+                                    RylvTag::from(RylvStr::from(String::from("tag2:value2"))),
+                                    RylvTag::from(RylvStr::from(String::from("tag3:value3"))),
+                                    RylvTag::from(RylvStr::from(format!(
+                                        "tag4:thread{}",
+                                        thread_id
+                                    ))),
+                                    RylvTag::from(RylvStr::from(format!("tag5:iter{}", i))),
                                 ],
                             );
                         }
@@ -409,27 +418,27 @@ fn test_parallel_all_operations() {
                     collector.histogram(
                         RylvStr::from_static("stress.histogram"),
                         value,
-                        [RylvStr::from(thread_tag.clone())],
+                        [RylvTag::from(RylvStr::from(thread_tag.clone()))],
                     );
 
                     // Counter increment by one
                     collector.count(
                         RylvStr::from_static("stress.counter.one"),
-                        [RylvStr::from(thread_tag.clone())],
+                        [RylvTag::from(RylvStr::from(thread_tag.clone()))],
                     );
 
                     // Counter increment by value
                     collector.count_add(
                         RylvStr::from_static("stress.counter.value"),
                         value,
-                        [RylvStr::from(thread_tag.clone())],
+                        [RylvTag::from(RylvStr::from(thread_tag.clone()))],
                     );
 
                     // Gauge
-                    collector.gauge(
+                    collector.gauge_avg(
                         RylvStr::from_static("stress.gauge"),
                         value,
-                        [RylvStr::from(thread_tag.clone())],
+                        [RylvTag::from(RylvStr::from(thread_tag.clone()))],
                     );
 
                     // Use macro

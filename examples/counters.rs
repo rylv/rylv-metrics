@@ -4,7 +4,7 @@
 
 use rylv_metrics::{
     count, count_add, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
-    SharedCollector, SharedCollectorOptions, StatsWriterType,
+    RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterType,
 };
 use std::time::Duration;
 
@@ -32,8 +32,8 @@ fn main() {
     collector.count(
         RylvStr::from_static("http.requests"),
         &mut [
-            RylvStr::from_static("endpoint:/users"),
-            RylvStr::from_static("method:get"),
+            RylvTag::from_static("endpoint:/users"),
+            RylvTag::from_static("method:get"),
         ],
     );
 
@@ -41,7 +41,7 @@ fn main() {
     collector.count_add(
         RylvStr::from_static("bytes.received"),
         4096,
-        &mut [RylvStr::from_static("endpoint:/upload")],
+        &mut [RylvTag::from_static("endpoint:/upload")],
     );
 
     // Counter without tags

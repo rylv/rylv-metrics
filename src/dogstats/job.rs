@@ -1,5 +1,5 @@
-use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricKind, MetricSuffix};
-use crate::dogstats::writer::{StatsWriterHolder, StatsWriterTrait};
+use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricDrain, MetricSuffix};
+use crate::dogstats::writer::StatsWriterHolder;
 use crate::MetricResult;
 
 use bumpalo::Bump;
@@ -37,20 +37,14 @@ where
     MC::Hasher: BuildHasher + Clone + Send + Sync + 'static,
 {
     fn send_metrics(&mut self) -> SendResult {
-        let Some(drain) = self.collector.try_begin_drain() else {
+        let Some(mut drain) = self.collector.try_begin_drain() else {
             return SendResult::WouldBlock;
         };
 
         let mut percentile_suffix_cache = HashMap::<u64, &str>::new();
         let mut stats_writer = self.stats_writer.acquire();
         let can_use_stack = stats_writer.metric_copied();
-        for metric in drain {
-            let value = if can_use_stack {
-                self.buffer.format(metric.value)
-            } else {
-                Self::get_value(metric.value, &self.bump, &mut self.buffer)
-            };
-
+        for metric in drain.frames() {
             let mut metric_parts = ["", "", ""];
             let mut part_count = 0usize;
             if !metric.prefix.is_empty() {
@@ -78,19 +72,27 @@ where
                 }
             }
 
-            Self::send_metric(
-                &mut stats_writer,
-                &metric_parts[..part_count],
-                metric.tags,
-                value,
-                metric.kind,
-            );
+            let result = if can_use_stack {
+                stats_writer.write_copied(
+                    &metric_parts[..part_count],
+                    metric.tags,
+                    self.buffer.format(metric.value),
+                    metric.kind,
+                )
+            } else {
+                let value = Self::get_value(metric.value, &self.bump, &mut self.buffer);
+                stats_writer.write(&metric_parts[..part_count], metric.tags, value, metric.kind)
+            };
+            if let Err(err) = result {
+                error!("Error sending metrics. Error {err}");
+            }
         }
 
         if let Err(err) = stats_writer.flush() {
             error!("Error sending metrics: {err}");
         }
 
+        drop(stats_writer);
         drop(percentile_suffix_cache);
         self.bump.reset();
         SendResult::Ok
@@ -114,19 +116,6 @@ where
 
         let suffix = format!(".{percentile_number}percentile");
         bump.alloc_str(&suffix)
-    }
-
-    fn send_metric<'data>(
-        stats_writer: &mut dyn StatsWriterTrait,
-        metric: &[&'data str],
-        tags: &'data str,
-        value: &'data str,
-        metric_type: MetricKind,
-    ) {
-        match stats_writer.write(metric, tags, value, metric_type) {
-            Ok(()) => {}
-            Err(err) => error!("Error sending metrics. Error {err}"),
-        }
     }
 }
 

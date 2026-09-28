@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Breaking: `MetricDrain::next_frame()` is replaced by `frames()` and an associated
+  `Cursor<'a>: Iterator<Item = MetricFrameRef<'a>>`. Frames borrow the drained owner
+  and can survive cursor destruction; custom drains must keep their backing data
+  stable for that borrow.
+- Shared and TLS drains own aggregators directly, removing the self-referential
+  heap allocation. Entry removal and recycling happen when the owner is dropped.
+
+### Fixed
+- Batch UDP writers retain frame and formatting borrows until their scoped session
+  ends, and clear pending references on errors or early exit before storage is reused.
+- Recycled TLS timing histograms now observe the same pool cap as histograms.
+
+## [0.4.0] - 2026-07-20
+
+### Added
+- `RylvTag` type for tag values
+- `from_static` constructor for tags
+- Last-write-wins gauge method
+- `inline` and `cold` annotations on hot paths
+- More unit tests across collectors
+
+### Changed
+- Renamed `gauge` to `gauge_avg`
+- Raised Minimum Supported Rust Version (MSRV) to 1.88
+- Dependency updates (see `Cargo.lock`)
+
+### Fixed
+- `tls_collector` tests now use `RylvTag` instead of `RylvStr` for tag arguments
+
+### Internal
+- Cleanup across collector and aggregator modules
+
 ## [0.3.2] - 2026-05-16
 
 ### Changed
@@ -26,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SortedTags` for reusable pre-sorted tag sets that skip per-call sorting
 - `MetricCollector` now generic over any `DrainMetricCollectorTrait` inner collector
 - Batch UDP writers: `LinuxBatch` (sendmmsg) and `AppleBatch` (sendmsg_x)
-- Convenience macros: `histogram!`, `count!`, `count_add!`, `gauge!`
+- Convenience macros: `histogram!`, `count!`, `count_add!`, `gauge_avg!`
 - `HistogramConfig::with_count()`, `with_min()`, `with_avg()`, `with_max()` base metric toggles
 - `Bounds` for inclusive min/max histogram value clamping
 - Miri tests for `SharedCollector` and `TLSCollector` drain lifetime safety

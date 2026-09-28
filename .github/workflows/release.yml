@@ -67,7 +67,27 @@ jobs:
       - name: List package contents
         run: cargo package --list
 
+      - name: Determine whether semver checks apply
+        id: semver_scope
+        run: |
+          python3 - <<'PY'
+          import json, os, tomllib, urllib.request
+          from pathlib import Path
+          current = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          request = urllib.request.Request('https://crates.io/api/v1/crates/rylv-metrics', headers={'User-Agent': 'rylv-metrics-ci'})
+          with urllib.request.urlopen(request, timeout=60) as response:
+              published = json.load(response)['crate']['max_stable_version']
+          major, minor, _ = map(int, current.split('.'))
+          old_major, old_minor, _ = map(int, published.split('.'))
+          # cargo-semver-checks runs zero lints for a major release.
+          breaking_release = major > old_major or major == old_major == 0 and minor > old_minor
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f"required={str(not breaking_release).lower()}", file=output)
+          print(f"Published {published}; current {current}; semver check required: {not breaking_release}")
+          PY
+
       - name: Run cargo-semver-checks
+        if: steps.semver_scope.outputs.required == 'true'
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           feature-group: all-features

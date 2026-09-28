@@ -4,6 +4,7 @@ use rustix::net::SocketAddrAny;
 use std::os::fd::AsFd;
 
 use std::io::IoSlice;
+use std::marker::PhantomData;
 use std::net::{SocketAddr, UdpSocket};
 
 use crate::{MetricKind, MetricResult, StatsWriterType};
@@ -94,7 +95,6 @@ impl Writer for UdpSocketWriter {
 
     #[cfg(target_vendor = "apple")]
     fn get_destination_addr(&self) -> libc::sockaddr_in {
-        use std::net::SocketAddr;
         match self.destination_addr {
             SocketAddr::V4(addr) => {
                 let octets = addr.ip().octets();
@@ -109,9 +109,13 @@ impl Writer for UdpSocketWriter {
                     sin_zero: [0; 8],
                 }
             }
-            SocketAddr::V6(_) => {
-                unreachable!("IPv6 not supported for Apple batch writer")
-            }
+            SocketAddr::V6(_) => libc::sockaddr_in {
+                sin_len: 0,
+                sin_family: 0,
+                sin_port: 0,
+                sin_addr: libc::in_addr { s_addr: 0 },
+                sin_zero: [0; 8],
+            },
         }
     }
 
@@ -126,10 +130,11 @@ impl Writer for UdpSocketWriter {
 /// Implement this trait to send metrics to custom destinations or
 /// to add custom formatting/batching logic.
 pub trait StatsWriterTrait {
-    /// Returns whether metrics are copied to an internal buffer before sending.
-    /// If the return is false, then this library allocate space to keep it safe
-    /// if the return is true, then this library can pass reference to stack values
-    /// This method is probably the most polemic hint in this project, needs to be improved.
+    /// Returns whether formatting may use a temporary stack buffer.
+    ///
+    /// Custom writers must consume or copy input before `write` returns. Returning
+    /// `false` requests arena-backed numeric formatting, but does not extend the
+    /// lifetime of references supplied to this safe trait.
     fn metric_copied(&self) -> bool;
 
     /// Writes metrics to the underlying writer.
@@ -154,8 +159,78 @@ pub trait StatsWriterTrait {
     fn reset(&mut self);
 }
 
+// Only StatsGuard calls this internal interface. Backends may erase lifetimes
+// to reuse descriptor allocations, but must release every retained reference in
+// reset(), including after failed writes/flushes. No borrowed bytes are owned here.
+trait BorrowingStatsWriter {
+    fn metric_copied(&self) -> bool;
+
+    /// Caller keeps all referenced bytes alive and immutable until `reset()`.
+    /// The outer slice of metric parts only needs to live for this call.
+    /// A backend returning `metric_copied() == true` must not retain input references
+    /// during this session (until the next `reset()`).
+    unsafe fn write_borrowed(
+        &mut self,
+        metrics: &[&str],
+        tags: &str,
+        value: &str,
+        metric_type: MetricKind,
+    ) -> MetricResult<()>;
+
+    fn flush(&mut self) -> MetricResult<usize>;
+    fn reset(&mut self);
+}
+
+impl<T: StatsWriterTrait> BorrowingStatsWriter for T {
+    fn metric_copied(&self) -> bool {
+        StatsWriterTrait::metric_copied(self)
+    }
+
+    unsafe fn write_borrowed(
+        &mut self,
+        metrics: &[&str],
+        tags: &str,
+        value: &str,
+        kind: MetricKind,
+    ) -> MetricResult<()> {
+        StatsWriterTrait::write(self, metrics, tags, value, kind)
+    }
+
+    fn flush(&mut self) -> MetricResult<usize> {
+        StatsWriterTrait::flush(self)
+    }
+    fn reset(&mut self) {
+        StatsWriterTrait::reset(self);
+    }
+}
+
+#[cfg(feature = "custom_writer")]
+struct CustomWriter(Box<dyn StatsWriterTrait + Send + Sync>);
+
+#[cfg(feature = "custom_writer")]
+impl StatsWriterTrait for CustomWriter {
+    fn metric_copied(&self) -> bool {
+        self.0.metric_copied()
+    }
+    fn write(
+        &mut self,
+        metrics: &[&str],
+        tags: &str,
+        value: &str,
+        kind: MetricKind,
+    ) -> MetricResult<()> {
+        self.0.write(metrics, tags, value, kind)
+    }
+    fn flush(&mut self) -> MetricResult<usize> {
+        self.0.flush()
+    }
+    fn reset(&mut self) {
+        self.0.reset();
+    }
+}
+
 pub struct StatsWriterHolder {
-    writer: Box<dyn StatsWriterTrait>,
+    writer: Box<dyn BorrowingStatsWriter>,
 }
 
 impl StatsWriterHolder {
@@ -169,7 +244,7 @@ impl StatsWriterHolder {
         let stats_writer = match writer_type {
             StatsWriterType::Simple => {
                 Box::new(StatsWriterSimple::new(writer, max_udp_packet_size))
-                    as Box<dyn StatsWriterTrait>
+                    as Box<dyn BorrowingStatsWriter>
             }
 
             #[cfg(target_os = "linux")]
@@ -177,17 +252,17 @@ impl StatsWriterHolder {
                 writer,
                 max_udp_batch_size,
                 max_udp_packet_size,
-            )) as Box<dyn StatsWriterTrait>,
+            )) as Box<dyn BorrowingStatsWriter>,
 
             #[cfg(target_vendor = "apple")]
             StatsWriterType::AppleBatch => Box::new(StatsWriterApple::new(
                 writer,
                 max_udp_batch_size,
                 max_udp_packet_size,
-            )) as Box<dyn StatsWriterTrait>,
+            )) as Box<dyn BorrowingStatsWriter>,
 
             #[cfg(feature = "custom_writer")]
-            StatsWriterType::Custom(writer) => writer,
+            StatsWriterType::Custom(writer) => Box::new(CustomWriter(writer)),
         };
 
         Self {
@@ -195,44 +270,73 @@ impl StatsWriterHolder {
         }
     }
 
-    pub fn acquire(&mut self) -> StatsGuard<'_> {
-        StatsGuard {
-            writer: self.writer.as_mut(),
-        }
+    pub fn acquire<'data>(&mut self) -> StatsGuard<'_, 'data> {
+        StatsGuard::new(self.writer.as_mut())
     }
 }
 
-pub struct StatsGuard<'a> {
-    writer: &'a mut dyn StatsWriterTrait,
+// The persistent backend owns descriptor capacity; this session owns its borrows.
+// Drop clears retained pointers and returns descriptors to the reusable pool.
+pub struct StatsGuard<'writer, 'data> {
+    writer: &'writer mut dyn BorrowingStatsWriter,
+    copies_input: bool,
+    data: PhantomData<&'data str>,
 }
 
-impl Drop for StatsGuard<'_> {
+impl Drop for StatsGuard<'_, '_> {
     fn drop(&mut self) {
         self.writer.reset();
     }
 }
 
-impl StatsWriterTrait for StatsGuard<'_> {
-    fn metric_copied(&self) -> bool {
-        self.writer.metric_copied()
+impl<'writer, 'data> StatsGuard<'writer, 'data> {
+    fn new(writer: &'writer mut dyn BorrowingStatsWriter) -> Self {
+        let copies_input = writer.metric_copied();
+        Self {
+            writer,
+            copies_input,
+            data: PhantomData,
+        }
     }
 
-    fn write<'data>(
+    pub const fn metric_copied(&self) -> bool {
+        self.copies_input
+    }
+
+    pub fn write(
         &mut self,
         metrics: &[&'data str],
         tags: &'data str,
         value: &'data str,
         metric_type: MetricKind,
     ) -> MetricResult<()> {
-        self.writer.write(metrics, tags, value, metric_type)
+        // SAFETY: all bytes are borrowed for this session's 'data lifetime.
+        // Drop clears references before the caller can invalidate those bytes.
+        unsafe {
+            self.writer
+                .write_borrowed(metrics, tags, value, metric_type)
+        }
     }
 
-    fn flush(&mut self) -> MetricResult<usize> {
+    pub fn write_copied(
+        &mut self,
+        metrics: &[&str],
+        tags: &str,
+        value: &str,
+        metric_type: MetricKind,
+    ) -> MetricResult<()> {
+        if !self.copies_input {
+            return Err("writer retains borrowed input; use the scoped write method".into());
+        }
+        // SAFETY: the backend consumes/copies input before returning.
+        unsafe {
+            self.writer
+                .write_borrowed(metrics, tags, value, metric_type)
+        }
+    }
+
+    pub fn flush(&mut self) -> MetricResult<usize> {
         self.writer.flush()
-    }
-
-    fn reset(&mut self) {
-        self.writer.reset();
     }
 }
 
@@ -316,12 +420,12 @@ impl<T: Writer> StatsWriterLinux<T> {
 }
 
 #[cfg(target_os = "linux")]
-impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
+impl<T: Writer> BorrowingStatsWriter for StatsWriterLinux<T> {
     fn metric_copied(&self) -> bool {
         false
     }
 
-    fn write(
+    unsafe fn write_borrowed(
         &mut self,
         metrics: &[&str],
         tags: &str,
@@ -334,9 +438,9 @@ impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
         // format!("{}:{}|{}|#{}\n", metric, value, metric_type, tags);
         let metric_len = metric_len(metrics, tags, value, metric_type);
 
-        // SAFETY: this value is not copied in this method (false in return of metric_copied method), so in
-        // caller side must allocate and retain the correct value with a lifetime greater than the execution
-        // of this method because here we only use a reference.
+        // SAFETY: the scoped caller guarantees these bytes live until reset().
+        // Erasing the lifetime lets the persistent backend reuse descriptor capacity.
+        // These references never escape the backend or survive the session.
         let (metrics, tags, value, metric_type): (
             &[&'static str],
             &'static str,
@@ -385,9 +489,14 @@ impl<T: Writer> StatsWriterTrait for StatsWriterLinux<T> {
         self.flush()
     }
     fn reset(&mut self) {
-        // SAFETY: stats writers have been dropped, so there are no pointers to bump after the bump is reset
-        self.queued_transmits.clear();
+        // Clear every borrowed reference even if flush failed or was never called.
+        // Keep descriptor allocations for the next session.
         self.tmp_mmsghdrs.clear();
+        self.current_transmit.reset();
+        while let Some(mut transmit) = self.queued_transmits.pop() {
+            transmit.reset();
+            self.pool_transmits.push(transmit);
+        }
     }
 }
 
@@ -527,25 +636,26 @@ const fn metric_str(metric_type: MetricKind) -> &'static str {
     match metric_type {
         MetricKind::Count => "c",
         MetricKind::Gauge => "g",
+        MetricKind::Timing => "ms",
     }
 }
 
 #[cfg(target_vendor = "apple")]
-impl<T: Writer> StatsWriterTrait for StatsWriterApple<T> {
+impl<T: Writer> BorrowingStatsWriter for StatsWriterApple<T> {
     fn metric_copied(&self) -> bool {
         false
     }
 
-    fn write<'data>(
+    unsafe fn write_borrowed<'data>(
         &mut self,
         metrics: &[&'data str],
         tags: &'data str,
         value: &'data str,
         metric_type: MetricKind,
     ) -> MetricResult<()> {
-        // SAFETY: this value is not copied in this method (false in return of metric_copied method), so in
-        // caller side must allocate and retain the correct value with a lifetime greater than the execution
-        // of this method because here we only use a reference.
+        // SAFETY: the scoped caller guarantees these bytes live until reset().
+        // Erasing the lifetime lets the persistent backend reuse descriptor capacity.
+        // These references never escape the backend or survive the session.
         let (metrics, tags, value, metric_type) = unsafe {
             (
                 transmute::<&[&str], &[&str]>(metrics),
@@ -591,13 +701,14 @@ impl<T: Writer> StatsWriterTrait for StatsWriterApple<T> {
     }
 
     fn reset(&mut self) {
-        // SAFETY NOTE: so there are no pointers to bump after the bump is reset
-        // At this point current_transmit and queued_transmits should be empty because
-        // this reset is executed after flush
-        self.current_transmit.reset();
-        self.queued_transmits.clear();
-
+        // Clear every borrowed reference even if flush failed or was never called.
+        // Keep descriptor allocations for the next session.
         self.tmp_mmsghdrs.clear();
+        self.current_transmit.reset();
+        while let Some(mut transmit) = self.queued_transmits.pop() {
+            transmit.reset();
+            self.pool_transmits.push(transmit);
+        }
     }
 }
 
@@ -676,5 +787,294 @@ impl<T: Writer> StatsWriterTrait for StatsWriterSimple<T> {
 
     fn reset(&mut self) {
         self.current_transmit.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct MockWriter {
+        written: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl MockWriter {
+        fn new() -> Self {
+            Self {
+                written: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn take_written(&self) -> Vec<Vec<u8>> {
+            std::mem::take(&mut *self.written.borrow_mut())
+        }
+    }
+
+    impl Writer for MockWriter {
+        fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
+            self.written.borrow_mut().push(buf.to_vec());
+            Ok(buf.len())
+        }
+
+        #[cfg(target_os = "linux")]
+        fn write_mvec(
+            &self,
+            _pool_msg_headers: &mut [rustix::net::MMsgHdr<'_>],
+        ) -> MetricResult<usize> {
+            Ok(0)
+        }
+
+        #[cfg(target_os = "linux")]
+        fn get_destination(&self) -> &rustix::net::SocketAddrAny {
+            unimplemented!()
+        }
+
+        #[cfg(target_vendor = "apple")]
+        fn get_destination_addr(&self) -> libc::sockaddr_in {
+            unimplemented!()
+        }
+
+        #[cfg(target_vendor = "apple")]
+        fn as_raw_fd(&self) -> libc::c_int {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn simple_writer_writes_metric_with_tags() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer
+            .write(&["my.metric"], "env:prod", "42", MetricKind::Count)
+            .unwrap();
+        let flushed = StatsWriterTrait::flush(&mut writer).unwrap();
+        assert!(flushed > 0);
+
+        let written = mock.take_written();
+        assert_eq!(written.len(), 1);
+        let line = String::from_utf8(written[0].clone()).unwrap();
+        assert_eq!(line, "my.metric:42|c|#env:prod\n");
+    }
+
+    #[test]
+    fn simple_writer_writes_metric_without_tags() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer
+            .write(&["my.metric"], "", "10", MetricKind::Gauge)
+            .unwrap();
+        StatsWriterTrait::flush(&mut writer).unwrap();
+
+        let written = mock.take_written();
+        let line = String::from_utf8(written[0].clone()).unwrap();
+        assert_eq!(line, "my.metric:10|g\n");
+    }
+
+    #[test]
+    fn simple_writer_timing_metric_type() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer
+            .write(&["dur"], "", "100", MetricKind::Timing)
+            .unwrap();
+        StatsWriterTrait::flush(&mut writer).unwrap();
+
+        let written = mock.take_written();
+        let line = String::from_utf8(written[0].clone()).unwrap();
+        assert_eq!(line, "dur:100|ms\n");
+    }
+
+    #[test]
+    fn simple_writer_rejects_oversized_metric() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 20);
+
+        let result = writer.write(
+            &["a.very.long.metric.name.that.exceeds.packet"],
+            "tag:val",
+            "999999",
+            MetricKind::Count,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn simple_writer_flushes_when_full() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 40);
+
+        writer
+            .write(&["metric.a"], "", "1", MetricKind::Count)
+            .unwrap();
+        writer
+            .write(&["metric.b"], "", "2", MetricKind::Count)
+            .unwrap();
+        StatsWriterTrait::flush(&mut writer).unwrap();
+
+        let written = mock.take_written();
+        assert!(!written.is_empty());
+    }
+
+    #[test]
+    fn simple_writer_reset_clears_buffer() {
+        let mock = MockWriter::new();
+        let mut writer = StatsWriterSimple::new(&mock, 1432);
+
+        writer.write(&["m"], "", "1", MetricKind::Count).unwrap();
+        StatsWriterTrait::reset(&mut writer);
+        let flushed = StatsWriterTrait::flush(&mut writer).unwrap();
+        assert_eq!(flushed, 0);
+    }
+
+    #[test]
+    fn metric_len_with_tags() {
+        // "m:v|c|#t\n" = 1+1+1+1+1+1+2+1+1 = metric(1) + ':' + value(1) + '|' + type(1) + '|#' + tags(1) + '\n'
+        let len = metric_len(&["m"], "t", "v", "c");
+        assert_eq!(len, "m:v|c|#t\n".len());
+    }
+
+    #[test]
+    fn metric_len_without_tags() {
+        let len = metric_len(&["m"], "", "v", "c");
+        assert_eq!(len, "m:v|c\n".len());
+    }
+
+    #[test]
+    fn metric_str_maps_kinds() {
+        assert_eq!(metric_str(MetricKind::Count), "c");
+        assert_eq!(metric_str(MetricKind::Gauge), "g");
+        assert_eq!(metric_str(MetricKind::Timing), "ms");
+    }
+
+    #[test]
+    fn stats_guard_delegates_and_resets_on_drop() {
+        let mut simple = StatsWriterSimple::new(MockWriter::new(), 1432);
+
+        {
+            let mut guard = StatsGuard::new(&mut simple);
+            assert!(guard.metric_copied());
+            guard.write(&["m"], "", "1", MetricKind::Count).unwrap();
+            guard.flush().unwrap();
+        } // guard drops here, calling reset
+
+        // After drop, internal buffer should be cleared
+        let flushed = StatsWriterTrait::flush(&mut simple).unwrap();
+        assert_eq!(flushed, 0);
+    }
+
+    #[cfg(target_vendor = "apple")]
+    type PlatformBatch<T> = StatsWriterApple<T>;
+    #[cfg(target_os = "linux")]
+    type PlatformBatch<T> = StatsWriterLinux<T>;
+
+    #[cfg(any(target_vendor = "apple", target_os = "linux"))]
+    #[test]
+    fn batch_session_clears_references_on_error_and_unwind() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let mut batch = PlatformBatch::new(MockWriter::new(), 32, 16);
+        for unwind in [false, true] {
+            {
+                let names = ["first".to_owned(), "other".to_owned()];
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let mut session = StatsGuard::new(&mut batch);
+                    session
+                        .write(&[&names[0]], "", "1", MetricKind::Count)
+                        .unwrap();
+                    session
+                        .write(&[&names[1]], "", "2", MetricKind::Count)
+                        .unwrap();
+                    assert!(session
+                        .write(&["too_long_for_this_packet"], "", "1", MetricKind::Count)
+                        .is_err());
+                    assert!(!unwind, "simulated caller failure");
+                    // Deliberately leave current and queued packets unflushed.
+                }));
+                assert_eq!(result.is_err(), unwind);
+            } // Input strings are freed before the persistent backend is reused.
+            assert_eq!(batch.current_transmit.len(), 0);
+            assert!(batch.current_transmit.get_iovecs().is_empty());
+            assert!(batch.queued_transmits.is_empty());
+            assert!(batch.tmp_mmsghdrs.is_empty());
+            assert_eq!(batch.pool_transmits.len(), 1);
+            assert!(batch
+                .pool_transmits
+                .iter()
+                .all(|t| t.get_iovecs().is_empty()));
+        }
+    }
+
+    #[cfg(all(
+        feature = "allocationcounter",
+        any(target_vendor = "apple", target_os = "linux")
+    ))]
+    #[test]
+    fn batch_session_borrows_strings_without_allocating() {
+        let mut batch = PlatformBatch::new(MockWriter::new(), 32, 1432);
+        let names = ["first".to_owned(), "other".to_owned()];
+        let tags = "env:owned".to_owned();
+        let allocation = batch.current_transmit.get_iovecs().as_ptr();
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..100 {
+                let mut session = StatsGuard::new(&mut batch);
+                for name in &names {
+                    session
+                        .write(&[name], &tags, "1", MetricKind::Count)
+                        .unwrap();
+                }
+            }
+        });
+        assert_eq!(measured.count_total, 0);
+        assert_eq!(batch.current_transmit.get_iovecs().as_ptr(), allocation);
+    }
+
+    #[cfg(any(target_vendor = "apple", target_os = "linux"))]
+    #[test]
+    #[cfg_attr(miri, ignore)] // Miri does not implement UDP batch syscalls.
+    fn scoped_writers_send_distinct_owned_names_and_reuse_after_flush() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .unwrap();
+        let destination_addr = receiver.local_addr().unwrap();
+        #[cfg(target_vendor = "apple")]
+        let platform = StatsWriterType::AppleBatch;
+        #[cfg(target_os = "linux")]
+        let platform = StatsWriterType::LinuxBatch;
+
+        for kind in [StatsWriterType::Simple, platform] {
+            let socket = UdpSocketWriter {
+                sock: UdpSocket::bind("127.0.0.1:0").unwrap(),
+                destination_addr,
+                #[cfg(target_os = "linux")]
+                destination: destination_addr.into(),
+            };
+            let mut holder = StatsWriterHolder::new(socket, kind, 1432, 32);
+            for _ in 0..2 {
+                let names = ["first".to_owned(), "other".to_owned()];
+                let values = ["1".to_owned(), "2".to_owned()];
+                let tags = "env:owned".to_owned();
+                let mut session = holder.acquire();
+                for (name, value) in names.iter().zip(&values) {
+                    // The temporary parts array dies immediately after write.
+                    session
+                        .write(&[name], &tags, value, MetricKind::Count)
+                        .unwrap();
+                } // Cursor is gone; the owner keeps names, values and tags alive.
+                session.flush().unwrap();
+                drop(session);
+                drop((names, values, tags));
+                let mut packet = [0; 256];
+                let len = receiver.recv(&mut packet).unwrap();
+                assert_eq!(
+                    &packet[..len],
+                    b"first:1|c|#env:owned\nother:2|c|#env:owned\n"
+                );
+            }
+        }
     }
 }
