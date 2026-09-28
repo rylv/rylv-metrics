@@ -20,7 +20,7 @@ fn main() {
 
     loop {
         if let Some(mut drain) = collector.try_begin_drain() {
-            while let Some(frame) = drain.next_frame() {
+            for frame in drain.frames() {
                 println!("{:?}", frame);
             }
             break;

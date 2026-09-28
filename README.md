@@ -156,7 +156,7 @@ collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("en
 
 loop {
     if let Some(mut drain) = collector.try_begin_drain() {
-        while let Some(frame) = drain.next_frame() {
+        for frame in drain.frames() {
             // send frame to UDP/HTTP/queue/etc
             println!("{:?}", frame);
         }
@@ -164,6 +164,12 @@ loop {
     }
 }
 ```
+
+The drain owns the detached aggregator; `drain.frames()` returns a separate
+iterator borrowing it. Frames can outlive the iterator, for example while a
+transport batches them, but must be released before the drain is dropped or
+borrowed again. Names and tags reference the existing storage. Empty entries
+are removed when the drain is dropped, after all frame borrows have ended.
 
 ## TLS Collector
 
@@ -182,7 +188,7 @@ let collector = TLSCollector::new(TLSCollectorOptions::default());
 collector.count(RylvStr::from_static("requests"), &mut [RylvTag::from_static("env:test")]);
 
 if let Some(mut drain) = collector.try_begin_drain() {
-    while let Some(frame) = drain.next_frame() {
+    for frame in drain.frames() {
         // send frame to UDP/HTTP/queue/etc
         println!("{:?}", frame);
     }

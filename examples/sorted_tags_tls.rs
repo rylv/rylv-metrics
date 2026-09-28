@@ -21,7 +21,7 @@ fn main() {
 
     let drain = collector.try_begin_drain();
     if let Some(mut drain) = drain {
-        while let Some(frame) = drain.next_frame() {
+        for frame in drain.frames() {
             println!("{:?}", frame);
         }
     }

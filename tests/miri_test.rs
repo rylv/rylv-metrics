@@ -152,7 +152,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
     let mut saw_histogram = false;
     let mut saw_timing = false;
 
-    while let Some(frame) = drain.next_frame() {
+    for frame in drain.frames() {
         assert!(!frame.metric.is_empty());
         let rendered = match frame.suffix {
             MetricSuffix::None => frame.metric.to_string(),
@@ -196,7 +196,7 @@ fn miri_shared_drain_can_be_dropped_before_exhaustion() {
     let mut drain = collector
         .try_begin_drain()
         .expect("shared drain should become available");
-    assert!(drain.next_frame().is_some());
+    assert!(drain.frames().next().is_some());
     drop(drain);
 
     collector.count(RylvStr::from_static("after_drop"), &mut []);
@@ -234,7 +234,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
     let mut saw_histogram = false;
     let mut saw_timing = false;
 
-    while let Some(frame) = drain.next_frame() {
+    for frame in drain.frames() {
         assert!(!frame.metric.is_empty());
         let rendered = match frame.suffix {
             MetricSuffix::None => frame.metric.to_string(),
@@ -278,7 +278,7 @@ fn miri_tls_drain_can_be_dropped_before_exhaustion() {
     let mut drain = collector
         .try_begin_drain()
         .expect("tls drain should be immediately available");
-    assert!(drain.next_frame().is_some());
+    assert!(drain.frames().next().is_some());
     drop(drain);
 
     collector.count(RylvStr::from_static("after_drop"), &mut []);

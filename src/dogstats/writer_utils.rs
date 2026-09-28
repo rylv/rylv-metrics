@@ -53,7 +53,7 @@ impl<'data> Transmit<'data> {
         self.len
     }
 
-    #[cfg(target_vendor = "apple")]
+    #[cfg(any(target_vendor = "apple", test))]
     pub fn get_iovecs(&self) -> &[std::io::IoSlice<'data>] {
         &self.parts
     }

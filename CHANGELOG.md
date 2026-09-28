@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Breaking: `MetricDrain::next_frame()` is replaced by `frames()` and an associated
+  `Cursor<'a>: Iterator<Item = MetricFrameRef<'a>>`. Frames borrow the drained owner
+  and can survive cursor destruction; custom drains must keep their backing data
+  stable for that borrow.
+- Shared and TLS drains own aggregators directly, removing the self-referential
+  heap allocation. Entry removal and recycling happen when the owner is dropped.
+
+### Fixed
+- Batch UDP writers retain frame and formatting borrows until their scoped session
+  ends, and clear pending references on errors or early exit before storage is reused.
+- Recycled TLS timing histograms now observe the same pool cap as histograms.
+
 ## [0.4.0] - 2026-07-20
 
 ### Added

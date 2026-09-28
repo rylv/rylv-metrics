@@ -28,7 +28,7 @@ fn main() {
     // Poll until ownership is available, then consume borrowed frames.
     loop {
         if let Some(mut drain) = collector.try_begin_drain() {
-            while let Some(frame) = drain.next_frame() {
+            for frame in drain.frames() {
                 println!("{:?}", frame);
             }
             break;

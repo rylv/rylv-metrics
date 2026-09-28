@@ -24,7 +24,7 @@ where
         .try_begin_drain()
         .expect("tls drain should be available");
     let mut lines = Vec::new();
-    while let Some(frame) = drain.next_frame() {
+    for frame in drain.frames() {
         let mut metric = String::new();
         metric.push_str(frame.prefix);
         metric.push_str(frame.metric);

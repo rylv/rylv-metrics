@@ -126,7 +126,7 @@ fn test_shared_collector_handles_high_cardinality_tags() {
     let mut frame_count = 0;
     for _ in 0..8 {
         if let Some(mut drain) = collector.try_begin_drain() {
-            while let Some(frame) = drain.next_frame() {
+            for frame in drain.frames() {
                 assert_eq!(frame.metric, "high_cardinality.requests");
                 assert_eq!(frame.value, 1);
                 frame_count += 1;
@@ -155,7 +155,7 @@ fn test_shared_collector_handles_high_cardinality_metrics() {
     let mut frame_count = 0;
     for _ in 0..8 {
         if let Some(mut drain) = collector.try_begin_drain() {
-            while let Some(_frame) = drain.next_frame() {
+            for _frame in drain.frames() {
                 frame_count += 1;
             }
             break;
@@ -226,7 +226,7 @@ fn test_shared_collector_drain_when_empty() {
         if let Some(mut drain) = collector.try_begin_drain() {
             acquired = true;
             assert!(
-                drain.next_frame().is_none(),
+                drain.frames().next().is_none(),
                 "empty collector should yield no frames"
             );
             break;

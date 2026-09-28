@@ -12,12 +12,9 @@ use crate::dogstats::{
     RylvStr, RylvTag, SortedTags,
 };
 use crate::DefaultMetricHasher;
-use std::cell::UnsafeCell;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::hash::BuildHasher;
-use std::mem::ManuallyDrop;
-use std::ptr::addr_of_mut;
 use std::sync::Arc;
 
 use super::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain};
@@ -229,7 +226,7 @@ where
     gauge: HashTable<(AggregatorEntryKey<S>, GaugeStateHb)>,
     gauge_last: HashTable<(AggregatorEntryKey<S>, Option<u64>)>,
     pool_histograms: Vec<Vec<HistogramWrapper>>,
-    key_to_remove: Vec<RemoveKey>,
+    key_to_remove: Vec<(DrainStage, RemoveKey)>,
 }
 
 impl<S> GlobalAggregatorHb<S>
@@ -1384,80 +1381,77 @@ fn remove_from_table_callback<S: BuildHasher + Clone, V>(
     to_remove.clear();
 }
 
+/// Owns one drained generation, recycling it after all frame borrows end.
 pub struct TLSDrain<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    // This state contains references into the heap allocation owned by `_aggregator`. Keeping it
-    // behind `UnsafeCell` prevents moves and explicit `drop(drain)` calls from retagging those
-    // internal references as external borrows during destruction.
-    state: UnsafeCell<ManuallyDrop<TLSDrainState<'a, S>>>,
-    // Keep this field last: `Drop` destroys `state` before this guard reconstructs the box.
-    _aggregator: TLSAggregatorRecycleGuard<'a, S>,
+    collector: &'a TLSCollector<S>,
+    aggregator: Option<GlobalAggregatorHb<S>>,
 }
 
-struct TLSDrainState<'a, S>
+/// Cursor borrowing a detached TLS aggregator.
+pub struct TLSFrames<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
     prefix: &'a str,
     stage: DrainStage,
-    count_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, u64)>>,
-    gauge_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, GaugeStateHb)>>,
-    gauge_last_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, Option<u64>)>>,
-    histogram_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
-    timing_iter: Option<MyIterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
-
-    pool_histograms: &'a mut [Vec<HistogramWrapper>],
-    keys_to_remove: &'a mut Vec<RemoveKey>,
-    pending_histogram: Option<PendingHistogram<'a, S>>,
-    pending_timing: Option<PendingHistogram<'a, S>>,
-}
-
-struct TLSAggregatorRecycleGuard<'a, S>
-where
-    S: BuildHasher + Clone + Send + Sync + 'static,
-{
-    collector: &'a TLSCollector<S>,
-    aggregator: *mut GlobalAggregatorHb<S>,
+    count_iter: Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, u64)>>,
+    gauge_iter: Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, GaugeStateHb)>>,
+    gauge_last_iter:
+        Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, Option<u64>)>>,
+    histogram_iter:
+        Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
+    timing_iter:
+        Option<hashbrown::hash_table::IterMut<'a, (AggregatorEntryKey<S>, HistogramWrapper)>>,
+    keys_to_remove: &'a mut Vec<(DrainStage, RemoveKey)>,
+    pending_histogram: Option<PendingHistogram<'a>>,
+    pending_timing: Option<PendingHistogram<'a>>,
 }
 
 impl<'a, S> TLSDrain<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync,
 {
-    fn new(collector: &'a TLSCollector<S>, aggregator: GlobalAggregatorHb<S>) -> Self {
-        let global = Box::new(aggregator);
-        let global_ptr = Box::into_raw(global);
+    const fn new(collector: &'a TLSCollector<S>, aggregator: GlobalAggregatorHb<S>) -> Self {
         Self {
-            state: UnsafeCell::new(ManuallyDrop::new(TLSDrainState {
-                prefix: collector.stats_prefix.as_str(),
-                stage: DrainStage::Count,
-                count_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).count) })),
-                gauge_iter: Some(MyIterMut::new(unsafe { addr_of_mut!((*global_ptr).gauge) })),
-                gauge_last_iter: Some(MyIterMut::new(unsafe {
-                    addr_of_mut!((*global_ptr).gauge_last)
-                })),
-                histogram_iter: Some(MyIterMut::new(unsafe {
-                    addr_of_mut!((*global_ptr).histograms)
-                })),
-                timing_iter: Some(MyIterMut::new(unsafe {
-                    addr_of_mut!((*global_ptr).timings)
-                })),
-                pool_histograms: unsafe { &mut *addr_of_mut!((*global_ptr).pool_histograms) },
-                keys_to_remove: unsafe { &mut *addr_of_mut!((*global_ptr).key_to_remove) },
-                pending_histogram: None,
-                pending_timing: None,
-            })),
-            _aggregator: TLSAggregatorRecycleGuard {
-                collector,
-                aggregator: global_ptr,
-            },
+            collector,
+            aggregator: Some(aggregator),
         }
     }
 }
 
-impl<'a, S> TLSDrainState<'a, S>
+impl<S> MetricDrain for TLSDrain<'_, S>
+where
+    S: BuildHasher + Clone + Send + Sync + 'static,
+{
+    type Cursor<'a>
+        = TLSFrames<'a, S>
+    where
+        Self: 'a;
+
+    #[allow(clippy::unreachable)]
+    fn frames(&mut self) -> Self::Cursor<'_> {
+        let Some(global) = self.aggregator.as_mut() else {
+            unreachable!("drained aggregator is only taken during drop");
+        };
+        TLSFrames {
+            prefix: &self.collector.stats_prefix,
+            stage: DrainStage::Count,
+            count_iter: Some(global.count.iter_mut()),
+            gauge_iter: Some(global.gauge.iter_mut()),
+            gauge_last_iter: Some(global.gauge_last.iter_mut()),
+            histogram_iter: Some(global.histograms.iter_mut()),
+            timing_iter: Some(global.timings.iter_mut()),
+            keys_to_remove: &mut global.key_to_remove,
+            pending_histogram: None,
+            pending_timing: None,
+        }
+    }
+}
+
+impl<'a, S> TLSFrames<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync,
 {
@@ -1467,21 +1461,11 @@ where
                 let key = &mut entry.0;
                 let value = entry.1;
                 if value == 0 {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 }
 
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
-                // lifetime of `TLSDrain`. Non-empty count entries are not removed until the
-                // current count stage finishes, and the backing `GlobalAggregatorHb` is owned by
-                // `TLSDrain`, so the borrowed strings remain valid for the yielded frame.
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
 
                 entry.1 = 0;
                 return Some(MetricFrameRef {
@@ -1495,10 +1479,7 @@ where
             }
         }
 
-        if let Some(table) = self.count_iter.take().map(|iter| iter.table) {
-            let table = unsafe { &mut *table };
-            remove_from_table(table, self.keys_to_remove);
-        }
+        self.count_iter = None;
         self.stage = DrainStage::Gauge;
         None
     }
@@ -1510,22 +1491,12 @@ where
                 let gauge = &mut entry.1;
                 let count = gauge.count;
                 if count == 0 {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 }
 
                 let value = gauge.sum / count;
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
-                // lifetime of `TLSDrain`. Non-empty gauge entries are reset in place but are not
-                // removed until after the gauge stage, and the backing aggregator allocation stays
-                // owned by `TLSDrain`, so the borrowed strings remain valid for the yielded frame.
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
                 gauge.sum = 0;
                 gauge.count = 0;
 
@@ -1540,10 +1511,7 @@ where
             }
         }
 
-        if let Some(table) = self.gauge_iter.take().map(|iter| iter.table) {
-            let table = unsafe { &mut *table };
-            remove_from_table(table, self.keys_to_remove);
-        }
+        self.gauge_iter = None;
 
         self.stage = DrainStage::GaugeLast;
         None
@@ -1555,16 +1523,11 @@ where
                 let key = &mut entry.0;
                 let gauge_val = &mut entry.1;
                 let Some(value) = gauge_val.take() else {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 };
 
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
 
                 return Some(MetricFrameRef {
                     prefix: self.prefix,
@@ -1577,10 +1540,7 @@ where
             }
         }
 
-        if let Some(table) = self.gauge_last_iter.take().map(|iter| iter.table) {
-            let table = unsafe { &mut *table };
-            remove_from_table(table, self.keys_to_remove);
-        }
+        self.gauge_last_iter = None;
 
         self.stage = DrainStage::Histogram;
         None
@@ -1592,28 +1552,16 @@ where
                 let key = &mut histogram_entry.0;
                 let histo_wrapper = &mut histogram_entry.1;
                 if histo_wrapper.histogram.is_empty() {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 }
 
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
-                // lifetime of `TLSDrain`. Non-empty histogram entries are not removed until the
-                // histogram stage completes, and the backing `GlobalAggregatorHb` is owned by
-                // `TLSDrain`, so the borrowed strings remain valid across all percentile/base
-                // metric frames emitted from `pending_histogram`. The Miri TLS-drain test covers
-                // this invariant by reading borrowed frame fields across iteration.
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
 
                 let pending = PendingHistogram {
                     metric,
                     tags,
-                    entry: histogram_entry,
+                    entry: histo_wrapper,
                     step: 0,
                 };
                 self.pending_histogram = Some(pending);
@@ -1627,7 +1575,7 @@ where
     fn emit_pending_histogram(&mut self) -> Option<MetricFrameRef<'a>> {
         let mut pending = self.pending_histogram.take()?;
         loop {
-            let histo_wrapper = &mut pending.entry.1;
+            let histo_wrapper = &mut *pending.entry;
             let percentile_count = histo_wrapper.percentiles.len();
             let frame = match pending.step {
                 0 => {
@@ -1722,27 +1670,16 @@ where
                 let key = &mut timing_entry.0;
                 let histo_wrapper = &mut timing_entry.1;
                 if histo_wrapper.histogram.is_empty() {
-                    self.keys_to_remove.push(key.remove_key());
+                    self.keys_to_remove.push((self.stage, key.remove_key()));
                     continue;
                 }
 
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by the
-                // lifetime of `TLSDrain`. Non-empty timing entries are not removed until the
-                // timing stage completes, and the backing `GlobalAggregatorHb` is owned by
-                // `TLSDrain`, so the borrowed strings remain valid across all percentile/base
-                // metric frames emitted from `pending_timing`.
-                let (metric, tags) = unsafe {
-                    (
-                        std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
-                        std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
-                    )
-                };
+                let (metric, tags) = (key.metric.as_ref(), key.tags.joined_tags());
 
                 let pending = PendingHistogram {
                     metric,
                     tags,
-                    entry: timing_entry,
+                    entry: histo_wrapper,
                     step: 0,
                 };
                 self.pending_timing = Some(pending);
@@ -1756,7 +1693,7 @@ where
     fn emit_pending_timing(&mut self) -> Option<MetricFrameRef<'a>> {
         let mut pending = self.pending_timing.take()?;
         loop {
-            let histo_wrapper = &mut pending.entry.1;
+            let histo_wrapper = &mut *pending.entry;
             let percentile_count = histo_wrapper.percentiles.len();
             let frame = match pending.step {
                 0 => {
@@ -1846,80 +1783,66 @@ where
     }
 }
 
-impl<S> Drop for TLSAggregatorRecycleGuard<'_, S>
-where
-    S: BuildHasher + Clone + Send + Sync + 'static,
-{
-    #[cold]
-    fn drop(&mut self) {
-        // SAFETY: this guard is the last field of `TLSDrain`, so all fields borrowing from the
-        // allocation have already been dropped. The pointer came from `Box::into_raw` and this
-        // guard is its unique owner.
-        let aggregator = unsafe { *Box::from_raw(self.aggregator) };
-        self.collector.recycle_global(aggregator);
-    }
-}
-
 impl<S> Drop for TLSDrain<'_, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
     #[cold]
     fn drop(&mut self) {
-        // SAFETY: initialized once in `new` and dropped exactly once here. This releases every
-        // iterator and pending entry before `_aggregator` is dropped.
-        unsafe { ManuallyDrop::drop(&mut *self.state.get()) };
-    }
-}
-
-struct PendingHistogram<'a, S>
-where
-    S: BuildHasher + Clone,
-{
-    metric: &'a str,
-    tags: &'a str,
-    entry: &'a mut (AggregatorEntryKey<S>, HistogramWrapper),
-    step: usize,
-}
-
-struct MyIterMut<'a, T>
-where
-    T: 'a,
-{
-    table: *mut hashbrown::HashTable<T>,
-    iter_mut: hashbrown::hash_table::IterMut<'a, T>,
-}
-
-impl<T> MyIterMut<'_, T> {
-    fn new(table_ptr: *mut HashTable<T>) -> Self {
-        let iter_mut = unsafe { (*table_ptr).iter_mut() };
-        let static_iter = unsafe {
-            // SAFETY: `iter_mut` only gets stored inside `MyIterMut`, which itself is embedded in
-            // `TLSDrain<'a, _>`. `TLSDrain` owns the pointed-to table allocation through
-            // `aggregator`, so the table outlives the iterator for `'a`. `Drop` clears all
-            // iterators before freeing the backing `GlobalAggregatorHb`.
-            std::mem::transmute::<
-                hashbrown::hash_table::IterMut<'_, T>,
-                hashbrown::hash_table::IterMut<'_, T>,
-            >(iter_mut)
-        };
-
-        Self {
-            table: table_ptr,
-            iter_mut: static_iter,
+        if let Some(mut aggregator) = self.aggregator.take() {
+            for (stage, key) in aggregator.key_to_remove.drain(..) {
+                match stage {
+                    DrainStage::Count => remove_drained_key(&mut aggregator.count, &key),
+                    DrainStage::Gauge => remove_drained_key(&mut aggregator.gauge, &key),
+                    DrainStage::GaugeLast => remove_drained_key(&mut aggregator.gauge_last, &key),
+                    DrainStage::Histogram | DrainStage::Timing => {
+                        let table = if stage == DrainStage::Histogram {
+                            &mut aggregator.histograms
+                        } else {
+                            &mut aggregator.timings
+                        };
+                        if let Some((_, histogram)) = take_drained_key(table, &key) {
+                            let pool = &mut aggregator.pool_histograms[histogram.pool_id];
+                            if MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL
+                                .is_none_or(|cap| pool.len() < cap)
+                            {
+                                pool.push(histogram);
+                            }
+                        }
+                    }
+                    DrainStage::Done => {}
+                }
+            }
+            self.collector.recycle_global(aggregator);
         }
     }
 }
 
-impl<'a, T> Iterator for MyIterMut<'a, T> {
-    type Item = &'a mut T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter_mut.next()
-    }
+fn take_drained_key<S: BuildHasher + Clone, V>(
+    table: &mut HashTable<(AggregatorEntryKey<S>, V)>,
+    key: &RemoveKey,
+) -> Option<(AggregatorEntryKey<S>, V)> {
+    table
+        .find_entry(key.hash, |(k, _)| k.id == key.id)
+        .ok()
+        .map(|entry| entry.remove().0)
 }
 
-impl<'a, S> TLSDrainState<'a, S>
+fn remove_drained_key<S: BuildHasher + Clone, V>(
+    table: &mut HashTable<(AggregatorEntryKey<S>, V)>,
+    key: &RemoveKey,
+) {
+    let _ = take_drained_key(table, key);
+}
+
+struct PendingHistogram<'a> {
+    metric: &'a str,
+    tags: &'a str,
+    entry: &'a mut HistogramWrapper,
+    step: usize,
+}
+
+impl<'a, S> TLSFrames<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
@@ -1943,24 +1866,7 @@ where
                 }
                 DrainStage::Histogram => {
                     if self.pending_histogram.is_none() && !self.load_next_histogram() {
-                        if let Some(table) = self.histogram_iter.take().map(|iter| iter.table) {
-                            let table = unsafe { &mut *table };
-                            remove_from_table_callback(
-                                table,
-                                self.keys_to_remove,
-                                |v: HistogramWrapper| {
-                                    let index = v.pool_id;
-                                    debug_assert!(index < self.pool_histograms.len());
-                                    let pool =
-                                        unsafe { self.pool_histograms.get_unchecked_mut(index) };
-                                    if MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL
-                                        .is_none_or(|cap| pool.len() < cap)
-                                    {
-                                        pool.push(v);
-                                    }
-                                },
-                            );
-                        }
+                        self.histogram_iter = None;
                         self.stage = DrainStage::Timing;
                         continue;
                     }
@@ -1971,19 +1877,7 @@ where
                 }
                 DrainStage::Timing => {
                     if self.pending_timing.is_none() && !self.load_next_timing() {
-                        if let Some(table) = self.timing_iter.take().map(|iter| iter.table) {
-                            let table = unsafe { &mut *table };
-                            remove_from_table_callback(
-                                table,
-                                self.keys_to_remove,
-                                |v: HistogramWrapper| {
-                                    let index = v.pool_id;
-                                    debug_assert!(index < self.pool_histograms.len());
-                                    unsafe { self.pool_histograms.get_unchecked_mut(index) }
-                                        .push(v);
-                                },
-                            );
-                        }
+                        self.timing_iter = None;
                         self.stage = DrainStage::Done;
                         continue;
                     }
@@ -1998,14 +1892,14 @@ where
     }
 }
 
-impl<S> MetricDrain for TLSDrain<'_, S>
+impl<'a, S> Iterator for TLSFrames<'a, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
-        // SAFETY: `&mut self` guarantees exclusive access and `state` remains initialized until
-        // `Drop` runs.
-        TLSDrainState::next_frame(unsafe { &mut *self.state.get() })
+    type Item = MetricFrameRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_frame()
     }
 }
 
@@ -2045,7 +1939,7 @@ mod tests {
 
     fn format_drained_lines(mut drain: impl MetricDrain) -> Vec<String> {
         let mut lines = Vec::new();
-        while let Some(frame) = drain.next_frame() {
+        for frame in drain.frames() {
             let mut metric = String::new();
             metric.push_str(frame.prefix);
             metric.push_str(frame.metric);
@@ -2745,46 +2639,52 @@ mod tests {
     }
 
     #[test]
-    fn tls_drain_caps_recycled_global_histogram_pool_to_internal_limit() {
-        let hasher = crate::DefaultMetricHasher::new();
-        let resolved = resolve_histogram_configs(
-            HistogramConfig::default(),
-            HashMap::with_hasher(hasher.clone()),
-            &hasher,
-        );
-        let collector = TLSCollector::new(TLSCollectorOptions::default());
-        let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
-        let cap = MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL.unwrap();
-
-        for id in 0..=cap {
-            let metric = format!("empty_latency_{id}");
-            let key = build_lookup_key(
-                RylvStr::from(metric.as_str()),
-                &[RylvTag::from_static("a:1")],
+    fn tls_drain_caps_recycled_global_histogram_and_timing_pools() {
+        for timing in [false, true] {
+            let hasher = crate::DefaultMetricHasher::new();
+            let resolved = resolve_histogram_configs(
+                HistogramConfig::default(),
+                HashMap::with_hasher(hasher.clone()),
                 &hasher,
-            )
-            .into_key_with_id(id as u64);
-            let histogram = get_histogram_from_pool_config(
-                &mut global.pool_histograms,
-                &resolved.default_histogram_config,
-            )
-            .unwrap();
-            global
-                .histograms
-                .entry(key.hash, |(existing, _)| existing == &key, |(k, _)| k.hash)
-                .insert((key, histogram));
-        }
+            );
+            let collector = TLSCollector::new(TLSCollectorOptions::default());
+            let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+            let cap = MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL.unwrap();
 
-        {
-            let mut drain = TLSDrain::new(&collector, global);
-            assert!(drain.next_frame().is_none());
-        }
+            for id in 0..=cap {
+                let metric = format!("empty_latency_{id}");
+                let key = build_lookup_key(
+                    RylvStr::from(metric.as_str()),
+                    &[RylvTag::from_static("a:1")],
+                    &hasher,
+                )
+                .into_key_with_id(id as u64);
+                let histogram = get_histogram_from_pool_config(
+                    &mut global.pool_histograms,
+                    &resolved.default_histogram_config,
+                )
+                .unwrap();
+                let table = if timing {
+                    &mut global.timings
+                } else {
+                    &mut global.histograms
+                };
+                table
+                    .entry(key.hash, |(existing, _)| existing == &key, |(k, _)| k.hash)
+                    .insert((key, histogram));
+            }
 
-        let recycled = collector.recycled_global_aggregators.lock().pop().unwrap();
-        assert_eq!(
-            recycled.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
-            cap
-        );
+            {
+                let mut drain = TLSDrain::new(&collector, global);
+                assert!(drain.frames().next().is_none());
+            }
+
+            let recycled = collector.recycled_global_aggregators.lock().pop().unwrap();
+            assert_eq!(
+                recycled.pool_histograms[resolved.default_histogram_config.pool_id()].len(),
+                cap
+            );
+        }
     }
 
     #[test]

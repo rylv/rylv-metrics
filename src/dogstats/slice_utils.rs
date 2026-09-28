@@ -1,6 +1,6 @@
 // This method is polemic, but in some bench show better perf than using b1 == b2,
 // In near future maybe will be removed, for now I will keep it
-pub fn equal_slice(b1: &[u8], b2: &[u8]) -> bool {
+pub const fn equal_slice(b1: &[u8], b2: &[u8]) -> bool {
     if b1.len() != b2.len() {
         return false;
     }

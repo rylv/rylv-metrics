@@ -469,8 +469,10 @@ mod tests {
     struct EmptyDrain;
 
     impl MetricDrain for EmptyDrain {
-        fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
-            None
+        type Cursor<'a> = std::iter::Empty<MetricFrameRef<'a>>;
+
+        fn frames(&mut self) -> Self::Cursor<'_> {
+            std::iter::empty()
         }
     }
 

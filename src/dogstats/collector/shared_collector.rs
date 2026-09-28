@@ -1,7 +1,5 @@
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
-use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -136,29 +134,14 @@ impl Default for SharedCollector {
     }
 }
 
-/// Owned drain handle for collection.
-///
-/// This handle owns one drained aggregator generation and yields borrowed
-/// frames via its `Iterator` implementation. Dropping the handle recycles the
-/// aggregator for future collection rounds.
+/// Owns a drained aggregator generation, recycling it after all frame borrows end.
 pub struct SharedDrain<'a, S>
 where
     S: BuildHasher + Clone,
 {
-    // `Frames` borrows from the heap allocation owned by `_aggregator`. Keeping this
-    // self-referential state behind `UnsafeCell` prevents moves and explicit `drop(drain)` calls
-    // from retagging those internal references as external borrows during destruction.
-    frames: UnsafeCell<ManuallyDrop<Frames<'a, S>>>,
-    // Keep this field last: `Drop` destroys `frames` before this guard reconstructs the box.
-    _aggregator: SharedAggregatorRecycleGuard<'a, S>,
-}
-
-struct SharedAggregatorRecycleGuard<'a, S>
-where
-    S: BuildHasher + Clone,
-{
     collector: &'a SharedCollector<S>,
-    aggregator: *mut Aggregator<S>,
+    aggregator: Option<Aggregator<S>>,
+    removals: Vec<(DrainStage, RemoveKey)>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -219,13 +202,7 @@ where
     gauge_last_iter: Option<GaugeLastDrainIter<'a, S>>,
     histogram_iter: Option<HistogramDrainIter<'a, S>>,
     timing_iter: Option<TimingDrainIter<'a, S>>,
-    count: &'a DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
-    gauge: &'a DashMap<AggregatorEntryKey<S>, GaugeState, S>,
-    gauge_last: &'a DashMap<AggregatorEntryKey<S>, GaugeLastState, S>,
-    histogram: &'a DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
-    timing: &'a DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
-    pool_histograms: &'a [crossbeam::queue::SegQueue<HistogramWrapper>],
-    keys_to_remove: Vec<RemoveKey>,
+    keys_to_remove: &'a mut Vec<(DrainStage, RemoveKey)>,
     pending_histogram: Option<PendingHistogram<'a, S>>,
     pending_timing: Option<PendingHistogram<'a, S>>,
 }
@@ -291,19 +268,11 @@ where
             self.current_aggregator.swap(Arc::new(aggregator))
         };
         match Arc::try_unwrap(alloc_agg) {
-            Ok(aggregator) => {
-                let agg_ptr = Box::into_raw(Box::new(aggregator));
-                Some(SharedDrain {
-                    frames: UnsafeCell::new(ManuallyDrop::new(drain_aggregator_frames(
-                        unsafe { &*agg_ptr },
-                        self.stats_prefix.as_str(),
-                    ))),
-                    _aggregator: SharedAggregatorRecycleGuard {
-                        collector: self,
-                        aggregator: agg_ptr,
-                    },
-                })
-            }
+            Ok(aggregator) => Some(SharedDrain {
+                collector: self,
+                aggregator: Some(aggregator),
+                removals: Vec::new(),
+            }),
             Err(alloc_agg) => {
                 *pending = Some(alloc_agg);
                 None
@@ -316,11 +285,18 @@ impl<S> MetricDrain for SharedDrain<'_, S>
 where
     S: BuildHasher + Clone + Send + Sync + 'static,
 {
-    #[cold]
-    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>> {
-        // SAFETY: `&mut self` guarantees exclusive access. `Drop` destroys this state before the
-        // backing allocation is reclaimed.
-        unsafe { &mut *self.frames.get() }.next_frame()
+    type Cursor<'a>
+        = Frames<'a, S>
+    where
+        Self: 'a;
+
+    #[allow(clippy::unreachable)]
+    fn frames(&mut self) -> Self::Cursor<'_> {
+        // The Option is emptied only by Drop, after the final borrow has ended.
+        let Some(aggregator) = self.aggregator.as_mut() else {
+            unreachable!("drained aggregator is only taken during drop");
+        };
+        drain_aggregator_frames(aggregator, &self.collector.stats_prefix, &mut self.removals)
     }
 }
 
@@ -330,24 +306,35 @@ where
 {
     #[cold]
     fn drop(&mut self) {
-        // SAFETY: initialized once in `begin_drain` and dropped exactly once here. This releases
-        // all iterator guards before `_aggregator` is dropped.
-        unsafe { ManuallyDrop::drop(&mut *self.frames.get()) };
+        if let Some(aggregator) = self.aggregator.take() {
+            cleanup_drained_aggregator(&aggregator, &mut self.removals);
+            if let Ok(mut available) = self.collector.available_aggregator.try_lock() {
+                *available = Some(aggregator);
+            }
+        }
     }
 }
 
-impl<S> Drop for SharedAggregatorRecycleGuard<'_, S>
-where
-    S: BuildHasher + Clone,
-{
-    #[cold]
-    fn drop(&mut self) {
-        // SAFETY: this guard is the last field of `SharedDrain`, so all fields borrowing from
-        // the allocation have already been dropped. The pointer came from `Box::into_raw` and
-        // this guard is its unique owner.
-        let aggregator = unsafe { *Box::from_raw(self.aggregator) };
-        if let Ok(mut available) = self.collector.available_aggregator.try_lock() {
-            *available = Some(aggregator);
+fn cleanup_drained_aggregator<S: BuildHasher + Clone>(
+    aggregator: &Aggregator<S>,
+    removals: &mut Vec<(DrainStage, RemoveKey)>,
+) {
+    for (stage, key) in removals.drain(..) {
+        match stage {
+            DrainStage::Count => remove_from_map(&aggregator.count, &key, |_| ()),
+            DrainStage::Gauge => remove_from_map(&aggregator.gauge, &key, |_| ()),
+            DrainStage::GaugeLast => remove_from_map(&aggregator.gauge_last, &key, |_| ()),
+            DrainStage::Histogram | DrainStage::Timing => {
+                let map = if stage == DrainStage::Histogram {
+                    &aggregator.histograms
+                } else {
+                    &aggregator.timings
+                };
+                remove_from_map(map, &key, |value| {
+                    aggregator.pool_histograms[value.pool_id].push(value);
+                });
+            }
+            DrainStage::Done => {}
         }
     }
 }
@@ -608,13 +595,14 @@ where
             for entry in iter.by_ref() {
                 let value = entry.value().load(Ordering::SeqCst);
                 if value == 0 {
-                    self.keys_to_remove.push(entry.key().remove_key());
+                    self.keys_to_remove
+                        .push((self.stage, entry.key().remove_key()));
                     continue;
                 }
 
                 let key = entry.key();
-                // SAFETY: key metric/tags are stored in `Cow<'static, str>`. Entries with
-                // value > 0 are not removed in this drain cycle, so references remain valid.
+                // SAFETY: the cursor exclusively borrows the aggregator for 'a. Key strings
+                // stay in its entries; queued removals run only after all owner borrows end.
                 let (metric, tags) = unsafe {
                     (
                         std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
@@ -634,10 +622,6 @@ where
         }
 
         self.count_iter = None;
-        for key in &self.keys_to_remove {
-            remove_from_map(self.count, key, |_| ());
-        }
-        self.keys_to_remove.clear();
         self.stage = DrainStage::Gauge;
         None
     }
@@ -647,14 +631,15 @@ where
             for entry in iter.by_ref() {
                 let count = entry.count.load(Ordering::SeqCst);
                 if count == 0 {
-                    self.keys_to_remove.push(entry.key().remove_key());
+                    self.keys_to_remove
+                        .push((self.stage, entry.key().remove_key()));
                     continue;
                 }
 
                 let value = entry.sum.load(Ordering::SeqCst) / count;
                 let key = entry.key();
-                // SAFETY: key metric/tags are stored in `Cow<'static, str>`. Entries with
-                // count > 0 are not removed in this drain cycle, so references remain valid.
+                // SAFETY: the cursor exclusively borrows the aggregator for 'a. Key strings
+                // stay in its entries; queued removals run only after all owner borrows end.
                 let (metric, tags) = unsafe {
                     (
                         std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
@@ -675,10 +660,6 @@ where
         }
 
         self.gauge_iter = None;
-        for key in &self.keys_to_remove {
-            remove_from_map(self.gauge, key, |_k| ());
-        }
-        self.keys_to_remove.clear();
         self.stage = DrainStage::GaugeLast;
         None
     }
@@ -687,7 +668,8 @@ where
         if let Some(iter) = self.gauge_last_iter.as_mut() {
             for entry in iter.by_ref() {
                 let Some(value) = entry.value().take() else {
-                    self.keys_to_remove.push(entry.key().remove_key());
+                    self.keys_to_remove
+                        .push((self.stage, entry.key().remove_key()));
                     continue;
                 };
 
@@ -710,10 +692,6 @@ where
         }
 
         self.gauge_last_iter = None;
-        for key in &self.keys_to_remove {
-            remove_from_map(self.gauge_last, key, |_k| ());
-        }
-        self.keys_to_remove.clear();
         self.stage = DrainStage::Histogram;
         None
     }
@@ -722,19 +700,15 @@ where
         if let Some(iter) = self.histogram_iter.as_mut() {
             for histogram_entry in iter.by_ref() {
                 if histogram_entry.value().histogram.is_empty() {
-                    self.keys_to_remove.push(histogram_entry.key().remove_key());
+                    self.keys_to_remove
+                        .push((self.stage, histogram_entry.key().remove_key()));
                     continue;
                 }
 
                 let key = histogram_entry.key();
 
-                // SAFETY: `AggregatorEntryKey` stores owned `'static` metric/tag data.
-                // During drain we borrow those strings for `'a`, where `'a` is bounded by
-                // the lifetime of `SharedDrain`. Non-empty histogram entries are not removed
-                // until the drain completes, and the backing aggregator itself is owned by
-                // `SharedDrain`, so the borrowed strings remain valid for the entire iterator.
-                // The Miri shared-drain test exercises this invariant by reading frame fields
-                // across iteration before the drain is dropped.
+                // SAFETY: the cursor exclusively borrows the aggregator for 'a. Key strings
+                // stay in its entries; queued removals run only after all owner borrows end.
                 let (metric, tags) = unsafe {
                     (
                         std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
@@ -852,14 +826,15 @@ where
         if let Some(iter) = self.timing_iter.as_mut() {
             for timing_entry in iter.by_ref() {
                 if timing_entry.value().histogram.is_empty() {
-                    self.keys_to_remove.push(timing_entry.key().remove_key());
+                    self.keys_to_remove
+                        .push((self.stage, timing_entry.key().remove_key()));
                     continue;
                 }
 
                 let key = timing_entry.key();
 
-                // SAFETY: same invariant as `load_next_histogram` — owned `'static` data
-                // in `AggregatorEntryKey`, non-empty entries not removed during drain.
+                // SAFETY: the cursor exclusively borrows the aggregator for 'a. Key strings
+                // stay in its entries; queued removals run only after all owner borrows end.
                 let (metric, tags) = unsafe {
                     (
                         std::mem::transmute::<&str, &'a str>(key.metric.as_ref()),
@@ -995,14 +970,6 @@ where
                 DrainStage::Histogram => {
                     if self.pending_histogram.is_none() && !self.load_next_histogram() {
                         self.histogram_iter = None;
-                        for key in &self.keys_to_remove {
-                            remove_from_map(self.histogram, key, |v: HistogramWrapper| {
-                                let index = v.pool_id;
-                                debug_assert!(index < self.pool_histograms.len());
-                                unsafe { self.pool_histograms.get_unchecked(index) }.push(v);
-                            });
-                        }
-                        self.keys_to_remove.clear();
                         self.stage = DrainStage::Timing;
                         continue;
                     }
@@ -1014,14 +981,6 @@ where
                 DrainStage::Timing => {
                     if self.pending_timing.is_none() && !self.load_next_timing() {
                         self.timing_iter = None;
-                        for key in &self.keys_to_remove {
-                            remove_from_map(self.timing, key, |v: HistogramWrapper| {
-                                let index = v.pool_id;
-                                debug_assert!(index < self.pool_histograms.len());
-                                unsafe { self.pool_histograms.get_unchecked(index) }.push(v);
-                            });
-                        }
-                        self.keys_to_remove.clear();
                         self.stage = DrainStage::Done;
                         continue;
                     }
@@ -1037,9 +996,13 @@ where
 }
 
 #[cold]
-pub fn drain_aggregator_frames<'a, S>(
-    aggregator: &'a Aggregator<S>,
+// Exclusivity prevents mutation through DashMap's shared-reference APIs while
+// frames outlive their iterator guards and continue borrowing the stored keys.
+#[allow(clippy::needless_pass_by_ref_mut)]
+fn drain_aggregator_frames<'a, S>(
+    aggregator: &'a mut Aggregator<S>,
     prefix: &'a str,
+    removals: &'a mut Vec<(DrainStage, RemoveKey)>,
 ) -> Frames<'a, S>
 where
     S: BuildHasher + Clone,
@@ -1052,15 +1015,17 @@ where
         gauge_last_iter: Some(aggregator.gauge_last.iter()),
         histogram_iter: Some(aggregator.histograms.iter_mut()),
         timing_iter: Some(aggregator.timings.iter_mut()),
-        count: &aggregator.count,
-        gauge: &aggregator.gauge,
-        gauge_last: &aggregator.gauge_last,
-        histogram: &aggregator.histograms,
-        timing: &aggregator.timings,
-        pool_histograms: &aggregator.pool_histograms,
-        keys_to_remove: Vec::new(),
+        keys_to_remove: removals,
         pending_histogram: None,
         pending_timing: None,
+    }
+}
+
+impl<'a, S: BuildHasher + Clone> Iterator for Frames<'a, S> {
+    type Item = MetricFrameRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_frame()
     }
 }
 
@@ -1982,7 +1947,7 @@ mod tests {
 
     fn drain_to_lines(mut drain: impl MetricDrain) -> Vec<String> {
         let mut lines = Vec::new();
-        while let Some(frame) = drain.next_frame() {
+        for frame in drain.frames() {
             let mut metric = String::new();
             metric.push_str(frame.prefix);
             metric.push_str(frame.metric);
@@ -2303,12 +2268,17 @@ mod tests {
     #[test]
     fn raw_aggregator_record_helpers_cover_regular_sorted_and_prepared_paths() {
         let collector = SharedCollector::new(SharedCollectorOptions::default());
-        let aggregator =
+        let mut removals = Vec::new();
+        let mut aggregator =
             Aggregator::with_hasher_builder(&collector.hasher_builder, collector.pool_count);
 
         record_all_helper_variants(&collector, &aggregator);
 
-        let lines = frames_to_lines(drain_aggregator_frames(&aggregator, "agg."));
+        let lines = frames_to_lines(drain_aggregator_frames(
+            &mut aggregator,
+            "agg.",
+            &mut removals,
+        ));
         assert!(lines.contains(&"agg.requests:2|c|#a:1,b:2\n".to_string()));
         assert!(lines.contains(&"agg.requests_sorted:3|c|#a:1,b:2\n".to_string()));
         assert!(lines.contains(&"agg.requests_prepared:9|c|#a:1,b:2\n".to_string()));
@@ -2328,7 +2298,8 @@ mod tests {
             HashMap::with_hasher(hasher.clone()),
             &hasher,
         );
-        let aggregator = Aggregator::with_hasher_builder(&hasher, resolved.pool_count);
+        let mut removals = Vec::new();
+        let mut aggregator = Aggregator::with_hasher_builder(&hasher, resolved.pool_count);
         let empty_configs = HashMap::with_hasher(hasher);
 
         record_count_add_in_aggregator(
@@ -2388,9 +2359,10 @@ mod tests {
             .value_mut()
             .reset();
 
-        let mut frames = drain_aggregator_frames(&aggregator, "");
+        let mut frames = drain_aggregator_frames(&mut aggregator, "", &mut removals);
         assert!(frames.next_frame().is_none());
         drop(frames);
+        super::cleanup_drained_aggregator(&aggregator, &mut removals);
 
         assert!(aggregator.count.is_empty());
         assert!(aggregator.gauge.is_empty());
@@ -2508,7 +2480,8 @@ mod tests {
     #[test]
     fn gauge_last_raw_aggregator_helpers() {
         let collector = SharedCollector::new(SharedCollectorOptions::default());
-        let aggregator =
+        let mut removals = Vec::new();
+        let mut aggregator =
             Aggregator::with_hasher_builder(&collector.hasher_builder, collector.pool_count);
 
         let sorted = collector
@@ -2535,7 +2508,7 @@ mod tests {
         );
         record_gauge_last_in_aggregator_prepared(&aggregator, &prepared, 99);
 
-        let lines = frames_to_lines(drain_aggregator_frames(&aggregator, ""));
+        let lines = frames_to_lines(drain_aggregator_frames(&mut aggregator, "", &mut removals));
         assert!(lines.contains(&"gl:42|g|#a:1,b:2\n".to_string()));
         assert!(lines.contains(&"gl_sorted:77|g|#a:1,b:2\n".to_string()));
         assert!(lines.contains(&"gl_prepared:99|g|#a:1,b:2\n".to_string()));
@@ -2544,7 +2517,8 @@ mod tests {
     #[test]
     fn drain_frames_remove_empty_gauge_last_entries() {
         let hasher = crate::DefaultMetricHasher::new();
-        let aggregator = Aggregator::with_hasher_builder(&hasher, 0);
+        let mut removals = Vec::new();
+        let mut aggregator = Aggregator::with_hasher_builder(&hasher, 0);
 
         record_gauge_last_in_aggregator(
             &aggregator,
@@ -2555,9 +2529,10 @@ mod tests {
         // Clear the pending value to simulate "no writes this cycle".
         let _ = aggregator.gauge_last.iter().next().unwrap().value().take();
 
-        let mut frames = drain_aggregator_frames(&aggregator, "");
+        let mut frames = drain_aggregator_frames(&mut aggregator, "", &mut removals);
         assert!(frames.next_frame().is_none());
         drop(frames);
+        super::cleanup_drained_aggregator(&aggregator, &mut removals);
 
         assert!(aggregator.gauge_last.is_empty());
     }
@@ -2674,7 +2649,8 @@ mod tests {
     #[test]
     fn raw_aggregator_timing_helpers_cover_regular_sorted_and_prepared_paths() {
         let collector = SharedCollector::new(SharedCollectorOptions::default());
-        let aggregator =
+        let mut removals = Vec::new();
+        let mut aggregator =
             Aggregator::with_hasher_builder(&collector.hasher_builder, collector.pool_count);
 
         let sorted = collector
@@ -2714,7 +2690,11 @@ mod tests {
             70,
         );
 
-        let lines = frames_to_lines(drain_aggregator_frames(&aggregator, "agg."));
+        let lines = frames_to_lines(drain_aggregator_frames(
+            &mut aggregator,
+            "agg.",
+            &mut removals,
+        ));
         assert!(lines.contains(&"agg.timing.count:1|c|#a:1,b:2\n".to_string()));
         assert!(lines.contains(&"agg.timing_sorted.count:1|c|#a:1,b:2\n".to_string()));
         assert!(lines.contains(&"agg.timing_prepared.count:2|c|#a:1,b:2\n".to_string()));
@@ -2731,7 +2711,8 @@ mod tests {
             HashMap::with_hasher(hasher.clone()),
             &hasher,
         );
-        let aggregator = Aggregator::with_hasher_builder(&hasher, resolved.pool_count);
+        let mut removals = Vec::new();
+        let mut aggregator = Aggregator::with_hasher_builder(&hasher, resolved.pool_count);
         let empty_configs = HashMap::with_hasher(hasher);
 
         record_timing_in_aggregator(
@@ -2751,9 +2732,10 @@ mod tests {
             .value_mut()
             .reset();
 
-        let mut frames = drain_aggregator_frames(&aggregator, "");
+        let mut frames = drain_aggregator_frames(&mut aggregator, "", &mut removals);
         assert!(frames.next_frame().is_none());
         drop(frames);
+        super::cleanup_drained_aggregator(&aggregator, &mut removals);
 
         assert!(aggregator.timings.is_empty());
         assert!(
@@ -2800,7 +2782,8 @@ mod tests {
             HashMap::with_hasher(hasher.clone()),
             &hasher,
         );
-        let aggregator = Aggregator::with_hasher_builder(&hasher, resolved.pool_count);
+        let mut removals = Vec::new();
+        let mut aggregator = Aggregator::with_hasher_builder(&hasher, resolved.pool_count);
         let empty_configs = HashMap::with_hasher(hasher);
         let pool_id = resolved.default_histogram_config.pool_id();
 
@@ -2821,9 +2804,10 @@ mod tests {
             .value_mut()
             .reset();
 
-        let mut frames = drain_aggregator_frames(&aggregator, "");
+        let mut frames = drain_aggregator_frames(&mut aggregator, "", &mut removals);
         assert!(frames.next_frame().is_none());
         drop(frames);
+        super::cleanup_drained_aggregator(&aggregator, &mut removals);
 
         // One wrapper recycled from histogram drain into shared pool.
         assert_eq!(aggregator.pool_histograms[pool_id].len(), 1);
@@ -2842,7 +2826,7 @@ mod tests {
         assert_eq!(aggregator.pool_histograms[pool_id].len(), 0);
 
         // Drain the timing and verify it emits correctly with ms kind.
-        let lines = frames_to_lines(drain_aggregator_frames(&aggregator, ""));
+        let lines = frames_to_lines(drain_aggregator_frames(&mut aggregator, "", &mut removals));
         assert!(lines
             .iter()
             .any(|l| l.contains("duration") && l.contains("|ms")));

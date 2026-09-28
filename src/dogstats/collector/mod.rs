@@ -137,47 +137,65 @@ pub trait MetricCollectorTrait {
     fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
 }
 
-/// Trait for collectors that support draining aggregated metrics.
+/// Owns a drained generation and lends a separate frame cursor.
+///
+/// Frames borrow this owner, so they may outlive the cursor and be queued for
+/// batch I/O. The owner cannot be recycled while any of those frames are in use.
+/// Implementors store frame data in the owner; the cursor only traverses it.
+/// A cursor cannot yield references into a scratch buffer it reuses on `next()`:
+///
+/// ```compile_fail
+/// use rylv_metrics::{MetricFrameRef, MetricKind, MetricSuffix};
+/// struct ScratchCursor<'a> { name: &'a mut String }
+/// impl<'a> Iterator for ScratchCursor<'a> {
+///     type Item = MetricFrameRef<'a>;
+///     fn next(&mut self) -> Option<Self::Item> {
+///         self.name.clear();
+///         self.name.push_str("other");
+///         Some(MetricFrameRef {
+///             prefix: "", metric: &self.name, tags: "", value: 1,
+///             kind: MetricKind::Count, suffix: MetricSuffix::None,
+///         })
+///     }
+/// }
+/// ```
 pub trait MetricDrain {
-    /// Returns the next frame, borrowing it from this drain handle.
+    /// Cursor borrowing this drained generation.
+    type Cursor<'a>: Iterator<Item = MetricFrameRef<'a>>
+    where
+        Self: 'a;
+
+    /// Borrows the generation to traverse its pending metrics.
     ///
     /// ```compile_fail
-    /// # use rylv_metrics::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, RylvStr, SharedCollector};
-    /// let collector = SharedCollector::default();
-    /// collector.count(RylvStr::from_static("requests"), &mut []);
-    /// let mut drain = collector.try_begin_drain().unwrap();
-    /// let frame = drain.next_frame().unwrap();
+    /// # use rylv_metrics::MetricDrain;
+    /// fn recycle_too_early(mut drain: impl MetricDrain) {
+    /// let frame = drain.frames().next().unwrap();
     /// drop(drain);
     /// println!("{}", frame.metric);
+    /// }
     /// ```
-    fn next_frame(&mut self) -> Option<MetricFrameRef<'_>>;
+    fn frames(&mut self) -> Self::Cursor<'_>;
 
-    /// Visits every remaining frame without allowing one to escape the drain.
-    fn for_each_frame(&mut self, mut visit: impl FnMut(MetricFrameRef<'_>)) {
-        while let Some(frame) = self.next_frame() {
-            visit(frame);
-        }
+    /// Visits the remaining metrics through a borrowed cursor.
+    fn for_each_frame<'a>(&'a mut self, visit: impl FnMut(MetricFrameRef<'a>)) {
+        self.frames().for_each(visit);
     }
 
-    /// Consumes and counts all remaining frames.
+    /// Consumes and counts the remaining frames.
     fn count_frames(&mut self) -> usize {
-        let mut count = 0;
-        while self.next_frame().is_some() {
-            count += 1;
-        }
-        count
+        self.frames().count()
     }
 }
 
-/// Trait for collectors that provide a lending metric drain.
+/// Trait for collectors that provide owned drained generations.
 pub trait DrainMetricCollectorTrait: MetricCollectorTrait {
-    /// Lending drain handle returned by this collector.
+    /// Owner of a drained generation, recycled when dropped.
     type Drain<'a>: MetricDrain
     where
         Self: 'a;
 
-    /// Tries to begin a drain cycle, returning a handle to iterate over
-    /// aggregated metric frames.
+    /// Tries to detach a generation for draining through its borrowed cursor.
     fn try_begin_drain(&self) -> Option<Self::Drain<'_>>;
 }
 

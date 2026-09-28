@@ -14,7 +14,7 @@ where
     for _ in 0..8 {
         if let Some(mut drain) = collector.try_begin_drain() {
             let mut lines = Vec::new();
-            while let Some(frame) = drain.next_frame() {
+            for frame in drain.frames() {
                 let mut metric = String::new();
                 metric.push_str(frame.prefix);
                 metric.push_str(frame.metric);
@@ -150,7 +150,7 @@ fn test_shared_drain_frames_borrowed_output() {
     let mut seen = 0usize;
     for _ in 0..8 {
         if let Some(mut drain) = collector.try_begin_drain() {
-            while let Some(frame) = drain.next_frame() {
+            for frame in drain.frames() {
                 seen += 1;
                 assert_eq!(frame.prefix, "");
                 assert_eq!(frame.metric, "frames.count");

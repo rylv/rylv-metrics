@@ -28,7 +28,7 @@ fn main() {
 
         if let Some(mut drain) = collector.try_begin_drain() {
             println!("drain acquired after {attempts} attempt(s)");
-            while let Some(frame) = drain.next_frame() {
+            for frame in drain.frames() {
                 println!("{:?}", frame);
             }
             break;
