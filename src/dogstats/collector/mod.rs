@@ -52,6 +52,21 @@ pub trait MetricCollectorTrait {
     where
         TT: AsMut<[RylvTag<'t>]>;
 
+    /// Decrements a counter by one, stopping at zero.
+    fn count_dec<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.count_sub(metric, 1, tags);
+    }
+
+    /// Decrements a counter by the specified value, stopping at zero.
+    ///
+    /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
+    fn count_sub<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>;
+
     /// Records a gauge value representing a point-in-time measurement.
     ///
     /// Multiple gauge values for the same metric/tags are averaged on flush.
@@ -91,6 +106,14 @@ pub trait MetricCollectorTrait {
     /// Increments a counter by value using pre-sorted tags.
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
+    /// Decrements a counter by one using pre-sorted tags, stopping at zero.
+    fn count_dec_sorted(&self, metric: RylvStr<'_>, tags: &SortedTags<Self::Hasher>) {
+        self.count_sub_sorted(metric, 1, tags);
+    }
+
+    /// Decrements a counter by value using pre-sorted tags, stopping at zero.
+    fn count_sub_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+
     /// Records an averaged gauge using pre-sorted tags.
     fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
 
@@ -126,6 +149,14 @@ pub trait MetricCollectorTrait {
 
     /// Increments a counter by value using a prepared metric key.
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+
+    /// Decrements a counter by one using a prepared metric key, stopping at zero.
+    fn count_dec_prepared(&self, prepared: &PreparedMetric<Self::Hasher>) {
+        self.count_sub_prepared(prepared, 1);
+    }
+
+    /// Decrements a counter by value using a prepared metric key, stopping at zero.
+    fn count_sub_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
 
     /// Records an averaged gauge using a prepared metric key.
     fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);

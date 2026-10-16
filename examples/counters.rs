@@ -1,10 +1,11 @@
-//! Counter examples: `count` (increment by one) and `count_add` (increment by value).
+//! Counter examples: increment and decrement by one or by value.
 //!
 //! Run with: `cargo run --example counters`
 
 use rylv_metrics::{
-    count, count_add, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr,
-    RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterType,
+    count, count_add, count_dec, count_sub, MetricCollector, MetricCollectorOptions,
+    MetricCollectorTrait, RylvStr, RylvTag, SharedCollector, SharedCollectorOptions,
+    StatsWriterType,
 };
 use std::time::Duration;
 
@@ -44,6 +45,19 @@ fn main() {
         &mut [RylvTag::from_static("endpoint:/upload")],
     );
 
+    collector.count_dec(
+        RylvStr::from_static("http.requests"),
+        &mut [
+            RylvTag::from_static("endpoint:/users"),
+            RylvTag::from_static("method:get"),
+        ],
+    );
+    collector.count_sub(
+        RylvStr::from_static("bytes.received"),
+        512,
+        &mut [RylvTag::from_static("endpoint:/upload")],
+    );
+
     // Counter without tags
     collector.count(RylvStr::from_static("events.processed"), &mut []);
 
@@ -51,6 +65,8 @@ fn main() {
 
     count!(collector, "http.requests", "endpoint:/users", "method:post");
     count_add!(collector, "bytes.received", 2048, "endpoint:/upload");
+    count_dec!(collector, "http.requests", "endpoint:/users", "method:post");
+    count_sub!(collector, "bytes.received", 256, "endpoint:/upload");
     count!(collector, "events.processed");
 
     // Dynamic tags via format!

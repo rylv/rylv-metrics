@@ -596,11 +596,51 @@ where
         drop(aggregator);
     }
 
+    fn subtract_count(
+        &self,
+        hash: u64,
+        matches: impl Fn(&AggregatorEntryKey<S>) -> bool,
+        value: u64,
+    ) {
+        let mut remaining = value;
+        for buffer in &self.buffers {
+            let mut local = buffer.lock();
+            if let Some((_, count)) = local.count.find_mut(hash, |(key, _)| matches(key)) {
+                let consumed = (*count).min(remaining);
+                *count -= consumed;
+                remaining -= consumed;
+                if remaining == 0 {
+                    return;
+                }
+            }
+        }
+        if remaining != 0 {
+            let mut global = self.global_aggregator.lock();
+            if let Some((_, count)) = global.count.find_mut(hash, |(key, _)| matches(key)) {
+                *count = count.saturating_sub(remaining);
+            }
+        }
+    }
+
     fn record_count_add(&self, metric: RylvStr<'_>, value: u64, tags: &mut [RylvTag<'_>]) {
+        self.record_count_change(metric, value, tags, false);
+    }
+
+    fn record_count_change(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &mut [RylvTag<'_>],
+        subtract: bool,
+    ) {
         if tags.len() > 1 {
             tags.sort_unstable();
         }
         let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
+        if subtract {
+            self.subtract_count(lookup.hash, |key| lookup.compare(key), value);
+            return;
+        }
         let buffer = self.get_or_create_thread_local_aggregator();
         let mut aggregator = buffer.lock();
 
@@ -619,6 +659,16 @@ where
     }
 
     fn record_count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        self.record_count_change_sorted(metric, value, tags, false);
+    }
+
+    fn record_count_change_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<S>,
+        subtract: bool,
+    ) {
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
         let lookup = LookupKeySorted {
@@ -626,6 +676,11 @@ where
             sorted_tags: tags,
             hash,
         };
+
+        if subtract {
+            self.subtract_count(lookup.hash, |key| lookup.compare(key), value);
+            return;
+        }
 
         let buffer = self.get_or_create_thread_local_aggregator();
         let mut aggregator = buffer.lock();
@@ -645,6 +700,23 @@ where
     }
 
     fn record_count_add_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+        self.record_count_change_prepared(prepared, value, false);
+    }
+
+    fn record_count_change_prepared(
+        &self,
+        prepared: &PreparedMetric<S>,
+        value: u64,
+        subtract: bool,
+    ) {
+        if subtract {
+            self.subtract_count(
+                prepared.hash(),
+                |key| match_prepared_agg_key(key, prepared),
+                value,
+            );
+            return;
+        }
         let buffer = self.get_or_create_thread_local_aggregator();
         let mut aggregator = buffer.lock();
         let entry_id = prepared.prepared_id();
@@ -938,6 +1010,14 @@ where
     }
 
     #[inline]
+    fn count_sub<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.record_count_change(metric, value, tags.as_mut(), true);
+    }
+
+    #[inline]
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
@@ -969,6 +1049,11 @@ where
     #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         self.record_count_add_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn count_sub_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        self.record_count_change_sorted(metric, value, tags, true);
     }
 
     #[inline]
@@ -1014,6 +1099,11 @@ where
     #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.record_count_add_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn count_sub_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.record_count_change_prepared(prepared, value, true);
     }
 
     #[inline]
@@ -1063,6 +1153,14 @@ where
     }
 
     #[inline]
+    fn count_sub<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        (*self).count_sub(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
@@ -1094,6 +1192,11 @@ where
     #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).count_add_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn count_sub_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        (*self).count_sub_sorted(metric, value, tags);
     }
 
     #[inline]
@@ -1136,6 +1239,11 @@ where
     #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).count_add_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn count_sub_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        (*self).count_sub_prepared(prepared, value);
     }
 
     #[inline]
@@ -2276,7 +2384,7 @@ mod tests {
                 "tls.requests:5|c|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2292,13 +2400,13 @@ mod tests {
         );
 
         let first = drain_metrics_now(&collector);
-        assert!(!first.is_empty());
+        assert_ne!(first, Vec::<String>::new());
 
         let second = drain_metrics_now(&collector);
-        assert!(second.is_empty());
+        assert_eq!(second, Vec::<String>::new());
 
         let third = drain_metrics_now(&collector);
-        assert!(third.is_empty());
+        assert_eq!(third, Vec::<String>::new());
     }
 
     #[test]
@@ -2494,7 +2602,7 @@ mod tests {
 
         let lines = drain_metrics_now(&collector);
         assert_eq!(lines, vec!["app.connections:50|g|#pool:main\n".to_string()]);
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2861,7 +2969,7 @@ mod tests {
                 "tls.duration.min:40|ms|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]

@@ -25,7 +25,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rylv-metrics = "0.4.0"
+rylv-metrics = "0.5.0"
 ```
 
 Default build enables no transport or collector backend features.
@@ -33,7 +33,7 @@ Enable the APIs you want explicitly. For example, UDP sending with a inner colle
 
 ```toml
 [dependencies]
-rylv-metrics = { version = "0.4.0", features = ["udp", "shared-collector"] }
+rylv-metrics = { version = "0.5.0", features = ["udp", "shared-collector"] }
 ```
 
 ## Quick Start
@@ -120,11 +120,13 @@ You can configure per-metric or default histogram behavior with `HistogramConfig
 
 ### Counter
 
-Increments a counter, aggregated client-side:
+Increments or decrements a counter, aggregated client-side. Decrements stop at zero; zero counters are omitted on flush:
 
 ```rust
 count!(collector, "requests.total", "status:200");
 count_add!(collector, "bytes.sent", 1024, "endpoint:upload");
+count_dec!(collector, "connections.active", "pool:main");
+count_sub!(collector, "inventory.remaining", 5, "warehouse:east");
 ```
 
 ### Gauge
