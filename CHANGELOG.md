@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - Unreleased
+
+### Added
+- Counter decrement methods and macros for regular, sorted-tag, and prepared metrics.
+  Decrements saturate at zero, including across thread-local collector buffers.
+
 ### Changed
+- Breaking: `MetricCollectorTrait` implementors must provide `count_sub`,
+  `count_sub_sorted`, and `count_sub_prepared`.
 - Breaking: `MetricDrain::next_frame()` is replaced by `frames()` and an associated
   `Cursor<'a>: Iterator<Item = MetricFrameRef<'a>>`. Frames borrow the drained owner
   and can survive cursor destruction; custom drains must keep their backing data
