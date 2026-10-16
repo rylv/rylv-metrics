@@ -916,7 +916,7 @@ mod tests {
         StatsWriterTrait::flush(&mut writer).unwrap();
 
         let written = mock.take_written();
-        assert!(!written.is_empty());
+        assert_ne!(written, Vec::<Vec<u8>>::new());
     }
 
     #[test]

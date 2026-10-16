@@ -1754,6 +1754,21 @@ fn record_count_add_in_aggregator<S>(
     record_count_change_in_aggregator(aggregator, metric, value, mut_tags, false);
 }
 
+fn saturating_sub_atomic(counter: &AtomicU64, value: u64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        match counter.compare_exchange_weak(
+            current,
+            current.saturating_sub(value),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
 fn record_count_change_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
@@ -1771,9 +1786,7 @@ fn record_count_change_in_aggregator<S>(
         &aggregator.count,
         |v, value| {
             if subtract {
-                let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                    Some(current.saturating_sub(value))
-                });
+                saturating_sub_atomic(v, value);
             } else {
                 v.fetch_add(value, Ordering::Relaxed);
             }
@@ -1810,9 +1823,7 @@ fn record_count_change_in_aggregator_sorted<S>(
         &aggregator.count,
         |v, value| {
             if subtract {
-                let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                    Some(current.saturating_sub(value))
-                });
+                saturating_sub_atomic(v, value);
             } else {
                 v.fetch_add(value, Ordering::Relaxed);
             }
@@ -1846,9 +1857,7 @@ fn record_count_change_in_aggregator_prepared<S>(
         &aggregator.count,
         |v, value| {
             if subtract {
-                let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                    Some(current.saturating_sub(value))
-                });
+                saturating_sub_atomic(v, value);
             } else {
                 v.fetch_add(value, Ordering::Relaxed);
             }
@@ -2291,7 +2300,7 @@ mod tests {
                 "sans.requests:5|c|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2490,7 +2499,7 @@ mod tests {
 
         let lines = drain_metrics_now(&collector);
         assert_eq!(lines, vec!["app.connections:50|g|#pool:main\n".to_string()]);
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2862,7 +2871,7 @@ mod tests {
                 "sans.duration.min:40|ms|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
