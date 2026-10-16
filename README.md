@@ -120,11 +120,13 @@ You can configure per-metric or default histogram behavior with `HistogramConfig
 
 ### Counter
 
-Increments a counter, aggregated client-side:
+Increments or decrements a counter, aggregated client-side. Decrements stop at zero; zero counters are omitted on flush:
 
 ```rust
 count!(collector, "requests.total", "status:200");
 count_add!(collector, "bytes.sent", 1024, "endpoint:upload");
+count_dec!(collector, "connections.active", "pool:main");
+count_sub!(collector, "inventory.remaining", 5, "warehouse:east");
 ```
 
 ### Gauge

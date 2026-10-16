@@ -593,7 +593,7 @@ where
     fn emit_count_metric(&mut self) -> Option<MetricFrameRef<'a>> {
         if let Some(iter) = self.count_iter.as_mut() {
             for entry in iter.by_ref() {
-                let value = entry.value().load(Ordering::SeqCst);
+                let value = entry.value().swap(0, Ordering::SeqCst);
                 if value == 0 {
                     self.keys_to_remove
                         .push((self.stage, entry.key().remove_key()));
@@ -609,7 +609,6 @@ where
                         std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
                     )
                 };
-                entry.value().store(0, Ordering::SeqCst);
                 return Some(MetricFrameRef {
                     prefix: self.prefix,
                     metric,
@@ -1069,6 +1068,15 @@ where
     }
 
     #[inline]
+    fn count_sub<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        let aggregator = self.current_aggregator.load();
+        record_count_change_in_aggregator(&aggregator, metric, value, tags.as_mut(), true);
+    }
+
+    #[inline]
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
@@ -1119,6 +1127,12 @@ where
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_count_add_in_aggregator_sorted(&aggregator, metric, value, tags);
+    }
+
+    #[inline]
+    fn count_sub_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        let aggregator = self.current_aggregator.load();
+        record_count_change_in_aggregator_sorted(&aggregator, metric, value, tags, true);
     }
 
     #[inline]
@@ -1181,6 +1195,12 @@ where
     }
 
     #[inline]
+    fn count_sub_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+        let aggregator = self.current_aggregator.load();
+        record_count_change_in_aggregator_prepared(&aggregator, prepared, value, true);
+    }
+
+    #[inline]
     fn gauge_avg_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator_prepared(&aggregator, prepared, value);
@@ -1236,6 +1256,14 @@ where
     }
 
     #[inline]
+    fn count_sub<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        (*self).count_sub(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
@@ -1267,6 +1295,11 @@ where
     #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
         (*self).count_add_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn count_sub_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+        (*self).count_sub_sorted(metric, value, tags);
     }
 
     #[inline]
@@ -1309,6 +1342,11 @@ where
     #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         (*self).count_add_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn count_sub_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        (*self).count_sub_prepared(prepared, value);
     }
 
     #[inline]
@@ -1713,6 +1751,18 @@ fn record_count_add_in_aggregator<S>(
 ) where
     S: BuildHasher + Clone,
 {
+    record_count_change_in_aggregator(aggregator, metric, value, mut_tags, false);
+}
+
+fn record_count_change_in_aggregator<S>(
+    aggregator: &Aggregator<S>,
+    metric: RylvStr<'_>,
+    value: u64,
+    mut_tags: &mut [RylvTag<'_>],
+    subtract: bool,
+) where
+    S: BuildHasher + Clone,
+{
     mut_tags.sort_unstable();
     add_or_insert_entry_read_first(
         metric,
@@ -1720,7 +1770,13 @@ fn record_count_add_in_aggregator<S>(
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            if subtract {
+                let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    Some(current.saturating_sub(value))
+                });
+            } else {
+                v.fetch_add(value, Ordering::Relaxed);
+            }
             Ok(())
         },
         || Some(AtomicU64::new(0)),
@@ -1735,13 +1791,31 @@ fn record_count_add_in_aggregator_sorted<S>(
 ) where
     S: BuildHasher + Clone,
 {
+    record_count_change_in_aggregator_sorted(aggregator, metric, value, sorted_tags, false);
+}
+
+fn record_count_change_in_aggregator_sorted<S>(
+    aggregator: &Aggregator<S>,
+    metric: RylvStr<'_>,
+    value: u64,
+    sorted_tags: &SortedTags<S>,
+    subtract: bool,
+) where
+    S: BuildHasher + Clone,
+{
     add_or_insert_entry_read_first_sorted(
         metric,
         sorted_tags,
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            if subtract {
+                let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    Some(current.saturating_sub(value))
+                });
+            } else {
+                v.fetch_add(value, Ordering::Relaxed);
+            }
             Ok(())
         },
         || Some(AtomicU64::new(0)),
@@ -1755,12 +1829,29 @@ fn record_count_add_in_aggregator_prepared<S>(
 ) where
     S: BuildHasher + Clone,
 {
+    record_count_change_in_aggregator_prepared(aggregator, prepared, value, false);
+}
+
+fn record_count_change_in_aggregator_prepared<S>(
+    aggregator: &Aggregator<S>,
+    prepared: &PreparedMetric<S>,
+    value: u64,
+    subtract: bool,
+) where
+    S: BuildHasher + Clone,
+{
     add_or_insert_entry_read_first_prepared(
         prepared,
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            if subtract {
+                let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    Some(current.saturating_sub(value))
+                });
+            } else {
+                v.fetch_add(value, Ordering::Relaxed);
+            }
             Ok(())
         },
         || Some(AtomicU64::new(0)),

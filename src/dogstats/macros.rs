@@ -202,6 +202,32 @@ macro_rules! count_add {
     };
 }
 
+/// Decrements a counter by one, with optional tags.
+#[macro_export]
+macro_rules! count_dec {
+    ($collector:expr, $metric:expr $(, $tag:expr)+) => {{
+        let mut tags = [$($crate::RylvTag::from($tag)),*];
+        $collector.count_dec($crate::RylvStr::from($metric), &mut tags)
+    }};
+    ($collector:expr, $metric:expr) => {{
+        let mut tags: [$crate::RylvTag<'static>; 0] = [];
+        $collector.count_dec($crate::RylvStr::from($metric), &mut tags)
+    }};
+}
+
+/// Decrements a counter by a value, with optional tags.
+#[macro_export]
+macro_rules! count_sub {
+    ($collector:expr, $metric:expr, $value:expr $(, $tag:expr)+) => {{
+        let mut tags = [$($crate::RylvTag::from($tag)),*];
+        $collector.count_sub($crate::RylvStr::from($metric), $value, &mut tags)
+    }};
+    ($collector:expr, $metric:expr, $value:expr) => {{
+        let mut tags: [$crate::RylvTag<'static>; 0] = [];
+        $collector.count_sub($crate::RylvStr::from($metric), $value, &mut tags)
+    }};
+}
+
 /// Macro for recording a gauge value with variable number of tags.
 ///
 /// # Performance
@@ -442,6 +468,22 @@ macro_rules! count_add_sorted {
     }};
 }
 
+/// Decrements a counter by one with pre-sorted tags.
+#[macro_export]
+macro_rules! count_dec_sorted {
+    ($collector:expr, $metric:expr, $tags:expr) => {{
+        $collector.count_dec_sorted($crate::RylvStr::from($metric), $tags)
+    }};
+}
+
+/// Decrements a counter by a value with pre-sorted tags.
+#[macro_export]
+macro_rules! count_sub_sorted {
+    ($collector:expr, $metric:expr, $value:expr, $tags:expr) => {{
+        $collector.count_sub_sorted($crate::RylvStr::from($metric), $value, $tags)
+    }};
+}
+
 /// Macro for recording a gauge value with pre-sorted tags.
 #[macro_export]
 macro_rules! gauge_avg_sorted {
@@ -471,6 +513,22 @@ macro_rules! count_prepared {
 macro_rules! count_add_prepared {
     ($collector:expr, $prepared:expr, $value:expr) => {{
         $collector.count_add_prepared($prepared, $value)
+    }};
+}
+
+/// Decrements a counter by one with a prepared metric key.
+#[macro_export]
+macro_rules! count_dec_prepared {
+    ($collector:expr, $prepared:expr) => {{
+        $collector.count_dec_prepared($prepared)
+    }};
+}
+
+/// Decrements a counter by a value with a prepared metric key.
+#[macro_export]
+macro_rules! count_sub_prepared {
+    ($collector:expr, $prepared:expr, $value:expr) => {{
+        $collector.count_sub_prepared($prepared, $value)
     }};
 }
 

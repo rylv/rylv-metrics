@@ -16,7 +16,7 @@
 //! use rylv_metrics::{
 //!     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector,
 //! };
-//! use rylv_metrics::{histogram, count, count_add, gauge_avg};
+//! use rylv_metrics::{histogram, count, count_add, count_dec, count_sub, gauge_avg};
 //! use std::net::SocketAddr;
 //! use std::time::Duration;
 //!
@@ -37,12 +37,16 @@
 //! collector.histogram(RylvStr::from_static("request.latency"), 42, &mut [RylvTag::from_static("endpoint:api")]);
 //! collector.count(RylvStr::from_static("request.count"), &mut [RylvTag::from_static("endpoint:api")]);
 //! collector.count_add(RylvStr::from_static("bytes.sent"), 1024, &mut [RylvTag::from_static("endpoint:api")]);
+//! collector.count_dec(RylvStr::from_static("connections.active"), &mut [RylvTag::from_static("pool:main")]);
+//! collector.count_sub(RylvStr::from_static("bytes.sent"), 128, &mut [RylvTag::from_static("endpoint:api")]);
 //! collector.gauge_avg(RylvStr::from_static("connections.active"), 100, &mut [RylvTag::from_static("pool:main")]);
 //!
 //! // Convenience macros — allocate on first key insertion, but more ergonomic
 //! histogram!(collector, "request.latency", 42, "endpoint:api");
 //! count!(collector, "request.count", "endpoint:api");
 //! count_add!(collector, "bytes.sent", 1024, "endpoint:api");
+//! count_dec!(collector, "connections.active", "pool:main");
+//! count_sub!(collector, "bytes.sent", 128, "endpoint:api");
 //! gauge_avg!(collector, "connections.active", 100, "pool:main");
 //! # }
 //! ```

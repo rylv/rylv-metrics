@@ -212,6 +212,14 @@ where
     }
 
     #[inline]
+    fn count_sub<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    where
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.inner.count_sub(metric, value, tags);
+    }
+
+    #[inline]
     fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
@@ -243,6 +251,11 @@ where
     #[inline]
     fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
         self.inner.count_add_sorted(metric, value, tags);
+    }
+
+    #[inline]
+    fn count_sub_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+        self.inner.count_sub_sorted(metric, value, tags);
     }
 
     #[inline]
@@ -285,6 +298,11 @@ where
     #[inline]
     fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
         self.inner.count_add_prepared(prepared, value);
+    }
+
+    #[inline]
+    fn count_sub_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        self.inner.count_sub_prepared(prepared, value);
     }
 
     #[inline]
@@ -355,6 +373,13 @@ mod tests {
             self.record(format!("count_add:{}:{value}", metric.as_ref()));
         }
 
+        fn count_sub<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        where
+            TT: AsMut<[RylvTag<'t>]>,
+        {
+            self.record(format!("count_sub:{}:{value}", metric.as_ref()));
+        }
+
         fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
         where
             TT: AsMut<[RylvTag<'t>]>,
@@ -392,6 +417,15 @@ mod tests {
             _tags: &SortedTags<Self::Hasher>,
         ) {
             self.record(format!("count_add_sorted:{}:{value}", metric.as_ref()));
+        }
+
+        fn count_sub_sorted(
+            &self,
+            metric: RylvStr<'_>,
+            value: u64,
+            _tags: &SortedTags<Self::Hasher>,
+        ) {
+            self.record(format!("count_sub_sorted:{}:{value}", metric.as_ref()));
         }
 
         fn gauge_avg_sorted(
@@ -440,6 +474,13 @@ mod tests {
         fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
             self.record(format!(
                 "count_add_prepared:{}:{value}",
+                prepared.metric().as_ref()
+            ));
+        }
+
+        fn count_sub_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+            self.record(format!(
+                "count_sub_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
         }
@@ -623,6 +664,33 @@ mod tests {
                 "gauge:lww:42".to_string(),
                 "gauge_sorted:lww_s:43".to_string(),
                 "gauge_prepared:p:44".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn metric_collector_decrements_forward_to_inner() {
+        let inner = Arc::new(FakeInner::default());
+        let collector = collector_with_inner(Arc::clone(&inner));
+        let sorted = collector.prepare_sorted_tags([RylvTag::from_static("a:1")]);
+        let prepared = collector.prepare_metric(RylvStr::from_static("p"), sorted.clone());
+
+        collector.count_dec(RylvStr::from_static("direct"), &mut []);
+        collector.count_sub(RylvStr::from_static("direct"), 3, &mut []);
+        collector.count_dec_sorted(RylvStr::from_static("sorted"), &sorted);
+        collector.count_sub_sorted(RylvStr::from_static("sorted"), 4, &sorted);
+        collector.count_dec_prepared(&prepared);
+        collector.count_sub_prepared(&prepared, 5);
+
+        assert_eq!(
+            inner.take_calls(),
+            [
+                "count_sub:direct:1",
+                "count_sub:direct:3",
+                "count_sub_sorted:sorted:1",
+                "count_sub_sorted:sorted:4",
+                "count_sub_prepared:p:1",
+                "count_sub_prepared:p:5",
             ]
         );
     }

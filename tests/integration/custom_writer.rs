@@ -114,6 +114,29 @@ fn random_datadog_addr() -> std::net::SocketAddr {
     socket.local_addr().unwrap()
 }
 
+#[test]
+fn test_decrement_serializes_saturated_counter() {
+    let writer = TestStatsWriter::new(512);
+    let recorded = writer.clone();
+    let collector = MetricCollector::new(
+        "127.0.0.1:0".parse().unwrap(),
+        random_datadog_addr(),
+        MetricCollectorOptions {
+            writer_type: StatsWriterType::Custom(Box::new(writer)),
+            ..Default::default()
+        },
+        SharedCollector::default(),
+    )
+    .unwrap();
+
+    collector.count_add(RylvStr::from_static("balance"), 2, &mut []);
+    collector.count_sub(RylvStr::from_static("balance"), 5, &mut []);
+    collector.count_add(RylvStr::from_static("balance"), 4, &mut []);
+    drop(collector);
+
+    assert_eq!(recorded.get_all_metrics_as_text(), "balance:4|c\n");
+}
+
 // ============================================================================
 // Tests for Custom Writer
 // ============================================================================
