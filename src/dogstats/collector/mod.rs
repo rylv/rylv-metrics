@@ -1,5 +1,7 @@
 use std::hash::BuildHasher;
 
+use crate::MetricResult;
+
 use crate::dogstats::RylvStr;
 use crate::dogstats::RylvTag;
 use crate::dogstats::{PreparedMetric, SortedTags};
@@ -30,43 +32,57 @@ pub trait MetricCollectorTrait {
     /// before being sent to the server.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
-    fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    ///
+    /// # Errors
+    /// Returns `MetricResult::Err` when the value cannot be recorded into the
+    /// metric's histogram (for example a value above the configured maximum).
+    /// The aggregation state is unchanged; the caller decides how to report it.
+    fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>;
 
     /// Increments a counter by one.
     ///
     /// Counters are aggregated client-side and the total is sent on flush.
+    /// Negative values are supported: the window's net total is emitted, and it
+    /// may be negative.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, tags: TT)
     where
-        TT: AsMut<[RylvTag<'t>]>;
+        TT: AsMut<[RylvTag<'t>]>,
+    {
+        self.count_add(metric, 1, tags);
+    }
 
     /// Increments a counter by the specified value.
     ///
-    /// Counters are aggregated client-side and the total is sent on flush.
+    /// Counters are aggregated client-side and the window's net total is sent
+    /// on flush. Negative values are supported: the net total may be negative.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
-    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a gauge value representing a point-in-time measurement.
     ///
     /// Multiple gauge values for the same metric/tags are averaged on flush.
+    /// Negative values are supported and enter the average; the emitted mean
+    /// is a floating-point value.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
-    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a gauge value representing a point-in-time measurement.
     ///
     /// Only the last value recorded before flush is emitted (last-write-wins).
+    /// Negative values are supported.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
-    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>;
 
@@ -76,12 +92,26 @@ pub trait MetricCollectorTrait {
     /// with the `DogStatsD` `ms` metric type instead of gauge.
     ///
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
-    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    ///
+    /// # Errors
+    /// Returns `MetricResult::Err` when the value cannot be recorded into the
+    /// metric's histogram (for example a value above the configured maximum).
+    /// The aggregation state is unchanged; the caller decides how to report it.
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>;
 
     /// Records a histogram using pre-sorted tags.
-    fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+    ///
+    /// # Errors
+    /// Returns `MetricResult::Err` when the value cannot be recorded into the
+    /// metric's histogram (for example a value above the configured maximum).
+    fn histogram_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<Self::Hasher>,
+    ) -> MetricResult<()>;
 
     /// Increments a counter by one using pre-sorted tags.
     fn count_sorted(&self, metric: RylvStr<'_>, tags: &SortedTags<Self::Hasher>) {
@@ -89,16 +119,31 @@ pub trait MetricCollectorTrait {
     }
 
     /// Increments a counter by value using pre-sorted tags.
-    fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+    ///
+    /// Negative values are supported: the window's net total may be negative.
+    fn count_add_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<Self::Hasher>);
 
     /// Records an averaged gauge using pre-sorted tags.
-    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+    ///
+    /// Negative values are supported and enter the average.
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<Self::Hasher>);
 
     /// Records a last-write-wins gauge using pre-sorted tags.
-    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+    ///
+    /// Negative values are supported.
+    fn gauge_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<Self::Hasher>);
 
     /// Records a timing using pre-sorted tags.
-    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>);
+    ///
+    /// # Errors
+    /// Returns `MetricResult::Err` when the value cannot be recorded into the
+    /// metric's histogram (for example a value above the configured maximum).
+    fn timing_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<Self::Hasher>,
+    ) -> MetricResult<()>;
 
     /// Builds a [`SortedTags`] bound to this collector's hasher.
     fn prepare_sorted_tags<'a>(
@@ -117,7 +162,15 @@ pub trait MetricCollectorTrait {
     ) -> PreparedMetric<Self::Hasher>;
 
     /// Records a histogram using a prepared metric key.
-    fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+    ///
+    /// # Errors
+    /// Returns `MetricResult::Err` when the value cannot be recorded into the
+    /// metric's histogram (for example a value above the configured maximum).
+    fn histogram_prepared(
+        &self,
+        prepared: &PreparedMetric<Self::Hasher>,
+        value: u64,
+    ) -> MetricResult<()>;
 
     /// Increments a counter by one using a prepared metric key.
     fn count_prepared(&self, prepared: &PreparedMetric<Self::Hasher>) {
@@ -125,16 +178,30 @@ pub trait MetricCollectorTrait {
     }
 
     /// Increments a counter by value using a prepared metric key.
-    fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+    ///
+    /// Negative values are supported: the window's net total may be negative.
+    fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64);
 
     /// Records an averaged gauge using a prepared metric key.
-    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+    ///
+    /// Negative values are supported and enter the average.
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64);
 
     /// Records a last-write-wins gauge using a prepared metric key.
-    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+    ///
+    /// Negative values are supported.
+    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64);
 
     /// Records a timing using a prepared metric key.
-    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64);
+    ///
+    /// # Errors
+    /// Returns `MetricResult::Err` when the value cannot be recorded into the
+    /// metric's histogram (for example a value above the configured maximum).
+    fn timing_prepared(
+        &self,
+        prepared: &PreparedMetric<Self::Hasher>,
+        value: u64,
+    ) -> MetricResult<()>;
 }
 
 /// Owns a drained generation and lends a separate frame cursor.
@@ -145,7 +212,7 @@ pub trait MetricCollectorTrait {
 /// A cursor cannot yield references into a scratch buffer it reuses on `next()`:
 ///
 /// ```compile_fail
-/// use rylv_metrics::{MetricFrameRef, MetricKind, MetricSuffix};
+/// use rylv_metrics::{MetricFrameRef, MetricKind, MetricSuffix, MetricValue};
 /// struct ScratchCursor<'a> { name: &'a mut String }
 /// impl<'a> Iterator for ScratchCursor<'a> {
 ///     type Item = MetricFrameRef<'a>;
@@ -153,7 +220,7 @@ pub trait MetricCollectorTrait {
 ///         self.name.clear();
 ///         self.name.push_str("other");
 ///         Some(MetricFrameRef {
-///             prefix: "", metric: &self.name, tags: "", value: 1,
+///             prefix: "", metric: &self.name, tags: "", value: MetricValue::Int(1),
 ///             kind: MetricKind::Count, suffix: MetricSuffix::None,
 ///         })
 ///     }
@@ -199,6 +266,56 @@ pub trait DrainMetricCollectorTrait: MetricCollectorTrait {
     fn try_begin_drain(&self) -> Option<Self::Drain<'_>>;
 }
 
+/// Numeric value of a drained metric frame.
+///
+/// Integer metric values are `i64` (the domain of the reference `DogStatsD`
+/// clients): counters may emit negative net totals, and last-write-wins gauges
+/// may hold negative values. Averaged gauges and histogram `.avg` series are
+/// real means and are emitted as floating-point values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MetricValue {
+    /// An integer value (counters, last-write-wins gauges, histogram
+    /// `.count`/`.min`/`.max` and percentiles).
+    Int(i64),
+    /// A floating-point value (averaged gauges and histogram `.avg`).
+    Float(f64),
+}
+
+impl MetricValue {
+    /// Returns the integer value for [`MetricValue::Int`], `None` for
+    /// [`MetricValue::Float`].
+    #[must_use]
+    pub const fn as_int(self) -> Option<i64> {
+        match self {
+            Self::Int(value) => Some(value),
+            Self::Float(_) => None,
+        }
+    }
+
+    /// Returns the floating-point value (an [`MetricValue::Int`] is widened).
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // widening an integer metric value is the point
+    pub const fn as_f64(self) -> f64 {
+        match self {
+            Self::Int(value) => value as f64,
+            Self::Float(value) => value,
+        }
+    }
+}
+
+impl std::fmt::Display for MetricValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(value) => write!(f, "{value}"),
+            // Same plain-decimal formatting the `DogStatsD` writer uses.
+            Self::Float(value) => {
+                let mut out = String::new();
+                f.write_str(crate::dogstats::format::format_float(*value, &mut out))
+            }
+        }
+    }
+}
+
 /// Borrowed representation of a drained metric frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetricFrameRef<'a> {
@@ -211,7 +328,7 @@ pub struct MetricFrameRef<'a> {
     /// Tags in joined `DogStatsD` format.
     pub tags: &'a str,
     /// Numeric value.
-    pub value: u64,
+    pub value: MetricValue,
     /// Metric kind.
     pub kind: MetricKind,
 }
@@ -232,7 +349,9 @@ pub enum MetricSuffix<'a> {
 pub enum MetricKind {
     /// Counter metric (`|c`).
     Count,
-    /// Gauge metric (`|g`).
+    /// Gauge metric (`|g`), averaged over the flush window.
+    GaugeAvg,
+    /// Gauge metric (`|g`), last recorded value wins.
     Gauge,
     /// Timing metric (`|ms`).
     Timing,

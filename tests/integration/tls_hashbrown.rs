@@ -38,7 +38,7 @@ where
 
         let metric_type = match frame.kind {
             MetricKind::Count => "c",
-            MetricKind::Gauge => "g",
+            MetricKind::GaugeAvg | MetricKind::Gauge => "g",
             MetricKind::Timing => "ms",
         };
         if frame.tags.is_empty() {
@@ -69,7 +69,7 @@ fn test_tls_hashbrown_drain_consumes_prepared_metrics() {
         collector.prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
     let prepared = collector.prepare_metric(RylvStr::from_static("requests"), sorted);
 
-    collector.histogram_prepared(&prepared, 42);
+    let _ = collector.histogram_prepared(&prepared, 42);
 
     let lines = sorted_lines(drain_metrics_now(&collector));
     let expected_first = sorted_lines(vec![
@@ -88,7 +88,7 @@ fn test_tls_hashbrown_drain_consumes_prepared_metrics() {
         "drain must consume current aggregated state"
     );
 
-    collector.histogram_prepared(&prepared, 43);
+    let _ = collector.histogram_prepared(&prepared, 43);
     let drained_third = sorted_lines(drain_metrics_now(&collector));
     let expected_third = sorted_lines(vec![
         "tls.requests.count:1|c|#a:1,b:2\n".to_string(),

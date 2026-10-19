@@ -42,7 +42,7 @@ fn assert_compound_and_full_aggregate<C: DrainMetricCollectorTrait>(collector: C
             let frame = frames.next().expect("one aggregated counter");
             assert_eq!(frame.metric, "requests");
             assert_eq!(frame.tags, "route:/users,service:web");
-            assert_eq!(frame.value, 6);
+            assert_eq!(frame.value, rylv_metrics::MetricValue::Int(6));
             assert_eq!(frame.kind, MetricKind::Count);
             assert_eq!(frame.suffix, MetricSuffix::None);
             assert!(

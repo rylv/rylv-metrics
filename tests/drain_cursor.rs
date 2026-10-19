@@ -22,8 +22,8 @@ fn retained_frames_share_storage(collector: &impl DrainMetricCollectorTrait) {
     collector.count_add_prepared(&prepared[0], 1);
     collector.gauge_avg_prepared(&prepared[1], 2);
     collector.gauge_prepared(&prepared[2], 3);
-    collector.histogram_prepared(&prepared[3], 4);
-    collector.timing_prepared(&prepared[4], 5);
+    let _ = collector.histogram_prepared(&prepared[3], 4);
+    let _ = collector.timing_prepared(&prepared[4], 5);
     drop(prepared); // The aggregator must now keep the owned strings alive.
 
     let mut drain = collector.try_begin_drain().unwrap();
@@ -49,15 +49,15 @@ fn retained_frames_share_storage(collector: &impl DrainMetricCollectorTrait) {
     }
     assert_eq!(
         frames.iter().find(|f| f.metric == "counter").unwrap().value,
-        1
+        rylv_metrics::MetricValue::Int(1)
     );
     assert_eq!(
         frames.iter().find(|f| f.metric == "average").unwrap().value,
-        2
+        rylv_metrics::MetricValue::Float(2.0)
     );
     assert_eq!(
         frames.iter().find(|f| f.metric == "latest").unwrap().value,
-        3
+        rylv_metrics::MetricValue::Int(3)
     );
     drop(frames);
 
@@ -70,7 +70,7 @@ fn retained_frames_share_storage(collector: &impl DrainMetricCollectorTrait) {
 }
 
 fn retained_frame_survives_partial_cursor(collector: &impl DrainMetricCollectorTrait) {
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from("owned_histogram".to_owned()),
         42,
         &mut [RylvTag::from("owned:tag".to_owned())],
@@ -79,7 +79,7 @@ fn retained_frame_survives_partial_cursor(collector: &impl DrainMetricCollectorT
     let first = drain.frames().next().unwrap(); // Pending histogram guard is dropped.
     assert_eq!(first.metric, "owned_histogram");
     assert_eq!(first.tags, "owned:tag");
-    assert_eq!(first.value, 1); // Histogram count is emitted first.
+    assert_eq!(first.value, rylv_metrics::MetricValue::Int(1)); // Histogram count is emitted first.
     drop(drain);
     collector.count(RylvStr::from_static("after_drop"), &mut []);
     assert!(collector
@@ -126,7 +126,7 @@ fn frame_from_string(name: &String) -> MetricFrameRef<'_> {
         prefix: "",
         metric: name,
         tags: "",
-        value: 1,
+        value: rylv_metrics::MetricValue::Int(1),
         kind: MetricKind::Count,
         suffix: MetricSuffix::None,
     }

@@ -14,7 +14,7 @@ fn main() {
 
     count_add_sorted!(collector, "requests.total", 1, &request_tags);
     gauge_avg_sorted!(collector, "requests.inflight", 4, &request_tags);
-    histogram_sorted!(collector, "requests.latency_ms", 37, &request_tags);
+    let _ = histogram_sorted!(collector, "requests.latency_ms", 37, &request_tags);
 
     let prepared = collector.prepare_metric(RylvStr::from_static("requests.total"), request_tags);
     collector.count_add_prepared(&prepared, 1);

@@ -41,7 +41,7 @@ fn test_parallel_histogram_stress() {
                     let value = (thread_id * iterations_per_thread + i) as u64;
 
                     // Test histogram with static tags
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from_static("parallel.histogram.static"),
                         value,
                         [
@@ -51,7 +51,7 @@ fn test_parallel_histogram_stress() {
                     );
 
                     // Test histogram with dynamic tags
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from_static("parallel.histogram.dynamic"),
                         value,
                         [
@@ -61,7 +61,7 @@ fn test_parallel_histogram_stress() {
                     );
 
                     // Test histogram with mixed tags
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from_static("parallel.histogram.mixed"),
                         value,
                         [
@@ -119,7 +119,7 @@ fn test_parallel_mixed_metrics() {
                     match i % 4 {
                         0 => {
                             // Histogram
-                            collector.histogram(
+                            let _ = collector.histogram(
                                 RylvStr::from_static("parallel.mixed.histogram"),
                                 value,
                                 [RylvTag::from(RylvStr::from(tag.clone()))],
@@ -136,7 +136,7 @@ fn test_parallel_mixed_metrics() {
                             // Counter increment by value
                             collector.count_add(
                                 RylvStr::from_static("parallel.mixed.counter_value"),
-                                value,
+                                value as i64,
                                 [RylvTag::from(RylvStr::from(tag.clone()))],
                             );
                         }
@@ -144,7 +144,7 @@ fn test_parallel_mixed_metrics() {
                             // Gauge
                             collector.gauge_avg(
                                 RylvStr::from_static("parallel.mixed.gauge"),
-                                value,
+                                value as i64,
                                 [RylvTag::from(RylvStr::from(tag.clone()))],
                             );
                         }
@@ -176,7 +176,7 @@ fn test_parallel_high_contention() {
                 for i in 0..iterations_per_thread {
                     // All threads write to the same metric with same tags
                     // This creates high contention on the same hashmap entry
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from_static("parallel.contention.same_metric"),
                         (thread_id * iterations_per_thread + i) as u64,
                         [
@@ -209,7 +209,7 @@ fn test_parallel_many_unique_metrics() {
             thread::spawn(move || {
                 for i in 0..unique_metrics_per_thread {
                     let metric_name = format!("parallel.unique.metric.{}.{}", thread_id, i);
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from(metric_name),
                         i as u64,
                         [RylvTag::from_static("unique:metric")],
@@ -241,7 +241,7 @@ fn test_parallel_with_macro() {
                     let value = (thread_id * iterations_per_thread + i) as u64;
 
                     // Use macro with static tags
-                    histogram!(
+                    let _ = histogram!(
                         collector.as_ref(),
                         "macro.parallel.static",
                         value,
@@ -250,7 +250,7 @@ fn test_parallel_with_macro() {
                     );
 
                     // Use macro with dynamic tags
-                    histogram!(
+                    let _ = histogram!(
                         collector.as_ref(),
                         "macro.parallel.dynamic",
                         value,
@@ -259,7 +259,7 @@ fn test_parallel_with_macro() {
                     );
 
                     // Use macro with mixed tags
-                    histogram!(
+                    let _ = histogram!(
                         collector.as_ref(),
                         "macro.parallel.mixed",
                         value,
@@ -290,7 +290,7 @@ fn test_parallel_rapid_fire() {
             let collector = Arc::clone(&collector);
             thread::spawn(move || {
                 for i in 0..iterations_per_thread {
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from_static("parallel.rapid"),
                         i as u64,
                         [RylvTag::from(RylvStr::from(format!(
@@ -328,7 +328,7 @@ fn test_parallel_varying_tag_counts() {
                         0 => {
                             // No tags
                             let mut tags: [RylvTag<'_>; 0] = [];
-                            collector.histogram(
+                            let _ = collector.histogram(
                                 RylvStr::from_static("parallel.tags.none"),
                                 value,
                                 &mut tags,
@@ -336,7 +336,7 @@ fn test_parallel_varying_tag_counts() {
                         }
                         1 => {
                             // One tag
-                            collector.histogram(
+                            let _ = collector.histogram(
                                 RylvStr::from_static("parallel.tags.one"),
                                 value,
                                 [RylvTag::from_static("tag:one")],
@@ -344,7 +344,7 @@ fn test_parallel_varying_tag_counts() {
                         }
                         2 => {
                             // Two tags
-                            collector.histogram(
+                            let _ = collector.histogram(
                                 RylvStr::from_static("parallel.tags.two"),
                                 value,
                                 [
@@ -355,7 +355,7 @@ fn test_parallel_varying_tag_counts() {
                         }
                         3 => {
                             // Three tags with mix
-                            collector.histogram(
+                            let _ = collector.histogram(
                                 RylvStr::from_static("parallel.tags.three"),
                                 value,
                                 [
@@ -370,7 +370,7 @@ fn test_parallel_varying_tag_counts() {
                         }
                         4 => {
                             // Many tags
-                            collector.histogram(
+                            let _ = collector.histogram(
                                 RylvStr::from_static("parallel.tags.many"),
                                 value,
                                 [
@@ -415,7 +415,7 @@ fn test_parallel_all_operations() {
                     let thread_tag = format!("thread:{}", thread_id);
 
                     // Histogram
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from_static("stress.histogram"),
                         value,
                         [RylvTag::from(RylvStr::from(thread_tag.clone()))],
@@ -430,19 +430,19 @@ fn test_parallel_all_operations() {
                     // Counter increment by value
                     collector.count_add(
                         RylvStr::from_static("stress.counter.value"),
-                        value,
+                        value as i64,
                         [RylvTag::from(RylvStr::from(thread_tag.clone()))],
                     );
 
                     // Gauge
                     collector.gauge_avg(
                         RylvStr::from_static("stress.gauge"),
-                        value,
+                        value as i64,
                         [RylvTag::from(RylvStr::from(thread_tag.clone()))],
                     );
 
                     // Use macro
-                    histogram!(collector.as_ref(), "stress.macro", value, thread_tag);
+                    let _ = histogram!(collector.as_ref(), "stress.macro", value, thread_tag);
                 }
             })
         })

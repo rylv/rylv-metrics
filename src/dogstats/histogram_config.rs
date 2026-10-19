@@ -197,7 +197,8 @@ impl HistogramConfig {
 
     /// Enables or disables the `.avg` histogram metric.
     ///
-    /// Note: `.avg` currently reflects p50 behavior for compatibility.
+    /// The `.avg` series is the real mean of the recorded values, emitted as a
+    /// floating-point value.
     #[must_use]
     pub const fn with_avg(mut self, emit: bool) -> Self {
         self.set_emit_base_metric(HistogramBaseMetric::Avg, emit);

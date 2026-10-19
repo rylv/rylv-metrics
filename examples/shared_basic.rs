@@ -18,7 +18,7 @@ fn main() {
         256,
         &mut [RylvTag::from_static("service:web")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("service:web")],

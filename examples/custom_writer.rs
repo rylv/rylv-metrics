@@ -28,7 +28,7 @@ impl StatsWriterTrait for InMemoryWriter {
     ) -> MetricResult<()> {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
-            MetricKind::Gauge => "g",
+            MetricKind::GaugeAvg | MetricKind::Gauge => "g",
             MetricKind::Timing => "ms",
         };
         let metric_name: String = metrics.iter().copied().collect();

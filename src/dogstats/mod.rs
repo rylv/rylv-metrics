@@ -6,6 +6,7 @@ mod aggregator;
 pub mod collector;
 #[cfg(feature = "udp")]
 mod collector_udp;
+mod format;
 mod histogram_config;
 #[cfg(feature = "udp")]
 mod job;
@@ -23,7 +24,7 @@ pub use aggregator::SigFig;
 pub use aggregator::{AggregatorEntryKey, LookupKey};
 pub use collector::MetricCollectorTrait;
 pub use collector::{DrainMetricCollectorTrait, MetricDrain};
-pub use collector::{MetricFrameRef, MetricKind, MetricSuffix};
+pub use collector::{MetricFrameRef, MetricKind, MetricSuffix, MetricValue};
 #[cfg(feature = "shared-collector")]
 pub use collector::{SharedCollector, SharedCollectorOptions};
 #[cfg(feature = "tls-collector")]
