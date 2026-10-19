@@ -39,7 +39,7 @@ fn main() {
 
             for i in 0..100 {
                 // Direct API
-                collector.histogram(
+                let _ = collector.histogram(
                     RylvStr::from_static("task.duration"),
                     i * 10,
                     &mut [

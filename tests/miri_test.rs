@@ -37,7 +37,7 @@ impl StatsWriterTrait for MiriCustomWriter {
     ) -> MetricResult<()> {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
-            MetricKind::Gauge => "g",
+            MetricKind::GaugeAvg | MetricKind::Gauge => "g",
             MetricKind::Timing => "ms",
         };
         for metric in metrics {
@@ -127,12 +127,12 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
         256,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.timing(
+    let _ = collector.timing(
         RylvStr::from_static("duration_ms"),
         55,
         &mut [RylvTag::from_static("env:test")],
@@ -163,7 +163,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
 
         match frame.kind {
             FrameMetricKind::Count => saw_count = true,
-            FrameMetricKind::Gauge => {
+            FrameMetricKind::GaugeAvg | FrameMetricKind::Gauge => {
                 saw_gauge = true;
                 if frame.metric == "latency_ms" {
                     saw_histogram = true;
@@ -187,7 +187,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
 #[test]
 fn miri_shared_drain_can_be_dropped_before_exhaustion() {
     let collector = SharedCollector::default();
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],
@@ -216,12 +216,12 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
         256,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.timing(
+    let _ = collector.timing(
         RylvStr::from_static("duration_ms"),
         55,
         &mut [RylvTag::from_static("env:test")],
@@ -245,7 +245,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
 
         match frame.kind {
             FrameMetricKind::Count => saw_count = true,
-            FrameMetricKind::Gauge => {
+            FrameMetricKind::GaugeAvg | FrameMetricKind::Gauge => {
                 saw_gauge = true;
                 if frame.metric == "latency_ms" {
                     saw_histogram = true;
@@ -269,7 +269,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
 #[test]
 fn miri_tls_drain_can_be_dropped_before_exhaustion() {
     let collector = TLSCollector::new(TLSCollectorOptions::default());
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],

@@ -38,7 +38,7 @@ fn test_collector_survives_unreachable_destination() {
             RylvStr::from_static("dead.target.count"),
             &mut [RylvTag::from_static("scenario:unreachable")],
         );
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("dead.target.hist"),
             i,
             &mut [RylvTag::from_static("scenario:unreachable")],
@@ -128,7 +128,7 @@ fn test_shared_collector_handles_high_cardinality_tags() {
         if let Some(mut drain) = collector.try_begin_drain() {
             for frame in drain.frames() {
                 assert_eq!(frame.metric, "high_cardinality.requests");
-                assert_eq!(frame.value, 1);
+                assert_eq!(frame.value, rylv_metrics::MetricValue::Int(1));
                 frame_count += 1;
             }
             break;

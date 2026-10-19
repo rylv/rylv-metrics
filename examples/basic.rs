@@ -27,7 +27,7 @@ fn main() {
         .expect("failed to create collector");
 
     // Histogram — tracks distribution of values (emits min, avg, max, 99th percentile, count)
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.latency"),
         42,
         &mut [
@@ -57,7 +57,7 @@ fn main() {
     );
 
     // Metrics without tags
-    collector.histogram(RylvStr::from_static("memory.usage"), 512, &mut []);
+    let _ = collector.histogram(RylvStr::from_static("memory.usage"), 512, &mut []);
     collector.count(RylvStr::from_static("heartbeat"), &mut []);
 
     // Shutdown flushes pending metrics before exiting

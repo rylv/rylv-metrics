@@ -45,7 +45,7 @@ impl StatsWriterTrait for TestStatsWriter {
     ) -> MetricResult<()> {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
-            MetricKind::Gauge => "g",
+            MetricKind::GaugeAvg | MetricKind::Gauge => "g",
             MetricKind::Timing => "ms",
         };
         let mut buffer = self.current_buffer.lock().unwrap();
@@ -156,7 +156,7 @@ fn test_custom_writer_basic() -> std::io::Result<()> {
     );
 
     // Test histogram
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("custom.histogram"),
         250,
         &mut [RylvTag::from_static("endpoint:/api")],
@@ -227,7 +227,7 @@ fn test_custom_writer_no_tags() -> std::io::Result<()> {
     let mut empty_tags: [RylvTag<'_>; 0] = [];
     collector.count(RylvStr::from_static("notags.counter"), &mut empty_tags);
     collector.gauge_avg(RylvStr::from_static("notags.gauge"), 100, &mut empty_tags);
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("notags.histogram"),
         250,
         &mut empty_tags,
@@ -295,7 +295,7 @@ fn test_custom_writer_with_prefix() -> std::io::Result<()> {
         512,
         &mut [RylvTag::from_static("unit:mb")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency"),
         150,
         &mut [RylvTag::from_static("service:api")],
@@ -377,22 +377,22 @@ fn test_custom_writer_aggregation() -> std::io::Result<()> {
     );
 
     // Test histogram aggregation
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         100,
         &mut [RylvTag::from_static("endpoint:/users")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         200,
         &mut [RylvTag::from_static("endpoint:/users")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         150,
         &mut [RylvTag::from_static("endpoint:/users")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         300,
         &mut [RylvTag::from_static("endpoint:/users")],
@@ -498,7 +498,7 @@ fn test_custom_writer_skip_histogram_base_metrics() -> std::io::Result<()> {
     let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
         .expect("failed to create collector");
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("configurable.histogram"),
         123,
         &mut [RylvTag::from_static("scope:test")],
@@ -562,7 +562,7 @@ fn test_custom_writer_custom_percentiles_skip_count_min() -> std::io::Result<()>
     let collector = MetricCollector::new(bind_addr, datadog_addr, options, inner)
         .expect("failed to create collector");
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("custom.percentiles.histogram"),
         100,
         &mut [RylvTag::from_static("scope:test")],

@@ -106,7 +106,7 @@ fn test_build_collector() -> std::io::Result<()> {
 
     let collector = create_collector(port, DEFAULT_STATS_WRITER_TYPE, String::new(), 284);
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("some.metric"),
         1,
         &mut [
@@ -114,7 +114,7 @@ fn test_build_collector() -> std::io::Result<()> {
             RylvTag::from_static("tag2:value2"),
         ],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("some.metric"),
         1,
         &mut [
@@ -169,12 +169,12 @@ fn test_simple_writer() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::Simple, String::new(), 261);
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("test.simple.writer"),
         10,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("test.simple.writer"),
         20,
         &mut [RylvTag::from_static("env:prod")],
@@ -223,12 +223,12 @@ fn test_apple_batch_writer() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::AppleBatch, String::new(), 261);
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("test.apple.batch"),
         50,
         &mut [RylvTag::from_static("platform:macos")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("test.apple.batch"),
         75,
         &mut [RylvTag::from_static("platform:ios")],
@@ -352,7 +352,7 @@ fn test_simple_writer_mixed_methods() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::Simple, "app.".to_string(), 1024);
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency"),
         150,
         &mut [RylvTag::from_static("endpoint:/api")],
@@ -438,7 +438,7 @@ fn test_apple_batch_mixed_methods() -> std::io::Result<()> {
         1024,
     );
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("render.time"),
         16,
         &mut [RylvTag::from_static("view:main")],
@@ -556,22 +556,22 @@ fn test_simple_writer_histogram_aggregation() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::Simple, String::new(), 512);
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         100,
         &mut [RylvTag::from_static("endpoint:/users")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         200,
         &mut [RylvTag::from_static("endpoint:/users")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         150,
         &mut [RylvTag::from_static("endpoint:/users")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("request.duration"),
         300,
         &mut [RylvTag::from_static("endpoint:/users")],
@@ -700,7 +700,7 @@ fn test_apple_batch_histogram_aggregation() -> std::io::Result<()> {
 
     let values = [30, 60, 45, 55, 58, 62];
     for &val in &values {
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("macos.animation.fps"),
             val,
             &mut [RylvTag::from_static("scene:menu")],
@@ -732,7 +732,7 @@ fn test_simple_writer_heavy_aggregation() -> std::io::Result<()> {
             RylvStr::from_static("heavy.counter"),
             &mut [RylvTag::from_static("load:test")],
         );
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("heavy.histogram"),
             i * 10,
             &mut [RylvTag::from_static("load:test")],
@@ -793,7 +793,7 @@ fn test_apple_batch_heavy_aggregation() -> std::io::Result<()> {
             &mut [RylvTag::from_static("test:sendmsg_x")],
         );
         if i % 3 == 0 {
-            collector.histogram(
+            let _ = collector.histogram(
                 RylvStr::from_static("macos.heavy.frametime"),
                 i,
                 &mut [RylvTag::from_static("test:sendmsg_x")],
@@ -828,7 +828,7 @@ fn test_simple_writer_no_tags() -> std::io::Result<()> {
         &mut empty_tags,
     );
     collector.gauge_avg(RylvStr::from_static("notags.gauge"), 100, &mut empty_tags);
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("notags.histogram"),
         250,
         &mut empty_tags,
@@ -911,7 +911,7 @@ fn test_apple_batch_no_tags() -> std::io::Result<()> {
         512,
         &mut empty_tags,
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("macos.notags.response"),
         125,
         &mut empty_tags,

@@ -12,7 +12,7 @@ fn main() {
     let collector = SharedCollector::default();
 
     for value in [10_u64, 20, 30, 40] {
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("request.latency_ms"),
             value,
             &mut [RylvTag::from_static("route:/users")],
