@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, Ordering};
@@ -19,8 +20,68 @@ use arc_swap::ArcSwap;
 use dashmap::{DashMap, SharedValue};
 
 pub struct GaugeState {
-    pub sum: AtomicI64,
+    /// Accumulated sum of the sampled values. Wider than the sampled `i64`
+    /// values so that accumulating any realistic number of samples cannot
+    /// overflow (the mean of two `i64::MAX` samples must stay exact).
+    ///
+    /// Guarded by `sum_lock`; the hot path stays allocation-free.
+    sum: UnsafeCell<i128>,
+    sum_lock: AtomicU8,
     pub count: AtomicU64,
+}
+
+// SAFETY: `sum` is only accessed while holding `sum_lock`, whose acquire and
+// release orderings make every access mutually exclusive.
+unsafe impl Sync for GaugeState {}
+
+impl GaugeState {
+    const fn empty() -> Self {
+        Self {
+            sum: UnsafeCell::new(0),
+            sum_lock: AtomicU8::new(0),
+            count: AtomicU64::new(0),
+        }
+    }
+
+    #[inline]
+    fn lock(&self) {
+        while self
+            .sum_lock
+            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+    }
+
+    #[inline]
+    fn unlock(&self) {
+        self.sum_lock.store(0, Ordering::Release);
+    }
+
+    /// Accumulates one sampled value into the sum.
+    #[inline]
+    pub(crate) fn record(&self, value: i64) {
+        self.lock();
+        // SAFETY: `sum` is only accessed while holding `sum_lock`.
+        unsafe {
+            *self.sum.get() += i128::from(value);
+        }
+        self.unlock();
+    }
+
+    /// Returns the accumulated sum and resets it to zero.
+    #[inline]
+    pub(crate) fn take_sum(&self) -> i128 {
+        self.lock();
+        // SAFETY: `sum` is only accessed while holding `sum_lock`.
+        let sum = unsafe { *self.sum.get() };
+        unsafe {
+            *self.sum.get() = 0;
+        }
+        self.unlock();
+        sum
+    }
 }
 
 pub struct GaugeLastState {
@@ -615,9 +676,8 @@ where
                     continue;
                 }
 
-                let sum = entry.sum.load(Ordering::SeqCst);
                 #[allow(clippy::cast_precision_loss)]
-                let value = sum as f64 / count as f64;
+                let value = entry.take_sum() as f64 / count as f64;
                 let key = entry.key();
                 // SAFETY: the cursor exclusively borrows the aggregator for 'a. Key strings
                 // stay in its entries; queued removals run only after all owner borrows end.
@@ -627,7 +687,6 @@ where
                         std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
                     )
                 };
-                entry.sum.store(0, Ordering::SeqCst);
                 entry.count.store(0, Ordering::SeqCst);
                 return Some(MetricFrameRef {
                     prefix: self.prefix,
@@ -1414,14 +1473,23 @@ where
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                let result = v.record(value).map_err(MetricsError::from);
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result;
+                return result.map_err(MetricsError::from);
             }
             Ok(())
         }
@@ -1470,14 +1538,23 @@ where
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                let result = v.record(value).map_err(MetricsError::from);
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result;
+                return result.map_err(MetricsError::from);
             }
             Ok(())
         }
@@ -1523,13 +1600,23 @@ where
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                let result = v.record(value).map_err(MetricsError::from);
-                let agg_key = to_agg_entry_key(prepared);
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = to_agg_entry_key(prepared);
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result;
+                return result.map_err(MetricsError::from);
             }
             Ok(())
         }
@@ -1575,14 +1662,23 @@ where
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                let result = v.record(value).map_err(MetricsError::from);
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result;
+                return result.map_err(MetricsError::from);
             }
             Ok(())
         }
@@ -1631,14 +1727,23 @@ where
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                let result = v.record(value).map_err(MetricsError::from);
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result;
+                return result.map_err(MetricsError::from);
             }
             Ok(())
         }
@@ -1684,13 +1789,23 @@ where
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                let result = v.record(value).map_err(MetricsError::from);
-                let agg_key = to_agg_entry_key(prepared);
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = to_agg_entry_key(prepared);
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result;
+                return result.map_err(MetricsError::from);
             }
             Ok(())
         }
@@ -1775,15 +1890,10 @@ fn record_gauge_in_aggregator<S>(
         &aggregator.gauge,
         |v, value| {
             v.count.fetch_add(1, Ordering::Relaxed);
-            v.sum.fetch_add(value, Ordering::Relaxed);
+            v.record(value);
             Ok(())
         },
-        || {
-            Some(GaugeState {
-                count: AtomicU64::new(0),
-                sum: AtomicI64::new(0),
-            })
-        },
+        || Some(GaugeState::empty()),
     );
 }
 
@@ -1802,15 +1912,10 @@ fn record_gauge_in_aggregator_sorted<S>(
         &aggregator.gauge,
         |v, value| {
             v.count.fetch_add(1, Ordering::Relaxed);
-            v.sum.fetch_add(value, Ordering::Relaxed);
+            v.record(value);
             Ok(())
         },
-        || {
-            Some(GaugeState {
-                count: AtomicU64::new(0),
-                sum: AtomicI64::new(0),
-            })
-        },
+        || Some(GaugeState::empty()),
     );
 }
 
@@ -1827,15 +1932,10 @@ fn record_gauge_in_aggregator_prepared<S>(
         &aggregator.gauge,
         |v, value| {
             v.count.fetch_add(1, Ordering::Relaxed);
-            v.sum.fetch_add(value, Ordering::Relaxed);
+            v.record(value);
             Ok(())
         },
-        || {
-            Some(GaugeState {
-                count: AtomicU64::new(0),
-                sum: AtomicI64::new(0),
-            })
-        },
+        || Some(GaugeState::empty()),
     );
 }
 
@@ -2337,7 +2437,7 @@ mod tests {
             &mut [RylvTag::from_static("a:1")],
         );
         let gauge = aggregator.gauge.iter().next().unwrap();
-        gauge.sum.store(0, Ordering::SeqCst);
+        gauge.take_sum();
         gauge.count.store(0, Ordering::SeqCst);
         drop(gauge);
 

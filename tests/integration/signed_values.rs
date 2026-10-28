@@ -174,3 +174,101 @@ fn over_max_histogram_value_returns_error() {
         "{lines:?}"
     );
 }
+
+fn bounded_collector() -> SharedCollector {
+    let options = SharedCollectorOptions {
+        default_histogram_config: rylv_metrics::HistogramConfig::new(SigFig::ONE, Vec::new())
+            .unwrap()
+            .with_bounds(1, 100)
+            .unwrap(),
+        ..SharedCollectorOptions::default()
+    };
+    SharedCollector::new(options)
+}
+
+#[test]
+fn rejected_histogram_value_leaves_extremes_untouched() {
+    // Review repro (PR #18): with limit 100, `histogram("h", 200)` is
+    // rejected, then `histogram("h", 50)` succeeds — the drain must emit
+    // `count:1` and `max:50`, not the rejected value's extremes.
+    let collector = bounded_collector();
+
+    assert!(collector
+        .histogram(RylvStr::from_static("h"), 200, &mut [])
+        .is_err());
+    assert!(collector
+        .histogram(RylvStr::from_static("h"), 50, &mut [])
+        .is_ok());
+
+    let lines = drain_lines(&collector);
+    assert!(lines.contains(&"h.count:1,Count".to_owned()), "{lines:?}");
+    assert!(lines.contains(&"h.min:50,Gauge".to_owned()), "{lines:?}");
+    assert!(lines.contains(&"h.max:50,Gauge".to_owned()), "{lines:?}");
+    assert!(
+        !lines.iter().any(|line| line.contains(":200")),
+        "the rejected value must not appear in the extremes: {lines:?}"
+    );
+}
+
+#[test]
+fn rejected_timing_value_leaves_extremes_untouched() {
+    // Same repro through `timing`, which shares the histogram record path.
+    let collector = bounded_collector();
+
+    assert!(collector
+        .timing(RylvStr::from_static("t"), 200, &mut [])
+        .is_err());
+    assert!(collector
+        .timing(RylvStr::from_static("t"), 50, &mut [])
+        .is_ok());
+
+    let lines = drain_lines(&collector);
+    assert!(lines.contains(&"t.count:1,Count".to_owned()), "{lines:?}");
+    assert!(lines.contains(&"t.max:50,Timing".to_owned()), "{lines:?}");
+    assert!(
+        !lines.iter().any(|line| line.contains(":200")),
+        "the rejected value is not aggregated: {lines:?}"
+    );
+}
+
+#[test]
+fn histogram_value_above_i64_max_is_rejected() {
+    // Emitted histogram series are integers (`i64`), so the default upper
+    // bound is `i64::MAX`: a value above it is rejected as over-max instead of
+    // being reinterpreted as a negative integer on drain.
+    let collector = SharedCollector::default();
+
+    assert!(
+        collector
+            .histogram(RylvStr::from_static("wide"), 1 << 63, &mut [])
+            .is_err(),
+        "a value above i64::MAX is rejected, not emitted as negative"
+    );
+    assert!(
+        drain_lines(&collector).is_empty(),
+        "the rejected value is not aggregated"
+    );
+
+    // The `i64` boundary itself is still accepted.
+    let _ = collector.histogram(RylvStr::from_static("wide"), i64::MAX as u64, &mut []);
+    let lines = drain_lines(&collector);
+    assert!(
+        lines.contains(&"wide.max:9223372036854775807,Gauge".to_owned()),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn gauge_avg_mean_of_two_i64_max_samples_is_exact() {
+    // Review repro (PR #18 review): two `i64::MAX` samples must average to
+    // `i64::MAX`; a narrower accumulator wraps around and emits `-1`.
+    let collector = SharedCollector::default();
+    collector.gauge_avg(RylvStr::from_static("big"), i64::MAX, &mut []);
+    collector.gauge_avg(RylvStr::from_static("big"), i64::MAX, &mut []);
+
+    assert_eq!(
+        drain_lines(&collector),
+        vec!["big:9223372036854775808,GaugeAvg".to_owned()],
+        "the mean of two i64::MAX samples is exact, not a wrapped -1"
+    );
+}

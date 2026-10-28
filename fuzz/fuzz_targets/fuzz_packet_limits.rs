@@ -66,10 +66,10 @@ fuzz_target!(|data: &[u8]| {
         collector.count(RylvStr::from(metric_count.as_str()), &mut tag_refs);
         collector.gauge_avg(
             RylvStr::from(metric_gauge.as_str()),
-            i as u64,
+            i as i64,
             &mut tag_refs,
         );
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from(metric_hist.as_str()),
             i as u64 * 100,
             &mut tag_refs,

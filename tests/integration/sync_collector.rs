@@ -196,12 +196,12 @@ fn test_linux_batch_writer() -> std::io::Result<()> {
 
     let collector = create_collector(port, StatsWriterType::LinuxBatch, String::new(), 261);
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("test.linux.batch"),
         100,
         &mut [RylvTag::from_static("batch:enabled")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("test.linux.batch"),
         200,
         &mut [RylvTag::from_static("batch:test")],
@@ -395,7 +395,7 @@ fn test_linux_batch_mixed_methods() -> std::io::Result<()> {
         1024,
     );
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("response.time"),
         250,
         &mut [RylvTag::from_static("service:web")],
@@ -635,7 +635,7 @@ fn test_linux_batch_histogram_aggregation() -> std::io::Result<()> {
 
     let values = [50, 75, 125, 200, 100];
     for &val in &values {
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("linux.query.time"),
             val,
             &mut [RylvTag::from_static("db:postgres")],
@@ -763,7 +763,7 @@ fn test_linux_batch_heavy_aggregation() -> std::io::Result<()> {
             &mut [RylvTag::from_static("test:sendmmsg")],
         );
         if i % 2 == 0 {
-            collector.histogram(
+            let _ = collector.histogram(
                 RylvStr::from_static("linux.heavy.latency"),
                 i,
                 &mut [RylvTag::from_static("test:sendmmsg")],
@@ -872,7 +872,7 @@ fn test_linux_batch_no_tags() -> std::io::Result<()> {
         45,
         &mut empty_tags,
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("linux.notags.latency"),
         75,
         &mut empty_tags,

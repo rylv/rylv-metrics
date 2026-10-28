@@ -30,7 +30,10 @@ const MAX_RECYCLED_GLOBAL_HISTOGRAMS_PER_POOL: Option<usize> = Some(100);
 
 #[derive(Clone, Copy, Default)]
 struct GaugeStateHb {
-    sum: i64,
+    /// Wider than the sampled `i64` values so the accumulated sum cannot
+    /// overflow for any realistic number of samples (the mean of two
+    /// `i64::MAX` samples must be exact).
+    sum: i128,
     count: u64,
 }
 
@@ -416,9 +419,16 @@ where
                     get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
                         Ok(()),
                         |mut histogram| {
-                            let result = histogram.record(value).map_err(MetricsError::from);
-                            entry.insert((lookup.into_key(), histogram));
-                            result
+                            let result = histogram.record(value);
+                            if result.is_ok() {
+                                entry.insert((lookup.into_key(), histogram));
+                            } else {
+                                // The value was rejected: the wrapper stays
+                                // empty, so it is recycled instead of being
+                                // inserted into the table.
+                                split.pool_histograms[histogram.pool_id].push(histogram);
+                            }
+                            result.map_err(MetricsError::from)
                         },
                     )
                 }
@@ -459,9 +469,16 @@ where
                 get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
                     Ok(()),
                     |mut histogram| {
-                        let result = histogram.record(value).map_err(MetricsError::from);
-                        entry.insert((to_agg_entry_key(prepared), histogram));
-                        result
+                        let result = histogram.record(value);
+                        if result.is_ok() {
+                            entry.insert((to_agg_entry_key(prepared), histogram));
+                        } else {
+                            // The value was rejected: the wrapper stays empty,
+                            // so it is recycled instead of being inserted into
+                            // the table.
+                            split.pool_histograms[histogram.pool_id].push(histogram);
+                        }
+                        result.map_err(MetricsError::from)
                     },
                 )
             }
@@ -499,9 +516,16 @@ where
                     get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
                         Ok(()),
                         |mut histogram| {
-                            let result = histogram.record(value).map_err(MetricsError::from);
-                            entry.insert((lookup.into_key(), histogram));
-                            result
+                            let result = histogram.record(value);
+                            if result.is_ok() {
+                                entry.insert((lookup.into_key(), histogram));
+                            } else {
+                                // The value was rejected: the wrapper stays
+                                // empty, so it is recycled instead of being
+                                // inserted into the table.
+                                split.pool_histograms[histogram.pool_id].push(histogram);
+                            }
+                            result.map_err(MetricsError::from)
                         },
                     )
                 }
@@ -544,9 +568,16 @@ where
                     get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
                         Ok(()),
                         |mut histogram| {
-                            let result = histogram.record(value).map_err(MetricsError::from);
-                            entry.insert((lookup.into_key(), histogram));
-                            result
+                            let result = histogram.record(value);
+                            if result.is_ok() {
+                                entry.insert((lookup.into_key(), histogram));
+                            } else {
+                                // The value was rejected: the wrapper stays
+                                // empty, so it is recycled instead of being
+                                // inserted into the table.
+                                split.pool_histograms[histogram.pool_id].push(histogram);
+                            }
+                            result.map_err(MetricsError::from)
                         },
                     )
                 }
@@ -583,9 +614,16 @@ where
                 get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
                     Ok(()),
                     |mut histogram| {
-                        let result = histogram.record(value).map_err(MetricsError::from);
-                        entry.insert((to_agg_entry_key(prepared), histogram));
-                        result
+                        let result = histogram.record(value);
+                        if result.is_ok() {
+                            entry.insert((to_agg_entry_key(prepared), histogram));
+                        } else {
+                            // The value was rejected: the wrapper stays empty,
+                            // so it is recycled instead of being inserted into
+                            // the table.
+                            split.pool_histograms[histogram.pool_id].push(histogram);
+                        }
+                        result.map_err(MetricsError::from)
                     },
                 )
             }
@@ -684,13 +722,13 @@ where
             Occupied(mut entry) => {
                 let gauge = &mut entry.get_mut().1;
                 gauge.count += 1;
-                gauge.sum += value;
+                gauge.sum += i128::from(value);
             }
             Vacant(entry) => {
                 entry.insert((
                     lookup.into_key(),
                     GaugeStateHb {
-                        sum: value,
+                        sum: i128::from(value),
                         count: 1,
                     },
                 ));
@@ -718,13 +756,13 @@ where
             Occupied(mut entry) => {
                 let gauge = &mut entry.get_mut().1;
                 gauge.count += 1;
-                gauge.sum += value;
+                gauge.sum += i128::from(value);
             }
             Vacant(entry) => {
                 entry.insert((
                     lookup.into_key(),
                     GaugeStateHb {
-                        sum: value,
+                        sum: i128::from(value),
                         count: 1,
                     },
                 ));
@@ -742,7 +780,7 @@ where
             .find_mut(prepared.hash(), |(key, _)| key.id == entry_id)
         {
             gauge.count += 1;
-            gauge.sum += value;
+            gauge.sum += i128::from(value);
             return;
         }
         match aggregator.gauge.entry(
@@ -753,13 +791,13 @@ where
             Occupied(mut entry) => {
                 let gauge = &mut entry.get_mut().1;
                 gauge.count += 1;
-                gauge.sum += value;
+                gauge.sum += i128::from(value);
             }
             Vacant(entry) => {
                 entry.insert((
                     to_agg_entry_key(prepared),
                     GaugeStateHb {
-                        sum: value,
+                        sum: i128::from(value),
                         count: 1,
                     },
                 ));
