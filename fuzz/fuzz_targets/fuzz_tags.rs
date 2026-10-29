@@ -54,7 +54,7 @@ fuzz_target!(|data: &[u8]| {
     let mut tag_refs: Vec<RylvTag<'_>> = tags.iter().map(|t| RylvTag::from(t.as_str())).collect();
     collector.count(RylvStr::from_static("fuzz.metric"), &mut tag_refs);
     collector.gauge_avg(RylvStr::from_static("fuzz.gauge"), 42, &mut tag_refs);
-    collector.histogram(RylvStr::from_static("fuzz.histogram"), 100, &mut tag_refs);
+    let _ = collector.histogram(RylvStr::from_static("fuzz.histogram"), 100, &mut tag_refs);
 
     drop(collector);
 });

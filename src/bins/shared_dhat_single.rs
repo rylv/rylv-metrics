@@ -15,7 +15,7 @@ fn main() {
     let profiler = dhat::Profiler::new_heap();
 
     for _ in 0..50000000 {
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("some.metric"),
             1,
             [

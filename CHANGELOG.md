@@ -20,6 +20,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ends, and clear pending references on errors or early exit before storage is reused.
 - Recycled TLS timing histograms now observe the same pool cap as histograms.
 
+## [0.5.0] - 2026-10-16
+
+### Changed
+- Breaking: counters are signed. `count_add` (and the `count_add_sorted` /
+  `count_add_prepared` variants) take `i64`; a window's net total is emitted even
+  when it is negative. A zero net is still skipped.
+- Breaking: last-write-wins gauges accept negative values (`gauge(i64)`); the
+  last recorded value is emitted as-is.
+- Breaking: averaged gauges accept negative values and emit the real mean as a
+  floating-point value (`MetricValue::Float`), replacing the integer division.
+- Breaking: histogram `.avg` is the real mean of the recorded values
+  (HdrHistogram `getMean()` equivalent) as a floating-point value.
+- Breaking: `MetricFrameRef::value` is a `MetricValue` (`Int(i64)` |
+  `Float(f64)`); averaged-gauge frames are emitted with the new
+  `MetricKind::GaugeAvg` (still written as `|g`) so drains can tell averaged
+  gauges apart from last-write-wins gauges.
+- Breaking: `histogram` / `timing` record methods (regular, sorted, prepared)
+  return `MetricResult<()>` instead of logging a `Fail to record` error
+  internally. A value above the configured histogram maximum now surfaces to the
+  caller; the aggregation state is unchanged. Counters and gauges cannot fail.
+- Float frame values are formatted like the reference `DogStatsD` clients format
+  doubles (plain decimal, no grouping, at most 6 fraction digits, ties rounded
+  to even, trailing zeros omitted).
+
+### Added
+- `MetricValue` enum for drained frame values, with `as_int()` / `as_f64()` and
+  `Display` (floats use the writer's plain-decimal formatting).
+- `MetricKind::GaugeAvg` distinguishes averaged-gauge frames from
+  last-write-wins gauge frames on the drain API (both are written as `|g`).
+
 ## [0.4.0] - 2026-07-20
 
 ### Added

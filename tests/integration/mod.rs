@@ -8,6 +8,8 @@ mod histogram_macro;
 mod parallel_stress;
 #[cfg(all(feature = "udp", feature = "custom_writer"))]
 mod shared_collector;
+#[cfg(feature = "shared-collector")]
+mod signed_values;
 #[cfg(feature = "udp")]
 mod sync_collector;
 #[cfg(feature = "tls-collector")]

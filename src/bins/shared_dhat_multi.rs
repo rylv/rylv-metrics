@@ -24,7 +24,7 @@ fn main() {
     let profiler = dhat::Profiler::new_heap();
     let mut i = 0;
     for _ in 0..50000 {
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static(vec_metrics[i]),
             1,
             [

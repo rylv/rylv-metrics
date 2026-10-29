@@ -109,13 +109,18 @@ impl Bounds {
     /// Creates histogram bounds.
     ///
     /// # Errors
-    /// Returns an error if `min < 1` or `max < min`.
+    /// Returns an error if `min < 1`, `max < min`, or `max` exceeds `i64::MAX`
+    /// (emitted histogram series are integers, so larger bounds could never be
+    /// represented).
     pub fn new(min: u64, max: u64) -> MetricResult<Self> {
         if min < 1 {
             return Err("Invalid histogram bounds: min must be >= 1".into());
         }
         if max < min {
             return Err("Invalid histogram bounds: max must be >= min".into());
+        }
+        if max > i64::MAX as u64 {
+            return Err("Invalid histogram bounds: max must be <= i64::MAX".into());
         }
 
         Ok(Self { min, max })
@@ -138,7 +143,10 @@ impl Default for Bounds {
     fn default() -> Self {
         Self {
             min: 1,
-            max: u64::MAX,
+            // Emitted histogram series are integers (`i64`), so the default
+            // upper bound cannot exceed `i64::MAX`; larger values are rejected
+            // at record time as over-max.
+            max: i64::MAX as u64,
         }
     }
 }
@@ -197,7 +205,8 @@ impl HistogramConfig {
 
     /// Enables or disables the `.avg` histogram metric.
     ///
-    /// Note: `.avg` currently reflects p50 behavior for compatibility.
+    /// The `.avg` series is the real mean of the recorded values, emitted as a
+    /// floating-point value.
     #[must_use]
     pub const fn with_avg(mut self, emit: bool) -> Self {
         self.set_emit_base_metric(HistogramBaseMetric::Avg, emit);
@@ -387,6 +396,9 @@ mod tests {
     fn bounds_reject_invalid_values() {
         assert!(Bounds::new(0, 10).is_err());
         assert!(Bounds::new(10, 9).is_err());
+        assert!(Bounds::new(1, i64::MAX as u64).is_ok());
+        assert!(Bounds::new(1, i64::MAX as u64 + 1).is_err());
+        assert!(Bounds::new(1, u64::MAX).is_err());
     }
 
     #[test]

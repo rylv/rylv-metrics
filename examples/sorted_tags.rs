@@ -21,7 +21,7 @@ fn main() {
 
     count_add_sorted!(collector, "requests.total", 1, &request_tags);
     gauge_avg_sorted!(collector, "requests.inflight", 4, &request_tags);
-    histogram_sorted!(collector, "requests.latency_ms", 37, &request_tags);
+    let _ = histogram_sorted!(collector, "requests.latency_ms", 37, &request_tags);
 
     // Optional: precompute metric + tags hash once for an even faster hot path.
     let prepared = collector.prepare_metric(RylvStr::from_static("requests.total"), request_tags);

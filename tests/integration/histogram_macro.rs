@@ -30,7 +30,7 @@ fn test_histogram_macro_with_static_tags() {
     let collector = create_test_collector();
 
     // Test with static string tags
-    histogram!(collector, "test.metric", 100, "tag1:value1", "tag2:value2");
+    let _ = histogram!(collector, "test.metric", 100, "tag1:value1", "tag2:value2");
 
     // Verify the metric was recorded
 }
@@ -43,7 +43,7 @@ fn test_histogram_macro_with_owned_tags() {
     let tag1 = "tag1:value1".to_string();
     let tag2 = format!("tag2:{}", "value2");
 
-    histogram!(collector, "test.metric", 100, tag1, tag2);
+    let _ = histogram!(collector, "test.metric", 100, tag1, tag2);
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn test_histogram_macro_with_mixed_tags() {
     let collector = create_test_collector();
 
     // Test with mixed static and owned tags
-    histogram!(
+    let _ = histogram!(
         collector,
         "test.metric",
         100,
@@ -65,7 +65,7 @@ fn test_histogram_macro_without_tags() {
     let collector = create_test_collector();
 
     // Test without tags
-    histogram!(collector, "test.metric", 100);
+    let _ = histogram!(collector, "test.metric", 100);
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn test_histogram_macro_single_tag() {
     let collector = create_test_collector();
 
     // Test with a single tag
-    histogram!(collector, "test.metric", 100, "tag:value");
+    let _ = histogram!(collector, "test.metric", 100, "tag:value");
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn test_histogram_macro_many_tags() {
     let collector = create_test_collector();
 
     // Test with many tags
-    histogram!(
+    let _ = histogram!(
         collector,
         "test.metric",
         100,

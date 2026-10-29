@@ -80,7 +80,7 @@ fn benchmark_record_histogram(c: &mut Criterion) {
         let mut i = 0;
         let internal = Instant::now();
         b.iter(|| {
-            collector.histogram(
+            let _ = collector.histogram(
                 black_box(RylvStr::from_static(vec_metrics[i])),
                 black_box(1),
                 black_box([
@@ -114,7 +114,7 @@ fn benchmark_record_histogram_single(c: &mut Criterion) {
     c.bench_function("histogram", |b| {
         let internal = Instant::now();
         b.iter(|| {
-            collector.histogram(
+            let _ = collector.histogram(
                 black_box(RylvStr::from_static("some.metric")),
                 black_box(1),
                 black_box([
@@ -256,7 +256,7 @@ fn run_parallel_histogram_regular<C: MetricCollectorTrait + Sync>(
                         RylvTag::from(RylvStr::from_static(TAG_CONST_1)),
                         RylvTag::from(RylvStr::from_static(TAG_CONST_2)),
                     ];
-                    collector.histogram(metrics[idx].clone(), HISTOGRAM_VALUE, &mut tags);
+                    let _ = collector.histogram(metrics[idx].clone(), HISTOGRAM_VALUE, &mut tags);
                 }
             });
         }
@@ -285,7 +285,7 @@ fn run_parallel_histogram_sorted<C: MetricCollectorTrait + Sync>(
                 let len = metrics.len();
                 for iter in 0..work {
                     let idx = (iter + index) % len;
-                    collector.histogram_sorted(
+                    let _ = collector.histogram_sorted(
                         metrics[idx].clone(),
                         HISTOGRAM_VALUE,
                         &sorted_tags[idx],
@@ -315,7 +315,7 @@ fn run_parallel_histogram_prepared_udp(
                 let len = prepared.len();
                 for iter in 0..work {
                     let idx = (iter + index) % len;
-                    collector.histogram_prepared(&prepared[idx], HISTOGRAM_VALUE);
+                    let _ = collector.histogram_prepared(&prepared[idx], HISTOGRAM_VALUE);
                 }
             });
         }
@@ -342,7 +342,7 @@ fn run_parallel_histogram_prepared_tls(
                 let len = prepared.len();
                 for iter in 0..work {
                     let idx = (iter + index) % len;
-                    collector.histogram_prepared(&prepared[idx], HISTOGRAM_VALUE);
+                    let _ = collector.histogram_prepared(&prepared[idx], HISTOGRAM_VALUE);
                 }
             });
         }
@@ -365,7 +365,7 @@ fn benchmark_histogram_sync_single_compare(c: &mut Criterion) {
                 RylvTag::from(RylvStr::from_static(TAG_CONST_1)),
                 RylvTag::from(RylvStr::from_static(TAG_CONST_2)),
             ];
-            collector.histogram(
+            let _ = collector.histogram(
                 black_box(metrics[idx].clone()),
                 black_box(HISTOGRAM_VALUE),
                 black_box(&mut tags),
@@ -378,7 +378,7 @@ fn benchmark_histogram_sync_single_compare(c: &mut Criterion) {
         let sorted_tags = build_sorted_tags_pool(&dynamic_tags, &collector);
         let mut idx = 0usize;
         b.iter(|| {
-            collector.histogram_sorted(
+            let _ = collector.histogram_sorted(
                 black_box(metrics[idx].clone()),
                 black_box(HISTOGRAM_VALUE),
                 black_box(&sorted_tags[idx]),
@@ -396,7 +396,8 @@ fn benchmark_histogram_sync_single_compare(c: &mut Criterion) {
             .collect();
         let mut idx = 0usize;
         b.iter(|| {
-            collector.histogram_prepared(black_box(&prepared[idx]), black_box(HISTOGRAM_VALUE));
+            let _ =
+                collector.histogram_prepared(black_box(&prepared[idx]), black_box(HISTOGRAM_VALUE));
             idx = (idx + 1) % prepared.len();
         });
     });

@@ -1,31 +1,91 @@
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain};
 use crate::dogstats::aggregator::{
     to_agg_entry_key, AggregatorEntryKey, HistogramWrapper, LookupKey, LookupKeySorted, RemoveKey,
 };
-use crate::dogstats::collector::{MetricFrameRef, MetricKind, MetricSuffix};
+use crate::dogstats::collector::{MetricFrameRef, MetricKind, MetricSuffix, MetricValue};
 use crate::dogstats::histogram_config::{
     resolve_histogram_configs, HistogramBaseMetric, HistogramConfig, ResolvedHistogramConfig,
     ResolvedHistogramConfigs,
 };
 use crate::dogstats::sorted_tags::{combine_metric_tags_hash, hash_tags, PreparedMetric};
 use crate::dogstats::{Aggregator, RylvStr, RylvTag, SortedTags};
-use crate::DefaultMetricHasher;
+use crate::{DefaultMetricHasher, MetricResult, MetricsError};
 use arc_swap::ArcSwap;
 use dashmap::{DashMap, SharedValue};
-use tracing::error;
 
 pub struct GaugeState {
-    pub sum: AtomicU64,
+    /// Accumulated sum of the sampled values. Wider than the sampled `i64`
+    /// values so that accumulating any realistic number of samples cannot
+    /// overflow (the mean of two `i64::MAX` samples must stay exact).
+    ///
+    /// Guarded by `sum_lock`; the hot path stays allocation-free.
+    sum: UnsafeCell<i128>,
+    sum_lock: AtomicU8,
     pub count: AtomicU64,
 }
 
+// SAFETY: `sum` is only accessed while holding `sum_lock`, whose acquire and
+// release orderings make every access mutually exclusive.
+unsafe impl Sync for GaugeState {}
+
+impl GaugeState {
+    const fn empty() -> Self {
+        Self {
+            sum: UnsafeCell::new(0),
+            sum_lock: AtomicU8::new(0),
+            count: AtomicU64::new(0),
+        }
+    }
+
+    #[inline]
+    fn lock(&self) {
+        while self
+            .sum_lock
+            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+    }
+
+    #[inline]
+    fn unlock(&self) {
+        self.sum_lock.store(0, Ordering::Release);
+    }
+
+    /// Accumulates one sampled value into the sum.
+    #[inline]
+    pub(crate) fn record(&self, value: i64) {
+        self.lock();
+        // SAFETY: `sum` is only accessed while holding `sum_lock`.
+        unsafe {
+            *self.sum.get() += i128::from(value);
+        }
+        self.unlock();
+    }
+
+    /// Returns the accumulated sum and resets it to zero.
+    #[inline]
+    pub(crate) fn take_sum(&self) -> i128 {
+        self.lock();
+        // SAFETY: `sum` is only accessed while holding `sum_lock`.
+        let sum = unsafe { *self.sum.get() };
+        unsafe {
+            *self.sum.get() = 0;
+        }
+        self.unlock();
+        sum
+    }
+}
+
 pub struct GaugeLastState {
-    value: AtomicU64,
+    value: AtomicI64,
     state: AtomicU8,
 }
 
@@ -35,7 +95,7 @@ impl GaugeLastState {
 
     const fn empty() -> Self {
         Self {
-            value: AtomicU64::new(0),
+            value: AtomicI64::new(0),
             state: AtomicU8::new(0),
         }
     }
@@ -63,14 +123,14 @@ impl GaugeLastState {
     }
 
     #[inline]
-    fn store(&self, value: u64) {
+    fn store(&self, value: i64) {
         self.lock();
         self.value.store(value, Ordering::Relaxed);
         self.state.store(Self::PRESENT, Ordering::Release);
     }
 
     #[inline]
-    fn take(&self) -> Option<u64> {
+    fn take(&self) -> Option<i64> {
         let previous = self.lock();
         let value = (previous & Self::PRESENT != 0).then(|| self.value.load(Ordering::Relaxed));
         self.state.store(0, Ordering::Release);
@@ -157,9 +217,9 @@ pub enum DrainStage {
 type CountDrainIter<'a, S> = dashmap::iter::Iter<
     'a,
     AggregatorEntryKey<S>,
-    AtomicU64,
+    AtomicI64,
     S,
-    DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
+    DashMap<AggregatorEntryKey<S>, AtomicI64, S>,
 >;
 type GaugeDrainIter<'a, S> = dashmap::iter::Iter<
     'a,
@@ -342,11 +402,12 @@ fn cleanup_drained_aggregator<S: BuildHasher + Clone>(
 fn add_or_insert_entry_read_first<V, S>(
     metric: RylvStr<'_>,
     tags: &[RylvTag<'_>],
-    value: u64,
+    value: i64,
     hashmap: &DashMap<AggregatorEntryKey<S>, V, impl BuildHasher + Clone>,
-    record_fn: impl FnOnce(&V, u64) -> Result<(), String>,
+    record_fn: impl FnOnce(&V, i64) -> MetricResult<()>,
     new_fn: impl FnOnce() -> Option<V>,
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     let lookup_key = build_lookup_key(metric, tags, hashmap);
@@ -363,10 +424,7 @@ fn add_or_insert_entry_read_first<V, S>(
         if let Some(bucket) = search_result {
             // SAFETY: because we have a shard_lock with read access, there are no concurrent writer in the shard
             let x = unsafe { bucket.as_ref() }.1.get();
-            if let Err(err) = record_fn(x, value) {
-                error!("Fail to record: {err}");
-            }
-            return;
+            return record_fn(x, value);
         }
     }
 
@@ -383,24 +441,23 @@ fn add_or_insert_entry_read_first<V, S>(
         // fast path using write lock
         Ok(bucket) => {
             // SAFETY: because we have a shard_lock with write access, there are no concurrent writer in the shard
-            if let Err(err) = record_fn(unsafe { bucket.as_ref() }.1.get(), value) {
-                error!("Fail to record: {err}");
-            }
+            record_fn(unsafe { bucket.as_ref() }.1.get(), value)
         }
 
         // slow path using write lock, initializing the value
         Err(insert_slot) => {
             if let Some(v) = new_fn() {
-                if let Err(err) = record_fn(&v, value) {
-                    error!("Fail to record: {err}");
-                }
+                let result = record_fn(&v, value);
 
                 let agg_key = lookup_key.into_key();
 
                 unsafe {
                     guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
                 }
+                drop(guard);
+                return result;
             }
+            Ok(())
         }
     }
 }
@@ -408,11 +465,12 @@ fn add_or_insert_entry_read_first<V, S>(
 fn add_or_insert_entry_read_first_sorted<V, S>(
     metric: RylvStr<'_>,
     sorted_tags: &SortedTags<S>,
-    value: u64,
+    value: i64,
     hashmap: &DashMap<AggregatorEntryKey<S>, V, S>,
-    record_fn: impl FnOnce(&V, u64) -> Result<(), String>,
+    record_fn: impl FnOnce(&V, i64) -> MetricResult<()>,
     new_fn: impl FnOnce() -> Option<V>,
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     let hash = combine_metric_tags_hash(hashmap.hasher(), metric.as_ref(), sorted_tags.tags_hash());
@@ -432,10 +490,7 @@ fn add_or_insert_entry_read_first_sorted<V, S>(
             .find(lookup_key.hash, |(k, _)| lookup_key.compare(k));
         if let Some(bucket) = search_result {
             let x = unsafe { bucket.as_ref() }.1.get();
-            if let Err(err) = record_fn(x, value) {
-                error!("Fail to record: {err}");
-            }
-            return;
+            return record_fn(x, value);
         }
     }
 
@@ -447,32 +502,30 @@ fn add_or_insert_entry_read_first_sorted<V, S>(
     );
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = record_fn(unsafe { bucket.as_ref() }.1.get(), value) {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => record_fn(unsafe { bucket.as_ref() }.1.get(), value),
         Err(insert_slot) => {
             if let Some(v) = new_fn() {
-                if let Err(err) = record_fn(&v, value) {
-                    error!("Fail to record: {err}");
-                }
+                let result = record_fn(&v, value);
                 let agg_key = lookup_key.into_key();
                 unsafe {
                     guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
                 }
+                drop(guard);
+                return result;
             }
+            Ok(())
         }
     }
 }
 
 fn add_or_insert_entry_read_first_prepared<V, S>(
     prepared: &PreparedMetric<S>,
-    value: u64,
+    value: i64,
     hashmap: &DashMap<AggregatorEntryKey<S>, V, S>,
-    record_fn: impl FnOnce(&V, u64) -> Result<(), String>,
+    record_fn: impl FnOnce(&V, i64) -> MetricResult<()>,
     new_fn: impl FnOnce() -> Option<V>,
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     let entry_id = prepared.prepared_id();
@@ -485,10 +538,7 @@ fn add_or_insert_entry_read_first_prepared<V, S>(
         let search_result = read_guard.find(prepared.hash(), |(k, _)| k.id == entry_id);
         if let Some(bucket) = search_result {
             let x = unsafe { bucket.as_ref() }.1.get();
-            if let Err(err) = record_fn(x, value) {
-                error!("Fail to record: {err}");
-            }
-            return;
+            return record_fn(x, value);
         }
 
         let search_by_signature = read_guard.find(prepared.hash(), |(k, _)| {
@@ -496,10 +546,7 @@ fn add_or_insert_entry_read_first_prepared<V, S>(
         });
         if let Some(bucket) = search_by_signature {
             let (_, val) = unsafe { bucket.as_ref() };
-            if let Err(err) = record_fn(val.get(), value) {
-                error!("Fail to record: {err}");
-            }
-            return;
+            return record_fn(val.get(), value);
         }
         drop(read_guard);
     }
@@ -509,31 +556,24 @@ fn add_or_insert_entry_read_first_prepared<V, S>(
         guard.find_or_find_insert_slot(prepared.hash(), |(k, _)| k.id == entry_id, |(k, _)| k.hash);
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = record_fn(unsafe { bucket.as_ref() }.1.get(), value) {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => record_fn(unsafe { bucket.as_ref() }.1.get(), value),
         Err(insert_slot) => {
             if let Some(bucket) = guard.find(prepared.hash(), |(k, _)| {
                 match_prepared_signature(k, prepared)
             }) {
                 let (_, val) = unsafe { bucket.as_ref() };
-                if let Err(err) = record_fn(val.get(), value) {
-                    error!("Fail to record: {err}");
-                }
-                return;
+                return record_fn(val.get(), value);
             }
             if let Some(v) = new_fn() {
-                if let Err(err) = record_fn(&v, value) {
-                    error!("Fail to record: {err}");
-                }
+                let result = record_fn(&v, value);
                 let agg_key = to_agg_entry_key(prepared);
                 unsafe {
                     guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
                 }
                 drop(guard);
+                return result;
             }
+            Ok(())
         }
     }
 }
@@ -615,7 +655,7 @@ where
                     metric,
                     suffix: MetricSuffix::None,
                     tags,
-                    value,
+                    value: MetricValue::Int(value),
                     kind: MetricKind::Count,
                 });
             }
@@ -636,7 +676,8 @@ where
                     continue;
                 }
 
-                let value = entry.sum.load(Ordering::SeqCst) / count;
+                #[allow(clippy::cast_precision_loss)]
+                let value = entry.take_sum() as f64 / count as f64;
                 let key = entry.key();
                 // SAFETY: the cursor exclusively borrows the aggregator for 'a. Key strings
                 // stay in its entries; queued removals run only after all owner borrows end.
@@ -646,15 +687,14 @@ where
                         std::mem::transmute::<&str, &'a str>(key.tags.joined_tags()),
                     )
                 };
-                entry.sum.store(0, Ordering::SeqCst);
                 entry.count.store(0, Ordering::SeqCst);
                 return Some(MetricFrameRef {
                     prefix: self.prefix,
                     metric,
                     suffix: MetricSuffix::None,
                     tags,
-                    value,
-                    kind: MetricKind::Gauge,
+                    value: MetricValue::Float(value),
+                    kind: MetricKind::GaugeAvg,
                 });
             }
         }
@@ -685,7 +725,7 @@ where
                     metric,
                     suffix: MetricSuffix::None,
                     tags,
-                    value,
+                    value: MetricValue::Int(value),
                     kind: MetricKind::Gauge,
                 });
             }
@@ -744,7 +784,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".count"),
                             tags: pending.tags,
-                            value: entry.histogram.len(),
+                            value: MetricValue::Int(entry.histogram.len().cast_signed()),
                             kind: MetricKind::Count,
                         })
                     } else {
@@ -759,7 +799,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".min"),
                             tags: pending.tags,
-                            value: entry.min,
+                            value: MetricValue::Int(entry.min.cast_signed()),
                             kind: MetricKind::Gauge,
                         })
                     } else {
@@ -774,7 +814,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".avg"),
                             tags: pending.tags,
-                            value: entry.histogram.value_at_quantile(0.50),
+                            value: MetricValue::Float(entry.histogram.mean()),
                             kind: MetricKind::Gauge,
                         })
                     } else {
@@ -790,7 +830,9 @@ where
                         metric: pending.metric,
                         suffix: MetricSuffix::Percentile(percentile),
                         tags: pending.tags,
-                        value: entry.histogram.value_at_quantile(percentile),
+                        value: MetricValue::Int(
+                            entry.histogram.value_at_quantile(percentile).cast_signed(),
+                        ),
                         kind: MetricKind::Gauge,
                     })
                 }
@@ -802,7 +844,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".max"),
                             tags: pending.tags,
-                            value: entry.max,
+                            value: MetricValue::Int(entry.max.cast_signed()),
                             kind: MetricKind::Gauge,
                         })
                     } else {
@@ -870,7 +912,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".count"),
                             tags: pending.tags,
-                            value: entry.histogram.len(),
+                            value: MetricValue::Int(entry.histogram.len().cast_signed()),
                             kind: MetricKind::Count,
                         })
                     } else {
@@ -885,7 +927,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".min"),
                             tags: pending.tags,
-                            value: entry.min,
+                            value: MetricValue::Int(entry.min.cast_signed()),
                             kind: MetricKind::Timing,
                         })
                     } else {
@@ -900,7 +942,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".avg"),
                             tags: pending.tags,
-                            value: entry.histogram.value_at_quantile(0.50),
+                            value: MetricValue::Float(entry.histogram.mean()),
                             kind: MetricKind::Timing,
                         })
                     } else {
@@ -916,7 +958,9 @@ where
                         metric: pending.metric,
                         suffix: MetricSuffix::Percentile(percentile),
                         tags: pending.tags,
-                        value: entry.histogram.value_at_quantile(percentile),
+                        value: MetricValue::Int(
+                            entry.histogram.value_at_quantile(percentile).cast_signed(),
+                        ),
                         kind: MetricKind::Timing,
                     })
                 }
@@ -928,7 +972,7 @@ where
                             metric: pending.metric,
                             suffix: MetricSuffix::Static(".max"),
                             tags: pending.tags,
-                            value: entry.max,
+                            value: MetricValue::Int(entry.max.cast_signed()),
                             kind: MetricKind::Timing,
                         })
                     } else {
@@ -1036,7 +1080,12 @@ where
     type Hasher = S;
 
     #[inline]
-    fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn histogram<'m, 't, TT>(
+        &self,
+        metric: RylvStr<'m>,
+        value: u64,
+        mut tags: TT,
+    ) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1048,7 +1097,7 @@ where
             metric,
             value,
             tags.as_mut(),
-        );
+        )
     }
 
     #[inline]
@@ -1060,7 +1109,7 @@ where
     }
 
     #[inline]
-    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, mut tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1069,7 +1118,7 @@ where
     }
 
     #[inline]
-    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, mut tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1078,7 +1127,7 @@ where
     }
 
     #[inline]
-    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, mut tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1087,7 +1136,7 @@ where
     }
 
     #[inline]
-    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT)
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, mut tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1099,11 +1148,16 @@ where
             metric,
             value,
             tags.as_mut(),
-        );
+        )
     }
 
     #[inline]
-    fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn histogram_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<S>,
+    ) -> MetricResult<()> {
         let aggregator = self.current_aggregator.load();
         record_histogram_in_aggregator_sorted(
             &aggregator,
@@ -1112,29 +1166,34 @@ where
             metric,
             value,
             tags,
-        );
+        )
     }
 
     #[inline]
-    fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn count_add_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_count_add_in_aggregator_sorted(&aggregator, metric, value, tags);
     }
 
     #[inline]
-    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator_sorted(&aggregator, metric, value, tags);
     }
 
     #[inline]
-    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn gauge_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<S>) {
         let aggregator = self.current_aggregator.load();
         record_gauge_last_in_aggregator_sorted(&aggregator, metric, value, tags);
     }
 
     #[inline]
-    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn timing_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<S>,
+    ) -> MetricResult<()> {
         let aggregator = self.current_aggregator.load();
         record_timing_in_aggregator_sorted(
             &aggregator,
@@ -1143,7 +1202,7 @@ where
             metric,
             value,
             tags,
-        );
+        )
     }
 
     #[cold]
@@ -1163,7 +1222,7 @@ where
     }
 
     #[inline]
-    fn histogram_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+    fn histogram_prepared(&self, prepared: &PreparedMetric<S>, value: u64) -> MetricResult<()> {
         let aggregator = self.current_aggregator.load();
         record_histogram_in_aggregator_prepared(
             &aggregator,
@@ -1171,29 +1230,29 @@ where
             &self.default_histogram_config,
             prepared,
             value,
-        );
+        )
     }
 
     #[inline]
-    fn count_add_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+    fn count_add_prepared(&self, prepared: &PreparedMetric<S>, value: i64) {
         let aggregator = self.current_aggregator.load();
         record_count_add_in_aggregator_prepared(&aggregator, prepared, value);
     }
 
     #[inline]
-    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<S>, value: i64) {
         let aggregator = self.current_aggregator.load();
         record_gauge_in_aggregator_prepared(&aggregator, prepared, value);
     }
 
     #[inline]
-    fn gauge_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+    fn gauge_prepared(&self, prepared: &PreparedMetric<S>, value: i64) {
         let aggregator = self.current_aggregator.load();
         record_gauge_last_in_aggregator_prepared(&aggregator, prepared, value);
     }
 
     #[inline]
-    fn timing_prepared(&self, prepared: &PreparedMetric<S>, value: u64) {
+    fn timing_prepared(&self, prepared: &PreparedMetric<S>, value: u64) -> MetricResult<()> {
         let aggregator = self.current_aggregator.load();
         record_timing_in_aggregator_prepared(
             &aggregator,
@@ -1201,7 +1260,7 @@ where
             &self.default_histogram_config,
             prepared,
             value,
-        );
+        )
     }
 }
 
@@ -1212,11 +1271,11 @@ where
     type Hasher = S;
 
     #[inline]
-    fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
-        (*self).histogram(metric, value, tags);
+        (*self).histogram(metric, value, tags)
     }
 
     #[inline]
@@ -1228,7 +1287,7 @@ where
     }
 
     #[inline]
-    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1236,7 +1295,7 @@ where
     }
 
     #[inline]
-    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1244,7 +1303,7 @@ where
     }
 
     #[inline]
-    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -1252,36 +1311,46 @@ where
     }
 
     #[inline]
-    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
-        (*self).timing(metric, value, tags);
+        (*self).timing(metric, value, tags)
     }
 
     #[inline]
-    fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
-        (*self).histogram_sorted(metric, value, tags);
+    fn histogram_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<S>,
+    ) -> MetricResult<()> {
+        (*self).histogram_sorted(metric, value, tags)
     }
 
     #[inline]
-    fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn count_add_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<S>) {
         (*self).count_add_sorted(metric, value, tags);
     }
 
     #[inline]
-    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<S>) {
         (*self).gauge_avg_sorted(metric, value, tags);
     }
 
     #[inline]
-    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
+    fn gauge_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<S>) {
         (*self).gauge_sorted(metric, value, tags);
     }
 
     #[inline]
-    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<S>) {
-        (*self).timing_sorted(metric, value, tags);
+    fn timing_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<S>,
+    ) -> MetricResult<()> {
+        (*self).timing_sorted(metric, value, tags)
     }
 
     #[cold]
@@ -1302,28 +1371,36 @@ where
     }
 
     #[inline]
-    fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
-        (*self).histogram_prepared(prepared, value);
+    fn histogram_prepared(
+        &self,
+        prepared: &PreparedMetric<Self::Hasher>,
+        value: u64,
+    ) -> MetricResult<()> {
+        (*self).histogram_prepared(prepared, value)
     }
 
     #[inline]
-    fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
         (*self).count_add_prepared(prepared, value);
     }
 
     #[inline]
-    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
         (*self).gauge_avg_prepared(prepared, value);
     }
 
     #[inline]
-    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
         (*self).gauge_prepared(prepared, value);
     }
 
     #[inline]
-    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
-        (*self).timing_prepared(prepared, value);
+    fn timing_prepared(
+        &self,
+        prepared: &PreparedMetric<Self::Hasher>,
+        value: u64,
+    ) -> MetricResult<()> {
+        (*self).timing_prepared(prepared, value)
     }
 }
 
@@ -1364,7 +1441,8 @@ fn record_histogram_in_aggregator<S>(
     metric: RylvStr<'_>,
     value: u64,
     mut_tags: &mut [RylvTag<'_>],
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
@@ -1383,16 +1461,11 @@ fn record_histogram_in_aggregator<S>(
     );
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = unsafe { bucket.as_mut() }
-                .1
-                .get_mut()
-                .record(value)
-                .map_err(|err| err.to_string())
-            {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => unsafe { bucket.as_mut() }
+            .1
+            .get_mut()
+            .record(value)
+            .map_err(MetricsError::from),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1400,15 +1473,25 @@ fn record_histogram_in_aggregator<S>(
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                if let Err(err) = v.record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
-                }
+                drop(guard);
+                return result.map_err(MetricsError::from);
             }
+            Ok(())
         }
     }
 }
@@ -1420,7 +1503,8 @@ fn record_histogram_in_aggregator_sorted<S>(
     metric: RylvStr<'_>,
     value: u64,
     sorted_tags: &SortedTags<S>,
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     let hashmap = &aggregator.histograms;
@@ -1442,16 +1526,11 @@ fn record_histogram_in_aggregator_sorted<S>(
     );
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = unsafe { bucket.as_mut() }
-                .1
-                .get_mut()
-                .record(value)
-                .map_err(|err| err.to_string())
-            {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => unsafe { bucket.as_mut() }
+            .1
+            .get_mut()
+            .record(value)
+            .map_err(MetricsError::from),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1459,15 +1538,25 @@ fn record_histogram_in_aggregator_sorted<S>(
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                if let Err(err) = v.record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
-                }
+                drop(guard);
+                return result.map_err(MetricsError::from);
             }
+            Ok(())
         }
     }
 }
@@ -1478,7 +1567,8 @@ fn record_histogram_in_aggregator_prepared<S>(
     default_histogram_config: &ResolvedHistogramConfig,
     prepared: &PreparedMetric<S>,
     value: u64,
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     let hashmap = &aggregator.histograms;
@@ -1491,25 +1581,17 @@ fn record_histogram_in_aggregator_prepared<S>(
         guard.find_or_find_insert_slot(prepared.hash(), |(k, _)| k.id == entry_id, |(k, _)| k.hash);
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = unsafe { bucket.as_mut() }
-                .1
-                .get_mut()
-                .record(value)
-                .map_err(|err| err.to_string())
-            {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => unsafe { bucket.as_mut() }
+            .1
+            .get_mut()
+            .record(value)
+            .map_err(MetricsError::from),
         Err(insert_slot) => {
             if let Some(bucket) = guard.find(prepared.hash(), |(k, _)| {
                 match_prepared_signature(k, prepared)
             }) {
                 let (_, hist) = unsafe { bucket.as_mut() };
-                if let Err(err) = hist.get_mut().record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
-                }
-                return;
+                return hist.get_mut().record(value).map_err(MetricsError::from);
             }
 
             let histogram_config = histogram_configs
@@ -1518,15 +1600,25 @@ fn record_histogram_in_aggregator_prepared<S>(
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                if let Err(err) = v.record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
-                }
-                let agg_key = to_agg_entry_key(prepared);
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = to_agg_entry_key(prepared);
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
+                return result.map_err(MetricsError::from);
             }
+            Ok(())
         }
     }
 }
@@ -1538,7 +1630,8 @@ fn record_timing_in_aggregator<S>(
     metric: RylvStr<'_>,
     value: u64,
     mut_tags: &mut [RylvTag<'_>],
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
@@ -1557,16 +1650,11 @@ fn record_timing_in_aggregator<S>(
     );
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = unsafe { bucket.as_mut() }
-                .1
-                .get_mut()
-                .record(value)
-                .map_err(|err| err.to_string())
-            {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => unsafe { bucket.as_mut() }
+            .1
+            .get_mut()
+            .record(value)
+            .map_err(MetricsError::from),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1574,15 +1662,25 @@ fn record_timing_in_aggregator<S>(
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                if let Err(err) = v.record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
-                }
+                drop(guard);
+                return result.map_err(MetricsError::from);
             }
+            Ok(())
         }
     }
 }
@@ -1594,7 +1692,8 @@ fn record_timing_in_aggregator_sorted<S>(
     metric: RylvStr<'_>,
     value: u64,
     sorted_tags: &SortedTags<S>,
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     let hashmap = &aggregator.timings;
@@ -1616,16 +1715,11 @@ fn record_timing_in_aggregator_sorted<S>(
     );
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = unsafe { bucket.as_mut() }
-                .1
-                .get_mut()
-                .record(value)
-                .map_err(|err| err.to_string())
-            {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => unsafe { bucket.as_mut() }
+            .1
+            .get_mut()
+            .record(value)
+            .map_err(MetricsError::from),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1633,15 +1727,25 @@ fn record_timing_in_aggregator_sorted<S>(
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                if let Err(err) = v.record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = lookup_key.into_key();
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
-
-                let agg_key = lookup_key.into_key();
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
-                }
+                drop(guard);
+                return result.map_err(MetricsError::from);
             }
+            Ok(())
         }
     }
 }
@@ -1652,7 +1756,8 @@ fn record_timing_in_aggregator_prepared<S>(
     default_histogram_config: &ResolvedHistogramConfig,
     prepared: &PreparedMetric<S>,
     value: u64,
-) where
+) -> MetricResult<()>
+where
     S: BuildHasher + Clone,
 {
     let hashmap = &aggregator.timings;
@@ -1665,25 +1770,17 @@ fn record_timing_in_aggregator_prepared<S>(
         guard.find_or_find_insert_slot(prepared.hash(), |(k, _)| k.id == entry_id, |(k, _)| k.hash);
 
     match search_result {
-        Ok(bucket) => {
-            if let Err(err) = unsafe { bucket.as_mut() }
-                .1
-                .get_mut()
-                .record(value)
-                .map_err(|err| err.to_string())
-            {
-                error!("Fail to record: {err}");
-            }
-        }
+        Ok(bucket) => unsafe { bucket.as_mut() }
+            .1
+            .get_mut()
+            .record(value)
+            .map_err(MetricsError::from),
         Err(insert_slot) => {
             if let Some(bucket) = guard.find(prepared.hash(), |(k, _)| {
                 match_prepared_signature(k, prepared)
             }) {
                 let (_, hist) = unsafe { bucket.as_mut() };
-                if let Err(err) = hist.get_mut().record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
-                }
-                return;
+                return hist.get_mut().record(value).map_err(MetricsError::from);
             }
 
             let histogram_config = histogram_configs
@@ -1692,15 +1789,25 @@ fn record_timing_in_aggregator_prepared<S>(
             if let Some(mut v) =
                 aggregator.get_histogram(histogram_config.pool_id(), histogram_config)
             {
-                if let Err(err) = v.record(value).map_err(|err| err.to_string()) {
-                    error!("Fail to record: {err}");
-                }
-                let agg_key = to_agg_entry_key(prepared);
-                unsafe {
-                    guard.insert_in_slot(agg_key.hash, insert_slot, (agg_key, SharedValue::new(v)));
+                let result = v.record(value);
+                if result.is_ok() {
+                    let agg_key = to_agg_entry_key(prepared);
+                    unsafe {
+                        guard.insert_in_slot(
+                            agg_key.hash,
+                            insert_slot,
+                            (agg_key, SharedValue::new(v)),
+                        );
+                    }
+                } else {
+                    // The value was rejected: the wrapper stays empty, so it is
+                    // recycled instead of being inserted into the map.
+                    aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
+                return result.map_err(MetricsError::from);
             }
+            Ok(())
         }
     }
 }
@@ -1708,155 +1815,146 @@ fn record_timing_in_aggregator_prepared<S>(
 fn record_count_add_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
-    value: u64,
+    value: i64,
     mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
-    add_or_insert_entry_read_first(
+    let _ = add_or_insert_entry_read_first(
         metric,
         mut_tags,
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_add(value))
+            });
             Ok(())
         },
-        || Some(AtomicU64::new(0)),
+        || Some(AtomicI64::new(0)),
     );
 }
 
 fn record_count_add_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
-    value: u64,
+    value: i64,
     sorted_tags: &SortedTags<S>,
 ) where
     S: BuildHasher + Clone,
 {
-    add_or_insert_entry_read_first_sorted(
+    let _ = add_or_insert_entry_read_first_sorted(
         metric,
         sorted_tags,
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_add(value))
+            });
             Ok(())
         },
-        || Some(AtomicU64::new(0)),
+        || Some(AtomicI64::new(0)),
     );
 }
 
 fn record_count_add_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     prepared: &PreparedMetric<S>,
-    value: u64,
+    value: i64,
 ) where
     S: BuildHasher + Clone,
 {
-    add_or_insert_entry_read_first_prepared(
+    let _ = add_or_insert_entry_read_first_prepared(
         prepared,
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_add(value))
+            });
             Ok(())
         },
-        || Some(AtomicU64::new(0)),
+        || Some(AtomicI64::new(0)),
     );
 }
 
 fn record_gauge_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
-    value: u64,
+    value: i64,
     mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
-    add_or_insert_entry_read_first(
+    let _ = add_or_insert_entry_read_first(
         metric,
         mut_tags,
         value,
         &aggregator.gauge,
         |v, value| {
             v.count.fetch_add(1, Ordering::Relaxed);
-            v.sum.fetch_add(value, Ordering::Relaxed);
+            v.record(value);
             Ok(())
         },
-        || {
-            Some(GaugeState {
-                count: AtomicU64::new(0),
-                sum: AtomicU64::new(0),
-            })
-        },
+        || Some(GaugeState::empty()),
     );
 }
 
 fn record_gauge_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
-    value: u64,
+    value: i64,
     sorted_tags: &SortedTags<S>,
 ) where
     S: BuildHasher + Clone,
 {
-    add_or_insert_entry_read_first_sorted(
+    let _ = add_or_insert_entry_read_first_sorted(
         metric,
         sorted_tags,
         value,
         &aggregator.gauge,
         |v, value| {
             v.count.fetch_add(1, Ordering::Relaxed);
-            v.sum.fetch_add(value, Ordering::Relaxed);
+            v.record(value);
             Ok(())
         },
-        || {
-            Some(GaugeState {
-                count: AtomicU64::new(0),
-                sum: AtomicU64::new(0),
-            })
-        },
+        || Some(GaugeState::empty()),
     );
 }
 
 fn record_gauge_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     prepared: &PreparedMetric<S>,
-    value: u64,
+    value: i64,
 ) where
     S: BuildHasher + Clone,
 {
-    add_or_insert_entry_read_first_prepared(
+    let _ = add_or_insert_entry_read_first_prepared(
         prepared,
         value,
         &aggregator.gauge,
         |v, value| {
             v.count.fetch_add(1, Ordering::Relaxed);
-            v.sum.fetch_add(value, Ordering::Relaxed);
+            v.record(value);
             Ok(())
         },
-        || {
-            Some(GaugeState {
-                count: AtomicU64::new(0),
-                sum: AtomicU64::new(0),
-            })
-        },
+        || Some(GaugeState::empty()),
     );
 }
 
 fn record_gauge_last_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
-    value: u64,
+    value: i64,
     mut_tags: &mut [RylvTag<'_>],
 ) where
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
-    add_or_insert_entry_read_first(
+    let _ = add_or_insert_entry_read_first(
         metric,
         mut_tags,
         value,
@@ -1872,12 +1970,12 @@ fn record_gauge_last_in_aggregator<S>(
 fn record_gauge_last_in_aggregator_sorted<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
-    value: u64,
+    value: i64,
     sorted_tags: &SortedTags<S>,
 ) where
     S: BuildHasher + Clone,
 {
-    add_or_insert_entry_read_first_sorted(
+    let _ = add_or_insert_entry_read_first_sorted(
         metric,
         sorted_tags,
         value,
@@ -1893,11 +1991,11 @@ fn record_gauge_last_in_aggregator_sorted<S>(
 fn record_gauge_last_in_aggregator_prepared<S>(
     aggregator: &Aggregator<S>,
     prepared: &PreparedMetric<S>,
-    value: u64,
+    value: i64,
 ) where
     S: BuildHasher + Clone,
 {
-    add_or_insert_entry_read_first_prepared(
+    let _ = add_or_insert_entry_read_first_prepared(
         prepared,
         value,
         &aggregator.gauge_last,
@@ -1924,7 +2022,7 @@ mod tests {
     };
     use crate::dogstats::aggregator::Aggregator;
     use crate::dogstats::collector::{
-        DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
+        DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix, MetricValue,
     };
     use crate::dogstats::histogram_config::{resolve_histogram_configs, HistogramConfig};
     use crate::{MetricCollectorTrait, RylvStr, RylvTag};
@@ -1960,16 +2058,19 @@ mod tests {
             }
             let metric_type = match frame.kind {
                 MetricKind::Count => "c",
-                MetricKind::Gauge => "g",
+                MetricKind::GaugeAvg | MetricKind::Gauge => "g",
                 MetricKind::Timing => "ms",
             };
+            let value = match frame.value {
+                MetricValue::Int(value) => value.to_string(),
+                MetricValue::Float(value) => {
+                    crate::dogstats::format::format_float(value, &mut String::new()).to_owned()
+                }
+            };
             if frame.tags.is_empty() {
-                lines.push(format!("{metric}:{}|{metric_type}\n", frame.value));
+                lines.push(format!("{metric}:{value}|{metric_type}\n"));
             } else {
-                lines.push(format!(
-                    "{metric}:{}|{metric_type}|#{}\n",
-                    frame.value, frame.tags
-                ));
+                lines.push(format!("{metric}:{value}|{metric_type}|#{}\n", frame.tags));
             }
         }
         lines.sort_unstable();
@@ -2006,8 +2107,8 @@ mod tests {
         done.store(true, Ordering::Release);
         drainer.join().unwrap();
 
-        state.store(u64::MAX);
-        assert_eq!(state.take(), Some(u64::MAX));
+        state.store(i64::MAX);
+        assert_eq!(state.take(), Some(i64::MAX));
         assert_eq!(state.take(), None);
     }
 
@@ -2029,16 +2130,19 @@ mod tests {
             }
             let metric_type = match frame.kind {
                 MetricKind::Count => "c",
-                MetricKind::Gauge => "g",
+                MetricKind::GaugeAvg | MetricKind::Gauge => "g",
                 MetricKind::Timing => "ms",
             };
+            let value = match frame.value {
+                MetricValue::Int(value) => value.to_string(),
+                MetricValue::Float(value) => {
+                    crate::dogstats::format::format_float(value, &mut String::new()).to_owned()
+                }
+            };
             if frame.tags.is_empty() {
-                lines.push(format!("{metric}:{}|{metric_type}\n", frame.value));
+                lines.push(format!("{metric}:{value}|{metric_type}\n"));
             } else {
-                lines.push(format!(
-                    "{metric}:{}|{metric_type}|#{}\n",
-                    frame.value, frame.tags
-                ));
+                lines.push(format!("{metric}:{value}|{metric_type}|#{}\n", frame.tags));
             }
         }
         lines.sort_unstable();
@@ -2063,7 +2167,7 @@ mod tests {
             &[
                 "ref.latency.95percentile:60|g|#a:1,b:2\n".to_string(),
                 "ref.latency.99percentile:60|g|#a:1,b:2\n".to_string(),
-                "ref.latency.avg:40|g|#a:1,b:2\n".to_string(),
+                "ref.latency.avg:50|g|#a:1,b:2\n".to_string(),
                 "ref.latency.count:2|c|#a:1,b:2\n".to_string(),
                 "ref.latency.max:60|g|#a:1,b:2\n".to_string(),
                 "ref.latency.min:40|g|#a:1,b:2\n".to_string(),
@@ -2079,7 +2183,7 @@ mod tests {
             &[
                 "ref.duration.95percentile:60|ms|#a:1,b:2\n".to_string(),
                 "ref.duration.99percentile:60|ms|#a:1,b:2\n".to_string(),
-                "ref.duration.avg:40|ms|#a:1,b:2\n".to_string(),
+                "ref.duration.avg:50|ms|#a:1,b:2\n".to_string(),
                 "ref.duration.count:2|c|#a:1,b:2\n".to_string(),
                 "ref.duration.max:60|ms|#a:1,b:2\n".to_string(),
                 "ref.duration.min:40|ms|#a:1,b:2\n".to_string(),
@@ -2133,7 +2237,7 @@ mod tests {
         record_gauge_in_aggregator_prepared(aggregator, &prepared_gauge_a, 30);
         record_gauge_in_aggregator_prepared(aggregator, &prepared_gauge_b, 50);
 
-        record_histogram_in_aggregator(
+        let _ = record_histogram_in_aggregator(
             aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
@@ -2141,7 +2245,7 @@ mod tests {
             40,
             &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
-        record_histogram_in_aggregator_sorted(
+        let _ = record_histogram_in_aggregator_sorted(
             aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
@@ -2149,14 +2253,14 @@ mod tests {
             50,
             prepared_hist_a.tags(),
         );
-        record_histogram_in_aggregator_prepared(
+        let _ = record_histogram_in_aggregator_prepared(
             aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
             &prepared_hist_a,
             60,
         );
-        record_histogram_in_aggregator_prepared(
+        let _ = record_histogram_in_aggregator_prepared(
             aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
@@ -2184,20 +2288,82 @@ mod tests {
         collector.count_add_prepared(&prepared_count, 3);
         collector.gauge_avg_sorted(RylvStr::from_static("load"), 10, &sorted);
         collector.gauge_avg_prepared(&prepared_gauge, 20);
-        collector.histogram_sorted(RylvStr::from_static("latency"), 40, &sorted);
-        collector.histogram_prepared(&prepared_hist, 60);
+        let _ = collector.histogram_sorted(RylvStr::from_static("latency"), 40, &sorted);
+        let _ = collector.histogram_prepared(&prepared_hist, 60);
 
         assert_eq!(
             drain_metrics_now(&collector),
             vec![
                 "sans.latency.95percentile:60|g|#a:1,b:2\n".to_string(),
                 "sans.latency.99percentile:60|g|#a:1,b:2\n".to_string(),
-                "sans.latency.avg:40|g|#a:1,b:2\n".to_string(),
+                "sans.latency.avg:50|g|#a:1,b:2\n".to_string(),
                 "sans.latency.count:2|c|#a:1,b:2\n".to_string(),
                 "sans.latency.max:60|g|#a:1,b:2\n".to_string(),
                 "sans.latency.min:40|g|#a:1,b:2\n".to_string(),
                 "sans.load:15|g|#a:1,b:2\n".to_string(),
                 "sans.requests:5|c|#a:1,b:2\n".to_string(),
+            ]
+        );
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn shared_collector_count_saturates_at_i64_extremes() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "sat.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
+        let prepared_max =
+            collector.prepare_metric(RylvStr::from_static("prep_max"), sorted.clone());
+        let prepared_min =
+            collector.prepare_metric(RylvStr::from_static("prep_min"), sorted.clone());
+
+        // Normal path: MAX + 1 and MIN - 1 clamp instead of wrapping around.
+        collector.count_add(
+            RylvStr::from_static("plain_max"),
+            i64::MAX,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_max"),
+            1,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_min"),
+            i64::MIN,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_min"),
+            -1,
+            &mut [RylvTag::from_static("a:1")],
+        );
+
+        // Sorted path.
+        collector.count_add_sorted(RylvStr::from_static("sorted_max"), i64::MAX, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_max"), 1, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_min"), i64::MIN, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_min"), -1, &sorted);
+
+        // Prepared path.
+        collector.count_add_prepared(&prepared_max, i64::MAX);
+        collector.count_add_prepared(&prepared_max, 1);
+        collector.count_add_prepared(&prepared_min, i64::MIN);
+        collector.count_add_prepared(&prepared_min, -1);
+
+        assert_eq!(
+            drain_metrics_now(&collector),
+            vec![
+                "sat.plain_max:9223372036854775807|c|#a:1\n".to_string(),
+                "sat.plain_min:-9223372036854775808|c|#a:1\n".to_string(),
+                "sat.prep_max:9223372036854775807|c|#a:1,b:2\n".to_string(),
+                "sat.prep_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
+                "sat.sorted_max:9223372036854775807|c|#a:1,b:2\n".to_string(),
+                "sat.sorted_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
             ]
         );
         assert!(drain_metrics_now(&collector).is_empty());
@@ -2248,12 +2414,12 @@ mod tests {
             20,
             &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
         );
-        collector_ref.histogram(
+        let _ = collector_ref.histogram(
             RylvStr::from_static("latency"),
             40,
             &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
-        collector_ref.histogram(
+        let _ = collector_ref.histogram(
             RylvStr::from_static("latency"),
             60,
             &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
@@ -2339,11 +2505,11 @@ mod tests {
             &mut [RylvTag::from_static("a:1")],
         );
         let gauge = aggregator.gauge.iter().next().unwrap();
-        gauge.sum.store(0, Ordering::SeqCst);
+        gauge.take_sum();
         gauge.count.store(0, Ordering::SeqCst);
         drop(gauge);
 
-        record_histogram_in_aggregator(
+        let _ = record_histogram_in_aggregator(
             &aggregator,
             &empty_configs,
             &resolved.default_histogram_config,
@@ -2413,14 +2579,14 @@ mod tests {
     }
 
     #[test]
-    fn gauge_last_emits_u64_max() {
+    fn gauge_last_emits_i64_max() {
         let collector = SharedCollector::new(SharedCollectorOptions::default());
 
-        collector.gauge(RylvStr::from_static("max.gauge"), u64::MAX, &mut []);
+        collector.gauge(RylvStr::from_static("max.gauge"), i64::MAX, &mut []);
 
         assert_eq!(
             drain_metrics_now(&collector),
-            vec![format!("max.gauge:{}|g\n", u64::MAX)],
+            vec![format!("max.gauge:{}|g\n", i64::MAX)],
         );
     }
 
@@ -2544,12 +2710,12 @@ mod tests {
             ..Default::default()
         });
 
-        collector.timing(
+        let _ = collector.timing(
             RylvStr::from_static("request.duration"),
             100,
             &mut [RylvTag::from_static("endpoint:api")],
         );
-        collector.timing(
+        let _ = collector.timing(
             RylvStr::from_static("request.duration"),
             200,
             &mut [RylvTag::from_static("endpoint:api")],
@@ -2565,14 +2731,14 @@ mod tests {
         assert!(
             lines.contains(&"app.request.duration.99percentile:200|ms|#endpoint:api\n".to_string())
         );
-        assert!(lines.contains(&"app.request.duration.avg:100|ms|#endpoint:api\n".to_string()));
+        assert!(lines.contains(&"app.request.duration.avg:150|ms|#endpoint:api\n".to_string()));
     }
 
     #[test]
     fn timing_without_tags() {
         let collector = SharedCollector::new(SharedCollectorOptions::default());
 
-        collector.timing(RylvStr::from_static("db.query"), 42, &mut []);
+        let _ = collector.timing(RylvStr::from_static("db.query"), 42, &mut []);
 
         let lines = drain_metrics_now(&collector);
         assert!(lines.contains(&"db.query.count:1|c\n".to_string()));
@@ -2591,8 +2757,8 @@ mod tests {
             .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
         let prepared = collector.prepare_metric(RylvStr::from_static("duration"), sorted.clone());
 
-        collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
-        collector.timing_prepared(&prepared, 60);
+        let _ = collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
+        let _ = collector.timing_prepared(&prepared, 60);
 
         let lines = drain_metrics_now(&collector);
         assert!(lines.contains(&"s.duration.count:2|c|#a:1,b:2\n".to_string()));
@@ -2604,12 +2770,12 @@ mod tests {
     fn timing_and_histogram_are_independent() {
         let collector = SharedCollector::new(SharedCollectorOptions::default());
 
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("latency"),
             100,
             &mut [RylvTag::from_static("a:1")],
         );
-        collector.timing(
+        let _ = collector.timing(
             RylvStr::from_static("latency"),
             200,
             &mut [RylvTag::from_static("a:1")],
@@ -2629,12 +2795,12 @@ mod tests {
         });
         let collector_ref = &collector;
 
-        collector_ref.timing(
+        let _ = collector_ref.timing(
             RylvStr::from_static("duration"),
             40,
             &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
-        collector_ref.timing(
+        let _ = collector_ref.timing(
             RylvStr::from_static("duration"),
             60,
             &mut [RylvTag::from_static("a:1"), RylvTag::from_static("b:2")],
@@ -2659,7 +2825,7 @@ mod tests {
             collector.prepare_metric(RylvStr::from_static("timing_prepared"), sorted.clone());
         let prepared_b = collector.prepare_metric(RylvStr::from_static("timing_prepared"), sorted);
 
-        record_timing_in_aggregator(
+        let _ = record_timing_in_aggregator(
             &aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
@@ -2667,7 +2833,7 @@ mod tests {
             40,
             &mut [RylvTag::from_static("b:2"), RylvTag::from_static("a:1")],
         );
-        record_timing_in_aggregator_sorted(
+        let _ = record_timing_in_aggregator_sorted(
             &aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
@@ -2675,14 +2841,14 @@ mod tests {
             50,
             prepared_a.tags(),
         );
-        record_timing_in_aggregator_prepared(
+        let _ = record_timing_in_aggregator_prepared(
             &aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
             &prepared_a,
             60,
         );
-        record_timing_in_aggregator_prepared(
+        let _ = record_timing_in_aggregator_prepared(
             &aggregator,
             &collector.histogram_configs,
             &collector.default_histogram_config,
@@ -2715,7 +2881,7 @@ mod tests {
         let mut aggregator = Aggregator::with_hasher_builder(&hasher, resolved.pool_count);
         let empty_configs = HashMap::with_hasher(hasher);
 
-        record_timing_in_aggregator(
+        let _ = record_timing_in_aggregator(
             &aggregator,
             &empty_configs,
             &resolved.default_histogram_config,
@@ -2756,8 +2922,8 @@ mod tests {
             .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
         let prepared = collector.prepare_metric(RylvStr::from_static("duration"), sorted.clone());
 
-        collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
-        collector.timing_prepared(&prepared, 60);
+        let _ = collector.timing_sorted(RylvStr::from_static("duration"), 40, &sorted);
+        let _ = collector.timing_prepared(&prepared, 60);
 
         let lines = drain_metrics_now(&collector);
         assert_eq!(
@@ -2765,7 +2931,7 @@ mod tests {
             vec![
                 "sans.duration.95percentile:60|ms|#a:1,b:2\n".to_string(),
                 "sans.duration.99percentile:60|ms|#a:1,b:2\n".to_string(),
-                "sans.duration.avg:40|ms|#a:1,b:2\n".to_string(),
+                "sans.duration.avg:50|ms|#a:1,b:2\n".to_string(),
                 "sans.duration.count:2|c|#a:1,b:2\n".to_string(),
                 "sans.duration.max:60|ms|#a:1,b:2\n".to_string(),
                 "sans.duration.min:40|ms|#a:1,b:2\n".to_string(),
@@ -2788,7 +2954,7 @@ mod tests {
         let pool_id = resolved.default_histogram_config.pool_id();
 
         // Record a histogram and reset it so the drain recycles the wrapper.
-        record_histogram_in_aggregator(
+        let _ = record_histogram_in_aggregator(
             &aggregator,
             &empty_configs,
             &resolved.default_histogram_config,
@@ -2813,7 +2979,7 @@ mod tests {
         assert_eq!(aggregator.pool_histograms[pool_id].len(), 1);
 
         // Now record a timing — it should reuse the recycled wrapper from the shared pool.
-        record_timing_in_aggregator(
+        let _ = record_timing_in_aggregator(
             &aggregator,
             &empty_configs,
             &resolved.default_histogram_config,
@@ -2890,8 +3056,8 @@ mod tests {
         let sorted = collector.prepare_sorted_tags([RylvTag::from_static("a:1")]);
         let prepared = collector.prepare_metric(RylvStr::from_static("dur_p"), sorted.clone());
 
-        collector.timing_sorted(RylvStr::from_static("dur_s"), 100, &sorted);
-        collector.timing_prepared(&prepared, 200);
+        let _ = collector.timing_sorted(RylvStr::from_static("dur_s"), 100, &sorted);
+        let _ = collector.timing_prepared(&prepared, 200);
 
         let lines = drain_metrics_now(&collector);
         assert!(lines
@@ -2948,13 +3114,13 @@ mod tests {
             20,
             &mut [RylvTag::from_static("a:1")],
         );
-        MetricCollectorTrait::timing(
+        let _ = MetricCollectorTrait::timing(
             &collector,
             RylvStr::from_static("dur"),
             100,
             &mut [RylvTag::from_static("a:1")],
         );
-        MetricCollectorTrait::histogram(
+        let _ = MetricCollectorTrait::histogram(
             &collector,
             RylvStr::from_static("lat"),
             50,
@@ -2965,7 +3131,7 @@ mod tests {
         let sorted =
             MetricCollectorTrait::prepare_sorted_tags(&collector, [RylvTag::from_static("a:1")]);
 
-        MetricCollectorTrait::histogram_sorted(
+        let _ = MetricCollectorTrait::histogram_sorted(
             &collector,
             RylvStr::from_static("lat_s"),
             50,
@@ -2984,7 +3150,12 @@ mod tests {
             &sorted,
         );
         MetricCollectorTrait::gauge_sorted(&collector, RylvStr::from_static("glww_s"), 40, &sorted);
-        MetricCollectorTrait::timing_sorted(&collector, RylvStr::from_static("dur_s"), 60, &sorted);
+        let _ = MetricCollectorTrait::timing_sorted(
+            &collector,
+            RylvStr::from_static("dur_s"),
+            60,
+            &sorted,
+        );
 
         // prepared via reference UFCS
         let prepared_h = MetricCollectorTrait::prepare_metric(
@@ -2995,11 +3166,11 @@ mod tests {
         let prepared_c =
             MetricCollectorTrait::prepare_metric(&collector, RylvStr::from_static("cnt_p"), sorted);
 
-        MetricCollectorTrait::histogram_prepared(&collector, &prepared_h, 70);
+        let _ = MetricCollectorTrait::histogram_prepared(&collector, &prepared_h, 70);
         MetricCollectorTrait::count_add_prepared(&collector, &prepared_c, 3);
         MetricCollectorTrait::gauge_avg_prepared(&collector, &prepared_h, 80);
         MetricCollectorTrait::gauge_prepared(&collector, &prepared_h, 90);
-        MetricCollectorTrait::timing_prepared(&collector, &prepared_h, 110);
+        let _ = MetricCollectorTrait::timing_prepared(&collector, &prepared_h, 110);
 
         let lines = drain_metrics_now(&collector);
         assert!(lines.iter().any(|l| l.contains("cnt")));

@@ -83,7 +83,7 @@ fn benchmark_record_histogram(c: &mut Criterion) {
         let mut i = 0;
         let internal = Instant::now();
         b.iter(|| {
-            collector.histogram(
+            let _ = collector.histogram(
                 black_box(RylvStr::from_static(vec_metrics[i])),
                 black_box(1),
                 black_box([

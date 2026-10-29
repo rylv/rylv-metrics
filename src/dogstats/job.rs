@@ -1,4 +1,6 @@
-use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricDrain, MetricSuffix};
+use crate::dogstats::collector::{
+    DrainMetricCollectorTrait, MetricDrain, MetricSuffix, MetricValue,
+};
 use crate::dogstats::writer::StatsWriterHolder;
 use crate::MetricResult;
 
@@ -21,6 +23,9 @@ where
     collector: Arc<MC>,
 
     buffer: Buffer,
+    /// Scratch for [`MetricValue::Float`] formatting, reused across frames.
+    float_buffer: String,
+
     bump: Bump,
 
     stats_writer: StatsWriterHolder,
@@ -76,11 +81,16 @@ where
                 stats_writer.write_copied(
                     &metric_parts[..part_count],
                     metric.tags,
-                    self.buffer.format(metric.value),
+                    Self::format_value(metric.value, &mut self.buffer, &mut self.float_buffer),
                     metric.kind,
                 )
             } else {
-                let value = Self::get_value(metric.value, &self.bump, &mut self.buffer);
+                let value = Self::get_value(
+                    metric.value,
+                    &self.bump,
+                    &mut self.buffer,
+                    &mut self.float_buffer,
+                );
                 stats_writer.write(&metric_parts[..part_count], metric.tags, value, metric.kind)
             };
             if let Err(err) = result {
@@ -98,8 +108,27 @@ where
         SendResult::Ok
     }
 
-    fn get_value<'a>(value: u64, bump: &'a Bump, buffer: &mut Buffer) -> &'a str {
-        let value = buffer.format(value);
+    /// Formats a frame value for the stack path: the returned string borrows
+    /// `int_buffer` (integers) or `float_buffer` (floats) and is valid until
+    /// either is used again.
+    fn format_value<'a>(
+        value: MetricValue,
+        int_buffer: &'a mut Buffer,
+        float_buffer: &'a mut String,
+    ) -> &'a str {
+        match value {
+            MetricValue::Int(value) => int_buffer.format(value),
+            MetricValue::Float(value) => format_float(value, float_buffer),
+        }
+    }
+
+    fn get_value<'a>(
+        value: MetricValue,
+        bump: &'a Bump,
+        int_buffer: &mut Buffer,
+        float_buffer: &mut String,
+    ) -> &'a str {
+        let value = Self::format_value(value, int_buffer, float_buffer);
         bump.alloc_str(value)
     }
 
@@ -133,6 +162,7 @@ where
         stats_writer,
         collector,
         buffer: Buffer::new(),
+        float_buffer: String::with_capacity(32),
         bump: Bump::with_capacity(20 * 1024),
     };
 
@@ -163,3 +193,5 @@ where
         }
     }
 }
+
+pub(super) use super::format::format_float;
