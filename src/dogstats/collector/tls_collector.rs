@@ -646,7 +646,7 @@ where
             |(key, _)| key.hash,
         ) {
             Occupied(mut entry) => {
-                entry.get_mut().1 += value;
+                entry.get_mut().1 = entry.get_mut().1.saturating_add(value);
             }
             Vacant(entry) => {
                 entry.insert((lookup.into_key(), value));
@@ -672,7 +672,7 @@ where
             |(key, _)| key.hash,
         ) {
             Occupied(mut entry) => {
-                entry.get_mut().1 += value;
+                entry.get_mut().1 = entry.get_mut().1.saturating_add(value);
             }
             Vacant(entry) => {
                 entry.insert((lookup.into_key(), value));
@@ -688,7 +688,7 @@ where
             .count
             .find_mut(prepared.hash(), |(key, _)| key.id == entry_id)
         {
-            *existing += value;
+            *existing = existing.saturating_add(value);
             return;
         }
         match aggregator.count.entry(
@@ -697,7 +697,7 @@ where
             |(key, _)| key.hash,
         ) {
             Occupied(mut entry) => {
-                entry.get_mut().1 += value;
+                entry.get_mut().1 = entry.get_mut().1.saturating_add(value);
             }
             Vacant(entry) => {
                 entry.insert((to_agg_entry_key(prepared), value));
@@ -1308,7 +1308,7 @@ fn merge_local_aggregator_into_global_hashbrown<S>(
             .entry(key.hash, |(existing, _)| existing == key, |(k, _)| k.hash)
         {
             Occupied(mut entry) => {
-                entry.get_mut().1 += val;
+                entry.get_mut().1 = entry.get_mut().1.saturating_add(val);
             }
             Vacant(entry) => {
                 entry.insert((key.clone(), val));
@@ -2368,6 +2368,98 @@ mod tests {
     }
 
     #[test]
+    fn tls_collector_count_saturates_at_i64_extremes() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "sat.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
+        let prepared_max =
+            collector.prepare_metric(RylvStr::from_static("prep_max"), sorted.clone());
+        let prepared_min =
+            collector.prepare_metric(RylvStr::from_static("prep_min"), sorted.clone());
+
+        // Normal path: MAX + 1 and MIN - 1 clamp instead of wrapping around.
+        collector.count_add(
+            RylvStr::from_static("plain_max"),
+            i64::MAX,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_max"),
+            1,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_min"),
+            i64::MIN,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_min"),
+            -1,
+            &mut [RylvTag::from_static("a:1")],
+        );
+
+        // Sorted path.
+        collector.count_add_sorted(RylvStr::from_static("sorted_max"), i64::MAX, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_max"), 1, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_min"), i64::MIN, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_min"), -1, &sorted);
+
+        // Prepared path.
+        collector.count_add_prepared(&prepared_max, i64::MAX);
+        collector.count_add_prepared(&prepared_max, 1);
+        collector.count_add_prepared(&prepared_min, i64::MIN);
+        collector.count_add_prepared(&prepared_min, -1);
+
+        assert_eq!(
+            drain_metrics_now(&collector),
+            vec![
+                "sat.plain_max:9223372036854775807|c|#a:1\n".to_string(),
+                "sat.plain_min:-9223372036854775808|c|#a:1\n".to_string(),
+                "sat.prep_max:9223372036854775807|c|#a:1,b:2\n".to_string(),
+                "sat.prep_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
+                "sat.sorted_max:9223372036854775807|c|#a:1,b:2\n".to_string(),
+                "sat.sorted_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
+            ]
+        );
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn tls_count_merge_saturates_at_i64_max_across_threads() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            stats_prefix: "merge.".to_string(),
+            ..Default::default()
+        });
+
+        // Two threads accumulate i64::MAX each on the same metric; the drain
+        // merges both thread-local aggregators into the global one, which must
+        // saturate instead of wrapping to -2.
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let collector = &collector;
+                scope.spawn(move || {
+                    collector.count_add(
+                        RylvStr::from_static("requests"),
+                        i64::MAX,
+                        &mut [RylvTag::from_static("a:1")],
+                    );
+                });
+            }
+        });
+
+        assert_eq!(
+            drain_metrics_now(&collector),
+            vec!["merge.requests:9223372036854775807|c|#a:1\n".to_string()]
+        );
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
     fn tls_collector_drain_clears_metrics_on_second_drain() {
         let collector = TLSCollector::new(TLSCollectorOptions {
             stats_prefix: "drain.".to_string(),
@@ -2557,6 +2649,57 @@ mod tests {
         assert!(local.gauge.is_empty());
         assert!(local.histograms.is_empty());
         assert_eq!(local.pool_histograms[0].len(), 2);
+    }
+
+    #[test]
+    fn merge_local_count_saturates_at_i64_extremes() {
+        let hasher = crate::DefaultMetricHasher::new();
+        let resolved = resolve_histogram_configs(
+            HistogramConfig::default(),
+            HashMap::with_hasher(hasher.clone()),
+            &hasher,
+        );
+        let mut local = LocalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut global = GlobalAggregatorHb::with_pool_count(&hasher, resolved.pool_count);
+        let mut to_remove = Vec::new();
+
+        // Both threads accumulated i64::MAX (and i64::MIN) on the same metric;
+        // merging must clamp instead of wrapping.
+        for (metric, value) in [("max", i64::MAX), ("min", i64::MIN)] {
+            let tags = [RylvTag::from_static("a:1")];
+
+            let local_lookup = build_lookup_key(RylvStr::from_static(metric), &tags, &hasher);
+            local.count.insert_unique(
+                local_lookup.hash,
+                (local_lookup.into_key(), value),
+                |(k, _)| k.hash,
+            );
+
+            let global_lookup = build_lookup_key(RylvStr::from_static(metric), &tags, &hasher);
+            global.count.insert_unique(
+                global_lookup.hash,
+                (global_lookup.into_key(), value),
+                |(k, _)| k.hash,
+            );
+        }
+
+        merge_local_aggregator_into_global_hashbrown(
+            &mut local,
+            &mut global,
+            &resolved.pool_specs,
+            &mut to_remove,
+        );
+
+        let mut global_counts: Vec<(String, i64)> = global
+            .count
+            .iter()
+            .map(|(key, value)| (key.metric.as_ref().to_string(), *value))
+            .collect();
+        global_counts.sort_unstable();
+        assert_eq!(
+            global_counts,
+            vec![("max".to_string(), i64::MAX), ("min".to_string(), i64::MIN),]
+        );
     }
 
     #[test]

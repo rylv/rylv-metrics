@@ -1827,7 +1827,9 @@ fn record_count_add_in_aggregator<S>(
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_add(value))
+            });
             Ok(())
         },
         || Some(AtomicI64::new(0)),
@@ -1848,7 +1850,9 @@ fn record_count_add_in_aggregator_sorted<S>(
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_add(value))
+            });
             Ok(())
         },
         || Some(AtomicI64::new(0)),
@@ -1867,7 +1871,9 @@ fn record_count_add_in_aggregator_prepared<S>(
         value,
         &aggregator.count,
         |v, value| {
-            v.fetch_add(value, Ordering::Relaxed);
+            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_add(value))
+            });
             Ok(())
         },
         || Some(AtomicI64::new(0)),
@@ -2296,6 +2302,68 @@ mod tests {
                 "sans.latency.min:40|g|#a:1,b:2\n".to_string(),
                 "sans.load:15|g|#a:1,b:2\n".to_string(),
                 "sans.requests:5|c|#a:1,b:2\n".to_string(),
+            ]
+        );
+        assert!(drain_metrics_now(&collector).is_empty());
+    }
+
+    #[test]
+    fn shared_collector_count_saturates_at_i64_extremes() {
+        let collector = SharedCollector::new(SharedCollectorOptions {
+            stats_prefix: "sat.".to_string(),
+            ..Default::default()
+        });
+
+        let sorted = collector
+            .prepare_sorted_tags([RylvTag::from_static("b:2"), RylvTag::from_static("a:1")]);
+        let prepared_max =
+            collector.prepare_metric(RylvStr::from_static("prep_max"), sorted.clone());
+        let prepared_min =
+            collector.prepare_metric(RylvStr::from_static("prep_min"), sorted.clone());
+
+        // Normal path: MAX + 1 and MIN - 1 clamp instead of wrapping around.
+        collector.count_add(
+            RylvStr::from_static("plain_max"),
+            i64::MAX,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_max"),
+            1,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_min"),
+            i64::MIN,
+            &mut [RylvTag::from_static("a:1")],
+        );
+        collector.count_add(
+            RylvStr::from_static("plain_min"),
+            -1,
+            &mut [RylvTag::from_static("a:1")],
+        );
+
+        // Sorted path.
+        collector.count_add_sorted(RylvStr::from_static("sorted_max"), i64::MAX, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_max"), 1, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_min"), i64::MIN, &sorted);
+        collector.count_add_sorted(RylvStr::from_static("sorted_min"), -1, &sorted);
+
+        // Prepared path.
+        collector.count_add_prepared(&prepared_max, i64::MAX);
+        collector.count_add_prepared(&prepared_max, 1);
+        collector.count_add_prepared(&prepared_min, i64::MIN);
+        collector.count_add_prepared(&prepared_min, -1);
+
+        assert_eq!(
+            drain_metrics_now(&collector),
+            vec![
+                "sat.plain_max:9223372036854775807|c|#a:1\n".to_string(),
+                "sat.plain_min:-9223372036854775808|c|#a:1\n".to_string(),
+                "sat.prep_max:9223372036854775807|c|#a:1,b:2\n".to_string(),
+                "sat.prep_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
+                "sat.sorted_max:9223372036854775807|c|#a:1,b:2\n".to_string(),
+                "sat.sorted_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
             ]
         );
         assert!(drain_metrics_now(&collector).is_empty());
