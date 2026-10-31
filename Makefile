@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-RUST_IMAGE ?= rust:1.91.0
+RUST_IMAGE ?= rust:1.88.0
 DOCKER_TARGET_DIR ?= $(PWD)/target-docker
 DOCKER_RUN = docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(DOCKER_TARGET_DIR):/app/target -e CARGO_TARGET_DIR=/app/target -w /app $(RUST_IMAGE)
 THREAD_LOCAL_BENCH_FEATURES = udp tls-collector custom_writer shared-collector
