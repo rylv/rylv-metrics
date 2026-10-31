@@ -92,7 +92,6 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           feature-group: all-features
-          rust-toolchain: "1.88.0"
 
       - name: Dry-run publish
         run: cargo publish --dry-run
