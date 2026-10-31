@@ -31,7 +31,7 @@ fn benchmark_record_histogram(c: &mut Criterion) {
                 received += size;
             }
             if finish2.load(Ordering::SeqCst) {
-                println!("received {}", received);
+                println!("received {received}");
                 break;
             }
         }
@@ -99,7 +99,7 @@ fn benchmark_record_histogram(c: &mut Criterion) {
     let internal = Instant::now();
     drop(collector);
     count_millis += internal.elapsed().as_millis() as u64;
-    println!("elapsed: {:?}", count_millis);
+    println!("elapsed: {count_millis:?}");
 
     let now = Instant::now();
     finish.store(true, Ordering::SeqCst);

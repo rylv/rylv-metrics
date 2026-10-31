@@ -55,8 +55,8 @@ fn test_parallel_histogram_stress() {
                         RylvStr::from_static("parallel.histogram.dynamic"),
                         value,
                         [
-                            RylvTag::from(RylvStr::from(format!("thread:{}", thread_id))),
-                            RylvTag::from(RylvStr::from(format!("iteration:{}", i))),
+                            RylvTag::from(RylvStr::from(format!("thread:{thread_id}"))),
+                            RylvTag::from(RylvStr::from(format!("iteration:{i}"))),
                         ],
                     );
 
@@ -66,7 +66,7 @@ fn test_parallel_histogram_stress() {
                         value,
                         [
                             RylvTag::from(RylvStr::from(String::from("static:tag"))),
-                            RylvTag::from(RylvStr::from(format!("thread:{}", thread_id))),
+                            RylvTag::from(RylvStr::from(format!("thread:{thread_id}"))),
                         ],
                     );
                 }
@@ -114,7 +114,7 @@ fn test_parallel_mixed_metrics() {
             thread::spawn(move || {
                 for i in 0..iterations_per_thread {
                     let value = (thread_id * iterations_per_thread + i) as u64;
-                    let tag = format!("thread:{}", thread_id);
+                    let tag = format!("thread:{thread_id}");
 
                     match i % 4 {
                         0 => {
@@ -208,7 +208,7 @@ fn test_parallel_many_unique_metrics() {
             let collector = Arc::clone(&collector);
             thread::spawn(move || {
                 for i in 0..unique_metrics_per_thread {
-                    let metric_name = format!("parallel.unique.metric.{}.{}", thread_id, i);
+                    let metric_name = format!("parallel.unique.metric.{thread_id}.{i}");
                     collector.histogram(
                         RylvStr::from(metric_name),
                         i as u64,
@@ -293,10 +293,7 @@ fn test_parallel_rapid_fire() {
                     collector.histogram(
                         RylvStr::from_static("parallel.rapid"),
                         i as u64,
-                        [RylvTag::from(RylvStr::from(format!(
-                            "thread:{}",
-                            thread_id
-                        )))],
+                        [RylvTag::from(RylvStr::from(format!("thread:{thread_id}")))],
                     );
                 }
             })
@@ -360,10 +357,7 @@ fn test_parallel_varying_tag_counts() {
                                 value,
                                 [
                                     RylvTag::from(RylvStr::from(String::from("tag:static"))),
-                                    RylvTag::from(RylvStr::from(format!(
-                                        "tag:dynamic{}",
-                                        thread_id
-                                    ))),
+                                    RylvTag::from(RylvStr::from(format!("tag:dynamic{thread_id}"))),
                                     RylvTag::from(RylvStr::from(String::from("tag:mixed"))),
                                 ],
                             );
@@ -377,11 +371,8 @@ fn test_parallel_varying_tag_counts() {
                                     RylvTag::from(RylvStr::from(String::from("tag1:value1"))),
                                     RylvTag::from(RylvStr::from(String::from("tag2:value2"))),
                                     RylvTag::from(RylvStr::from(String::from("tag3:value3"))),
-                                    RylvTag::from(RylvStr::from(format!(
-                                        "tag4:thread{}",
-                                        thread_id
-                                    ))),
-                                    RylvTag::from(RylvStr::from(format!("tag5:iter{}", i))),
+                                    RylvTag::from(RylvStr::from(format!("tag4:thread{thread_id}"))),
+                                    RylvTag::from(RylvStr::from(format!("tag5:iter{i}"))),
                                 ],
                             );
                         }
@@ -412,7 +403,7 @@ fn test_parallel_all_operations() {
             thread::spawn(move || {
                 for i in 0..iterations_per_thread {
                     let value = i as u64;
-                    let thread_tag = format!("thread:{}", thread_id);
+                    let thread_tag = format!("thread:{thread_id}");
 
                     // Histogram
                     collector.histogram(
