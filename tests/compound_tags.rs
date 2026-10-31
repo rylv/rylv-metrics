@@ -11,7 +11,7 @@ fn assert_compound_and_full_aggregate<C: DrainMetricCollectorTrait>(collector: C
             RylvStr::from_static("requests"),
             1,
             &mut [
-                RylvTag::Compound(RylvStr::from_static("route"), RylvStr::from(route.as_str())),
+                RylvTag::from_parts(RylvStr::from_static("route"), route.as_str()),
                 RylvTag::from_static("service:web"),
             ],
         );
@@ -28,10 +28,7 @@ fn assert_compound_and_full_aggregate<C: DrainMetricCollectorTrait>(collector: C
 
     let tags = collector.prepare_sorted_tags([
         RylvTag::from_static("service:web"),
-        RylvTag::Compound(
-            RylvStr::from_static("route"),
-            RylvStr::from(String::from("/users")),
-        ),
+        (RylvStr::from_static("route"), String::from("/users")).into(),
     ]);
     let prepared = collector.prepare_metric(RylvStr::from_static("requests"), tags);
     collector.count_add_prepared(&prepared, 3);
