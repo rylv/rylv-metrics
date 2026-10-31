@@ -71,7 +71,7 @@ fn create_collector(
     };
 
     let bind_addr = "0.0.0.0:0".parse().unwrap();
-    let datadog_addr = format!("127.0.0.1:{}", port).parse().unwrap();
+    let datadog_addr = format!("127.0.0.1:{port}").parse().unwrap();
 
     let inner = SharedCollector::new(SharedCollectorOptions {
         stats_prefix,

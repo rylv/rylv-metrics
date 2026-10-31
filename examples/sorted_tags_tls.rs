@@ -22,7 +22,7 @@ fn main() {
     let drain = collector.try_begin_drain();
     if let Some(mut drain) = drain {
         for frame in drain.frames() {
-            println!("{:?}", frame);
+            println!("{frame:?}");
         }
     }
 }

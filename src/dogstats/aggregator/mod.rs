@@ -234,10 +234,6 @@ impl HistogramWrapper {
     }
 }
 
-pub const SIG_FIG_MAX: u8 = 5;
-pub const SIG_FIG_DEF: u8 = 3;
-const _: () = assert!(SIG_FIG_DEF <= SIG_FIG_MAX);
-
 /// Number of significant figures for histogram precision (0..=5).
 ///
 /// Higher values increase precision but also memory usage.

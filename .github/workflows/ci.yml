@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        rust: [stable]
+        rust: ["1.88.0"]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
           targets: ${{ matrix.target }}
@@ -91,8 +91,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.88.0"
           components: clippy
 
       - name: Cache cargo registry
@@ -199,10 +200,10 @@ jobs:
             ${{ runner.os }}-miri-sysroot-
 
       - name: Setup Miri
-        run: cargo miri setup
+        run: cargo +nightly miri setup
 
       - name: Run Miri tests
-        run: cargo miri test --test miri_test --features "${{ matrix.features }}"
+        run: cargo +nightly miri test --test miri_test --features "${{ matrix.features }}"
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
 
@@ -280,10 +281,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo +stable install cargo-audit --locked
 
       - name: Run cargo audit
-        run: cargo audit
+        run: cargo +stable audit
 
   deny:
     name: Cargo deny
@@ -297,10 +298,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo +stable install cargo-deny --locked
 
       - name: Run cargo deny
-        run: cargo deny check
+        run: cargo +stable deny check
 
   msrv:
     name: MSRV (1.88.0) on ${{ matrix.os }}
@@ -334,7 +335,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88.0"
 
       - name: Build documentation
         run: cargo doc --no-deps --all-features
@@ -354,7 +357,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88.0"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -383,7 +388,7 @@ jobs:
             ${{ runner.os }}-target-bench-
 
       - name: Install critcmp
-        run: cargo install critcmp --locked || true
+        run: cargo +stable install critcmp --locked || true
 
       - name: Checkout base branch
         run: git fetch origin ${{ github.base_ref }} --depth=1
@@ -436,8 +441,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.88.0"
           components: rustfmt
 
       - name: Check formatting
