@@ -214,6 +214,28 @@ impl<'a> From<Cow<'a, str>> for RylvTag<'a> {
     }
 }
 
+impl<'a, K, V> From<(K, V)> for RylvTag<'a>
+where
+    K: Into<RylvStr<'a>>,
+    V: Into<RylvStr<'a>>,
+{
+    #[inline]
+    fn from((key, value): (K, V)) -> Self {
+        Self::from_parts(key, value)
+    }
+}
+
+impl<'a> RylvTag<'a> {
+    /// Creates a compound tag from a key and a value.
+    ///
+    /// Use [`RylvStr::from_static`] for static parts to preserve zero-copy storage.
+    #[inline]
+    #[must_use]
+    pub fn from_parts(key: impl Into<RylvStr<'a>>, value: impl Into<RylvStr<'a>>) -> Self {
+        Self::Compound(key.into(), value.into())
+    }
+}
+
 impl RylvTag<'_> {
     /// Returns the length of the resolved tag string in bytes.
     #[inline]
@@ -427,6 +449,38 @@ mod tests {
     fn rylv_tag_from_static() {
         let tag = RylvTag::from_static("env:prod");
         assert_eq!(tag.len(), 8);
+    }
+
+    #[test]
+    fn rylv_tag_from_parts_borrows_dynamic_parts() {
+        let key = String::from("route");
+        let value = String::from("/users");
+        let tag = RylvTag::from_parts(key.as_str(), value.as_str());
+        assert!(matches!(
+            tag,
+            RylvTag::Compound(RylvStr::Borrowed("route"), RylvStr::Borrowed("/users"))
+        ));
+        assert_eq!(tag, RylvTag::from_static("route:/users"));
+    }
+
+    #[test]
+    fn rylv_tag_from_tuple_accepts_mixed_owned_parts() {
+        let tag: RylvTag<'_> = (String::from("route"), Arc::<str>::from("/users")).into();
+        assert!(matches!(
+            tag,
+            RylvTag::Compound(RylvStr::Owned(_), RylvStr::OwnedStr(_))
+        ));
+        assert_eq!(tag, RylvTag::from_static("route:/users"));
+    }
+
+    #[test]
+    fn rylv_tag_from_tuple_preserves_explicit_static_parts() {
+        let tag: RylvTag<'_> = (RylvStr::from_static("env"), RylvStr::from_static("prod")).into();
+        assert!(matches!(
+            tag,
+            RylvTag::Compound(RylvStr::Static("env"), RylvStr::Static("prod"))
+        ));
+        assert_eq!(tag, RylvTag::from_static_compound("env", "prod"));
     }
 
     #[test]
