@@ -2364,7 +2364,7 @@ mod tests {
                 "tls.requests:5|c|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2426,7 +2426,7 @@ mod tests {
                 "sat.sorted_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2456,7 +2456,7 @@ mod tests {
             drain_metrics_now(&collector),
             vec!["merge.requests:9223372036854775807|c|#a:1\n".to_string()]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2472,13 +2472,13 @@ mod tests {
         );
 
         let first = drain_metrics_now(&collector);
-        assert!(!first.is_empty());
+        assert_ne!(first, Vec::<String>::new());
 
         let second = drain_metrics_now(&collector);
-        assert!(second.is_empty());
+        assert_eq!(second, Vec::<String>::new());
 
         let third = drain_metrics_now(&collector);
-        assert!(third.is_empty());
+        assert_eq!(third, Vec::<String>::new());
     }
 
     #[test]
@@ -2727,7 +2727,7 @@ mod tests {
 
         let lines = drain_metrics_now(&collector);
         assert_eq!(lines, vec!["app.connections:50|g|#pool:main\n".to_string()]);
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -3094,7 +3094,7 @@ mod tests {
                 "tls.duration.min:40|ms|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]

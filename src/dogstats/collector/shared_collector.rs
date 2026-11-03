@@ -1812,6 +1812,21 @@ where
     }
 }
 
+fn saturating_add_atomic(counter: &AtomicI64, value: i64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        match counter.compare_exchange_weak(
+            current,
+            current.saturating_add(value),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
 fn record_count_add_in_aggregator<S>(
     aggregator: &Aggregator<S>,
     metric: RylvStr<'_>,
@@ -1827,13 +1842,7 @@ fn record_count_add_in_aggregator<S>(
         value,
         &aggregator.count,
         |v, value| {
-            // MSRV 1.88: `AtomicI64::try_update` (the rename of `fetch_update`)
-            // was only stabilized in Rust 1.95, so keep `fetch_update` until the
-            // crate's MSRV reaches 1.95.
-            #[allow(deprecated)]
-            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                Some(current.saturating_add(value))
-            });
+            saturating_add_atomic(v, value);
             Ok(())
         },
         || Some(AtomicI64::new(0)),
@@ -1854,13 +1863,7 @@ fn record_count_add_in_aggregator_sorted<S>(
         value,
         &aggregator.count,
         |v, value| {
-            // MSRV 1.88: `AtomicI64::try_update` (the rename of `fetch_update`)
-            // was only stabilized in Rust 1.95, so keep `fetch_update` until the
-            // crate's MSRV reaches 1.95.
-            #[allow(deprecated)]
-            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                Some(current.saturating_add(value))
-            });
+            saturating_add_atomic(v, value);
             Ok(())
         },
         || Some(AtomicI64::new(0)),
@@ -1879,13 +1882,7 @@ fn record_count_add_in_aggregator_prepared<S>(
         value,
         &aggregator.count,
         |v, value| {
-            // MSRV 1.88: `AtomicI64::try_update` (the rename of `fetch_update`)
-            // was only stabilized in Rust 1.95, so keep `fetch_update` until the
-            // crate's MSRV reaches 1.95.
-            #[allow(deprecated)]
-            let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                Some(current.saturating_add(value))
-            });
+            saturating_add_atomic(v, value);
             Ok(())
         },
         || Some(AtomicI64::new(0)),
@@ -2316,7 +2313,7 @@ mod tests {
                 "sans.requests:5|c|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2378,7 +2375,7 @@ mod tests {
                 "sat.sorted_min:-9223372036854775808|c|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2577,7 +2574,7 @@ mod tests {
 
         let lines = drain_metrics_now(&collector);
         assert_eq!(lines, vec!["app.connections:50|g|#pool:main\n".to_string()]);
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
@@ -2949,7 +2946,7 @@ mod tests {
                 "sans.duration.min:40|ms|#a:1,b:2\n".to_string(),
             ]
         );
-        assert!(drain_metrics_now(&collector).is_empty());
+        assert_eq!(drain_metrics_now(&collector), Vec::<String>::new());
     }
 
     #[test]
