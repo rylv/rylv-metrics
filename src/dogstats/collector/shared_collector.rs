@@ -1827,6 +1827,10 @@ fn record_count_add_in_aggregator<S>(
         value,
         &aggregator.count,
         |v, value| {
+            // MSRV 1.88: `AtomicI64::try_update` (the rename of `fetch_update`)
+            // was only stabilized in Rust 1.95, so keep `fetch_update` until the
+            // crate's MSRV reaches 1.95.
+            #[allow(deprecated)]
             let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 Some(current.saturating_add(value))
             });
@@ -1850,6 +1854,10 @@ fn record_count_add_in_aggregator_sorted<S>(
         value,
         &aggregator.count,
         |v, value| {
+            // MSRV 1.88: `AtomicI64::try_update` (the rename of `fetch_update`)
+            // was only stabilized in Rust 1.95, so keep `fetch_update` until the
+            // crate's MSRV reaches 1.95.
+            #[allow(deprecated)]
             let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 Some(current.saturating_add(value))
             });
@@ -1871,6 +1879,10 @@ fn record_count_add_in_aggregator_prepared<S>(
         value,
         &aggregator.count,
         |v, value| {
+            // MSRV 1.88: `AtomicI64::try_update` (the rename of `fetch_update`)
+            // was only stabilized in Rust 1.95, so keep `fetch_update` until the
+            // crate's MSRV reaches 1.95.
+            #[allow(deprecated)]
             let _ = v.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 Some(current.saturating_add(value))
             });

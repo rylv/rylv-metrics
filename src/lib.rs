@@ -68,6 +68,9 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![cfg_attr(test, allow(clippy::expect_used))]
 #![cfg_attr(test, allow(clippy::panic))]
+// `assert!(drained.is_empty())` is the natural assertion for drain tests; the
+// lint's `assert_eq!(v, [] as [T; 0])` rewrite is no clearer.
+#![cfg_attr(test, allow(unknown_lints, clippy::assert_is_empty))] // assert_is_empty: clippy 1.99+; unknown_lints: older toolchains
 
 // https://docs.datadoghq.com/developers/dogstatsd/datagram_shell/?tab=metrics
 mod dogstats;
