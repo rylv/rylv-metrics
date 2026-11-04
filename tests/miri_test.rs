@@ -203,6 +203,54 @@ fn miri_shared_drain_can_be_dropped_before_exhaustion() {
     assert!(collector.try_begin_drain().is_some());
 }
 
+#[cfg(feature = "shared-collector")]
+#[test]
+fn miri_shared_gauge_state_spinlock_under_concurrent_record_and_drain() {
+    // The averaged-gauge sum is an `UnsafeCell<i128>` guarded by a manual CAS
+    // spinlock; the invariant "the sum is accessed only while holding
+    // `sum_lock`" is a concurrent claim, so recorders and a drainer must run
+    // together under Miri.
+    let collector = SharedCollector::default();
+
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            let collector = &collector;
+            scope.spawn(move || {
+                for value in 0..64 {
+                    collector.gauge_avg(
+                        RylvStr::from_static("miri.gauge"),
+                        i64::from(value) - 32,
+                        &mut [RylvTag::from_static("env:miri")],
+                    );
+                    collector.count_add(
+                        RylvStr::from_static("miri.gauge"),
+                        1,
+                        &mut [RylvTag::from_static("env:miri")],
+                    );
+                }
+            });
+        }
+
+        // Drain while the recorders run: `take_sum` contends with `record`
+        // on the same spinlock.
+        for _ in 0..8 {
+            if let Some(mut drain) = collector.try_begin_drain() {
+                for frame in drain.frames() {
+                    assert!(!frame.metric.is_empty());
+                }
+            }
+            std::hint::spin_loop();
+        }
+    });
+
+    // After the threads join, the collector still accepts records and drains.
+    collector.gauge_avg(RylvStr::from_static("miri.gauge"), 7, &mut []);
+    let mut drain = collector
+        .try_begin_drain()
+        .expect("drain should become available after the threads join");
+    assert!(drain.frames().next().is_some());
+}
+
 #[cfg(feature = "tls-collector")]
 #[test]
 fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {

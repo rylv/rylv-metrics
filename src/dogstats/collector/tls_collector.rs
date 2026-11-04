@@ -948,9 +948,16 @@ where
                 get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
                     Ok(()),
                     |mut histogram| {
-                        let result = histogram.record(value).map_err(MetricsError::from);
-                        entry.insert((lookup.into_key(), histogram));
-                        result
+                        let result = histogram.record(value);
+                        if result.is_ok() {
+                            entry.insert((lookup.into_key(), histogram));
+                        } else {
+                            // The value was rejected: the wrapper stays
+                            // empty, so it is recycled instead of being
+                            // inserted into the table.
+                            split.pool_histograms[histogram.pool_id].push(histogram);
+                        }
+                        result.map_err(MetricsError::from)
                     },
                 )
             }
@@ -3176,6 +3183,53 @@ mod tests {
             get_histogram_from_pool_config(&mut pool, &resolved.default_histogram_config).unwrap();
         assert!(pool[pool_id].is_empty());
         assert_eq!(hist.pool_id, pool_id);
+    }
+
+    #[test]
+    fn tls_histogram_over_max_error_recycles_wrapper_instead_of_inserting() {
+        let collector = TLSCollector::new(TLSCollectorOptions {
+            default_histogram_config: HistogramConfig::new(crate::SigFig::ONE, Vec::new())
+                .unwrap()
+                .with_bounds(1, 100)
+                .unwrap(),
+            ..Default::default()
+        });
+        let pool_id = collector.default_histogram_config.pool_id();
+
+        // A value above the configured maximum is rejected on a metric the
+        // thread-local table has never seen: the freshly allocated wrapper
+        // stays empty, so it goes back to the pool instead of being inserted
+        // into the table.
+        assert!(collector
+            .histogram(RylvStr::from_static("h"), 200, &mut [])
+            .is_err());
+
+        let buffer = collector.get_or_create_thread_local_aggregator();
+        let mut aggregator = buffer.lock();
+        let split = aggregator.split_borrow();
+        assert!(
+            split.histograms.is_empty(),
+            "the rejected record must not leave a table entry behind"
+        );
+        assert_eq!(
+            split.pool_histograms[pool_id].len(),
+            1,
+            "the empty wrapper must be recycled into its pool"
+        );
+        drop(aggregator);
+
+        // The pool wrapper is still usable for an in-range value.
+        assert!(collector
+            .histogram(RylvStr::from_static("h"), 50, &mut [])
+            .is_ok());
+        let lines = drain_metrics_now(&collector);
+        assert!(lines.contains(&"h.count:1|c\n".to_string()), "{lines:?}");
+        assert!(lines.contains(&"h.min:50|g\n".to_string()), "{lines:?}");
+        assert!(lines.contains(&"h.max:50|g\n".to_string()), "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.contains(":200")),
+            "the rejected value must not appear in the drain: {lines:?}"
+        );
     }
 
     #[test]

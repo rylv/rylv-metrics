@@ -81,6 +81,12 @@ path = "benches/collector_compare.rs"
 harness = false
 required-features = ["tls-collector", "shared-collector"]
 
+[[bench]]
+name = "shared_collector_contention"
+path = "benches/shared_collector_contention.rs"
+harness = false
+required-features = ["shared-collector"]
+
 [[example]]
 name = "basic"
 required-features = ["udp"]

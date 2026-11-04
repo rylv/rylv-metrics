@@ -19,6 +19,18 @@ use crate::{DefaultMetricHasher, MetricResult, MetricsError};
 use arc_swap::ArcSwap;
 use dashmap::{DashMap, SharedValue};
 
+/// State for an averaged gauge: an exact wide sum plus a sample count.
+///
+/// The sum is an `i128` guarded by a CAS spinlock rather than a plain
+/// `fetch_add` on a narrower integer: this keeps the emitted mean exact for
+/// any realistic number of samples (the mean of two `i64::MAX` samples must
+/// stay exact) at the cost of a contended same-key spin — waiters spin on
+/// `sum_lock` instead of each issuing a single `fetch_add`. Measured on the
+/// contended same-key path this costs roughly +50% for `gauge_avg` and +20%
+/// for `count_add` (whose saturating add is a CAS-retry loop for the same
+/// reason); uncontended it is ~6-9%. The contended case is covered by the
+/// `gauge_avg`/`count_add` same-key benches in
+/// `benches/shared_collector_contention.rs`.
 pub struct GaugeState {
     /// Accumulated sum of the sampled values. Wider than the sampled `i64`
     /// values so that accumulating any realistic number of samples cannot

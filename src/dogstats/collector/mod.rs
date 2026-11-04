@@ -34,9 +34,13 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     ///
     /// # Errors
-    /// Returns `MetricResult::Err` when the value cannot be recorded into the
-    /// metric's histogram (for example a value above the configured maximum).
+    /// Returns `MetricResult::Err` when the value is rejected by the
+    /// histogram's bounds (for example a value above the configured maximum).
     /// The aggregation state is unchanged; the caller decides how to report it.
+    ///
+    /// If no histogram can be allocated for the metric (the pool is exhausted
+    /// or the allocation fails), the value is dropped and `Ok(())` is
+    /// returned.
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>;
@@ -94,9 +98,13 @@ pub trait MetricCollectorTrait {
     /// **Note:** The `tags` slice is sorted in-place for consistent aggregation keys.
     ///
     /// # Errors
-    /// Returns `MetricResult::Err` when the value cannot be recorded into the
-    /// metric's histogram (for example a value above the configured maximum).
+    /// Returns `MetricResult::Err` when the value is rejected by the
+    /// histogram's bounds (for example a value above the configured maximum).
     /// The aggregation state is unchanged; the caller decides how to report it.
+    ///
+    /// If no histogram can be allocated for the metric (the pool is exhausted
+    /// or the allocation fails), the value is dropped and `Ok(())` is
+    /// returned.
     fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>;
@@ -104,8 +112,10 @@ pub trait MetricCollectorTrait {
     /// Records a histogram using pre-sorted tags.
     ///
     /// # Errors
-    /// Returns `MetricResult::Err` when the value cannot be recorded into the
-    /// metric's histogram (for example a value above the configured maximum).
+    /// Returns `MetricResult::Err` when the value is rejected by the
+    /// histogram's bounds (for example a value above the configured maximum).
+    /// If no histogram can be allocated for the metric, the value is dropped
+    /// and `Ok(())` is returned.
     fn histogram_sorted(
         &self,
         metric: RylvStr<'_>,
@@ -136,8 +146,10 @@ pub trait MetricCollectorTrait {
     /// Records a timing using pre-sorted tags.
     ///
     /// # Errors
-    /// Returns `MetricResult::Err` when the value cannot be recorded into the
-    /// metric's histogram (for example a value above the configured maximum).
+    /// Returns `MetricResult::Err` when the value is rejected by the
+    /// histogram's bounds (for example a value above the configured maximum).
+    /// If no histogram can be allocated for the metric, the value is dropped
+    /// and `Ok(())` is returned.
     fn timing_sorted(
         &self,
         metric: RylvStr<'_>,
@@ -164,8 +176,10 @@ pub trait MetricCollectorTrait {
     /// Records a histogram using a prepared metric key.
     ///
     /// # Errors
-    /// Returns `MetricResult::Err` when the value cannot be recorded into the
-    /// metric's histogram (for example a value above the configured maximum).
+    /// Returns `MetricResult::Err` when the value is rejected by the
+    /// histogram's bounds (for example a value above the configured maximum).
+    /// If no histogram can be allocated for the metric, the value is dropped
+    /// and `Ok(())` is returned.
     fn histogram_prepared(
         &self,
         prepared: &PreparedMetric<Self::Hasher>,
@@ -195,8 +209,10 @@ pub trait MetricCollectorTrait {
     /// Records a timing using a prepared metric key.
     ///
     /// # Errors
-    /// Returns `MetricResult::Err` when the value cannot be recorded into the
-    /// metric's histogram (for example a value above the configured maximum).
+    /// Returns `MetricResult::Err` when the value is rejected by the
+    /// histogram's bounds (for example a value above the configured maximum).
+    /// If no histogram can be allocated for the metric, the value is dropped
+    /// and `Ok(())` is returned.
     fn timing_prepared(
         &self,
         prepared: &PreparedMetric<Self::Hasher>,

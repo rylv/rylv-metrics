@@ -246,7 +246,9 @@ impl HistogramConfig {
     /// These bounds determine the compatible pool and the histogram allocation shape.
     ///
     /// # Errors
-    /// Returns an error if `min < 1` or `max < min`.
+    /// Returns an error if `min < 1`, `max < min`, or `max` exceeds `i64::MAX`
+    /// (emitted histogram series are integers, so larger bounds could never be
+    /// represented).
     pub fn with_bounds(self, min: u64, max: u64) -> MetricResult<Self> {
         Ok(self.with_bounds_checked(Bounds::new(min, max)?))
     }
