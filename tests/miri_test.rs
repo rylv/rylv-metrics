@@ -1,7 +1,7 @@
 #[cfg(feature = "shared-collector")]
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, MetricKind as FrameMetricKind,
-    MetricSuffix, RylvStr, RylvTag, SharedCollector,
+    MetricSuffix, MetricValue, RylvStr, RylvTag, SharedCollector,
 };
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
@@ -210,38 +210,91 @@ fn miri_shared_gauge_state_spinlock_under_concurrent_record_and_drain() {
     // spinlock; the invariant "the sum is accessed only while holding
     // `sum_lock`" is a concurrent claim, so recorders and a drainer must run
     // together under Miri.
+    //
+    // Two schedule-dependent paths of the dependencies perform
+    // integer-to-pointer casts, which Miri rejects under strict provenance, so
+    // each round is arranged to stay off both:
+    // - dashmap's shard lock parks through `parking_lot_core` when a thread
+    //   waits on another thread's write lock, and a write lock is taken to
+    //   insert a missing entry. The recorders therefore only ever find
+    //   existing entries: this thread inserts the keys into the current
+    //   generation before they start, and the drain installs the generation
+    //   recycled by the previous drain, which kept its entries because it was
+    //   recorded into before being drained.
+    // - arc-swap's helping fallback runs when a `load` races the `swap` that
+    //   begins a drain. The drain therefore begins (swaps generations) before
+    //   the recorders start; they then record concurrently, contending with
+    //   each other on the same gauge's spinlock, while this thread drains the
+    //   outgoing generation (`take_sum`) and recycles it.
+    const ROUNDS: i64 = 4;
+    const RECORDERS: i64 = 2;
+    const RECORDS_PER_ROUND: i64 = 16;
+
+    fn record(collector: &SharedCollector, value: i64) {
+        collector.gauge_avg(
+            RylvStr::from_static("miri.gauge"),
+            value,
+            &mut [RylvTag::from_static("env:miri")],
+        );
+        collector.count_add(
+            RylvStr::from_static("miri.gauge"),
+            1,
+            &mut [RylvTag::from_static("env:miri")],
+        );
+    }
+
+    // Traverses a drained generation and returns its count total.
+    fn drained_count(drain: &mut impl MetricDrain) -> i64 {
+        let mut counted = 0;
+        for frame in drain.frames() {
+            assert_eq!(frame.metric, "miri.gauge");
+            match (frame.kind, frame.value) {
+                (FrameMetricKind::Count, MetricValue::Int(count)) => counted += count,
+                (FrameMetricKind::GaugeAvg, MetricValue::Float(mean)) => {
+                    assert!((-32.0..=31.0).contains(&mean), "mean {mean} out of range");
+                }
+                other => panic!("unexpected frame {other:?}"),
+            }
+        }
+        counted
+    }
+
+    fn begin_drain(collector: &SharedCollector) -> impl MetricDrain + '_ {
+        collector
+            .try_begin_drain()
+            .expect("no other thread holds the outgoing generation")
+    }
+
     let collector = SharedCollector::default();
 
-    std::thread::scope(|scope| {
-        for _ in 0..2 {
-            let collector = &collector;
-            scope.spawn(move || {
-                for value in 0..64 {
-                    collector.gauge_avg(
-                        RylvStr::from_static("miri.gauge"),
-                        i64::from(value) - 32,
-                        &mut [RylvTag::from_static("env:miri")],
-                    );
-                    collector.count_add(
-                        RylvStr::from_static("miri.gauge"),
-                        1,
-                        &mut [RylvTag::from_static("env:miri")],
-                    );
-                }
-            });
-        }
+    // Leave a recycled generation holding the keys for the first round.
+    record(&collector, 0);
+    let mut drained = drained_count(&mut begin_drain(&collector));
 
-        // Drain while the recorders run: `take_sum` contends with `record`
-        // on the same spinlock.
-        for _ in 0..8 {
-            if let Some(mut drain) = collector.try_begin_drain() {
-                for frame in drain.frames() {
-                    assert!(!frame.metric.is_empty());
-                }
+    for _ in 0..ROUNDS {
+        record(&collector, 0);
+        let mut drain = begin_drain(&collector);
+        std::thread::scope(|scope| {
+            for _ in 0..RECORDERS {
+                let collector = &collector;
+                scope.spawn(move || {
+                    for value in 0..RECORDS_PER_ROUND {
+                        record(collector, value * 4 - 32);
+                    }
+                });
             }
-            std::hint::spin_loop();
-        }
-    });
+
+            // Drain and recycle the outgoing generation while the recorders
+            // run: its `take_sum` follows `record` calls made on other
+            // threads in the previous round.
+            drained += drained_count(&mut drain);
+            drop(drain);
+        });
+    }
+
+    // Every count recorded so far is drained exactly once.
+    drained += drained_count(&mut begin_drain(&collector));
+    assert_eq!(drained, 1 + ROUNDS * (1 + RECORDERS * RECORDS_PER_ROUND));
 
     // After the threads join, the collector still accepts records and drains.
     collector.gauge_avg(RylvStr::from_static("miri.gauge"), 7, &mut []);
