@@ -227,6 +227,7 @@ impl HistogramWrapper {
         self.histogram.reset();
     }
 
+    #[inline]
     pub fn record(&mut self, value: u64) -> Result<(), hdrhistogram::RecordError> {
         // The extremes describe successfully recorded values only: a rejected
         // value must leave the wrapper unchanged so it can be recycled.

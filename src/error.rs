@@ -40,6 +40,19 @@ impl From<&str> for MetricsError {
     }
 }
 
+/// Wraps a rejected histogram value into a [`MetricsError`].
+///
+/// The collectors record into histograms through functions that return the
+/// one-byte [`RecordError`] and convert it here, so the success path never
+/// builds or drops the larger `MetricsError` result and the conversion stays
+/// out of the hot code.
+#[cfg(any(feature = "tls-collector", feature = "shared-collector"))]
+#[cold]
+#[inline(never)]
+pub const fn histogram_record_error(err: RecordError) -> MetricsError {
+    MetricsError::Histogram(err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

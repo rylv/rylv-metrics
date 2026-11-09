@@ -11,7 +11,8 @@ use crate::dogstats::{
     },
     RylvStr, RylvTag, SortedTags,
 };
-use crate::{DefaultMetricHasher, MetricResult, MetricsError};
+use crate::error::histogram_record_error;
+use crate::{DefaultMetricHasher, MetricResult};
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::hash::BuildHasher;
@@ -21,7 +22,7 @@ use super::{DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain};
 use crossbeam::utils::CachePadded;
 use hashbrown::hash_table::Entry::{Occupied, Vacant};
 use hashbrown::HashTable;
-use hdrhistogram::Histogram;
+use hdrhistogram::{Histogram, RecordError};
 use parking_lot::Mutex;
 use thread_local::ThreadLocal;
 use tracing::error;
@@ -386,12 +387,59 @@ where
         TLSDrain::new(self, global)
     }
 
+    #[inline]
+    fn record_histogram(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &mut [RylvTag<'_>],
+    ) -> Result<(), RecordError> {
+        if tags.len() > 1 {
+            tags.sort_unstable();
+        }
+        let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
+        let buffer = self.get_or_create_thread_local_aggregator();
+
+        let mut aggregator = buffer.lock();
+        let split = aggregator.split_borrow();
+        let result = match split.histograms.entry(
+            lookup.hash,
+            |(key, _)| lookup.compare(key),
+            |(key, _)| key.hash,
+        ) {
+            Occupied(mut entry) => entry.get_mut().1.record(value),
+            Vacant(entry) => {
+                let histogram_config = self
+                    .histogram_configs
+                    .get(lookup.metric.as_ref())
+                    .unwrap_or(&self.default_histogram_config);
+                get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
+                    Ok(()),
+                    |mut histogram| {
+                        let result = histogram.record(value);
+                        if result.is_ok() {
+                            entry.insert((lookup.into_key(), histogram));
+                        } else {
+                            // The value was rejected: the wrapper stays
+                            // empty, so it is recycled instead of being
+                            // inserted into the table.
+                            split.pool_histograms[histogram.pool_id].push(histogram);
+                        }
+                        result
+                    },
+                )
+            }
+        };
+        drop(aggregator);
+        result
+    }
+
     fn record_histogram_sorted(
         &self,
         metric: RylvStr<'_>,
         value: u64,
         tags: &SortedTags<S>,
-    ) -> MetricResult<()> {
+    ) -> Result<(), RecordError> {
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
         let lookup = LookupKeySorted {
@@ -405,34 +453,33 @@ where
         {
             let mut aggregator = buffer.lock();
             let split = aggregator.split_borrow();
-            let result = match split.histograms.entry(
-                lookup.hash,
-                |(key, _)| lookup.compare(key),
-                |(key, _)| key.hash,
-            ) {
-                Occupied(mut entry) => entry.get_mut().1.record(value).map_err(MetricsError::from),
-                Vacant(entry) => {
-                    let histogram_config = self
-                        .histogram_configs
-                        .get(lookup.metric.as_ref())
-                        .unwrap_or(&self.default_histogram_config);
-                    get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
-                        Ok(()),
-                        |mut histogram| {
-                            let result = histogram.record(value);
-                            if result.is_ok() {
-                                entry.insert((lookup.into_key(), histogram));
-                            } else {
-                                // The value was rejected: the wrapper stays
-                                // empty, so it is recycled instead of being
-                                // inserted into the table.
-                                split.pool_histograms[histogram.pool_id].push(histogram);
-                            }
-                            result.map_err(MetricsError::from)
-                        },
-                    )
-                }
-            };
+            let result =
+                match split.histograms.entry(
+                    lookup.hash,
+                    |(key, _)| lookup.compare(key),
+                    |(key, _)| key.hash,
+                ) {
+                    Occupied(mut entry) => entry.get_mut().1.record(value),
+                    Vacant(entry) => {
+                        let histogram_config = self
+                            .histogram_configs
+                            .get(lookup.metric.as_ref())
+                            .unwrap_or(&self.default_histogram_config);
+                        get_histogram_from_pool_config(split.pool_histograms, histogram_config)
+                            .map_or(Ok(()), |mut histogram| {
+                                let result = histogram.record(value);
+                                if result.is_ok() {
+                                    entry.insert((lookup.into_key(), histogram));
+                                } else {
+                                    // The value was rejected: the wrapper stays
+                                    // empty, so it is recycled instead of being
+                                    // inserted into the table.
+                                    split.pool_histograms[histogram.pool_id].push(histogram);
+                                }
+                                result
+                            })
+                    }
+                };
             drop(aggregator);
             result
         }
@@ -442,7 +489,7 @@ where
         &self,
         prepared: &PreparedMetric<S>,
         value: u64,
-    ) -> MetricResult<()> {
+    ) -> Result<(), RecordError> {
         let buffer = self.get_or_create_thread_local_aggregator();
         let mut aggregator = buffer.lock();
         let split = aggregator.split_borrow();
@@ -451,7 +498,7 @@ where
             .histograms
             .find_mut(prepared.hash(), |(key, _)| key.id == entry_id)
         {
-            return histogram.record(value).map_err(MetricsError::from);
+            return histogram.record(value);
         }
 
         let result = match split.histograms.entry(
@@ -459,7 +506,7 @@ where
             |(key, _)| match_prepared_agg_key(key, prepared),
             |(key, _)| key.hash,
         ) {
-            Occupied(mut entry) => entry.get_mut().1.record(value).map_err(MetricsError::from),
+            Occupied(mut entry) => entry.get_mut().1.record(value),
             Vacant(entry) => {
                 let histogram_config = self
                     .histogram_configs
@@ -478,7 +525,7 @@ where
                             // the table.
                             split.pool_histograms[histogram.pool_id].push(histogram);
                         }
-                        result.map_err(MetricsError::from)
+                        result
                     },
                 )
             }
@@ -492,7 +539,7 @@ where
         metric: RylvStr<'_>,
         value: u64,
         tags: &mut [RylvTag<'_>],
-    ) -> MetricResult<()> {
+    ) -> Result<(), RecordError> {
         if tags.len() > 1 {
             tags.sort_unstable();
         }
@@ -502,34 +549,33 @@ where
         {
             let mut aggregator = buffer.lock();
             let split = aggregator.split_borrow_timings();
-            let result = match split.timings.entry(
-                lookup.hash,
-                |(key, _)| lookup.compare(key),
-                |(key, _)| key.hash,
-            ) {
-                Occupied(mut entry) => entry.get_mut().1.record(value).map_err(MetricsError::from),
-                Vacant(entry) => {
-                    let histogram_config = self
-                        .histogram_configs
-                        .get(lookup.metric.as_ref())
-                        .unwrap_or(&self.default_histogram_config);
-                    get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
-                        Ok(()),
-                        |mut histogram| {
-                            let result = histogram.record(value);
-                            if result.is_ok() {
-                                entry.insert((lookup.into_key(), histogram));
-                            } else {
-                                // The value was rejected: the wrapper stays
-                                // empty, so it is recycled instead of being
-                                // inserted into the table.
-                                split.pool_histograms[histogram.pool_id].push(histogram);
-                            }
-                            result.map_err(MetricsError::from)
-                        },
-                    )
-                }
-            };
+            let result =
+                match split.timings.entry(
+                    lookup.hash,
+                    |(key, _)| lookup.compare(key),
+                    |(key, _)| key.hash,
+                ) {
+                    Occupied(mut entry) => entry.get_mut().1.record(value),
+                    Vacant(entry) => {
+                        let histogram_config = self
+                            .histogram_configs
+                            .get(lookup.metric.as_ref())
+                            .unwrap_or(&self.default_histogram_config);
+                        get_histogram_from_pool_config(split.pool_histograms, histogram_config)
+                            .map_or(Ok(()), |mut histogram| {
+                                let result = histogram.record(value);
+                                if result.is_ok() {
+                                    entry.insert((lookup.into_key(), histogram));
+                                } else {
+                                    // The value was rejected: the wrapper stays
+                                    // empty, so it is recycled instead of being
+                                    // inserted into the table.
+                                    split.pool_histograms[histogram.pool_id].push(histogram);
+                                }
+                                result
+                            })
+                    }
+                };
             drop(aggregator);
             result
         }
@@ -540,7 +586,7 @@ where
         metric: RylvStr<'_>,
         value: u64,
         tags: &SortedTags<S>,
-    ) -> MetricResult<()> {
+    ) -> Result<(), RecordError> {
         let hash =
             combine_metric_tags_hash(&self.hasher_builder, metric.as_ref(), tags.tags_hash());
         let lookup = LookupKeySorted {
@@ -554,40 +600,43 @@ where
         {
             let mut aggregator = buffer.lock();
             let split = aggregator.split_borrow_timings();
-            let result = match split.timings.entry(
-                lookup.hash,
-                |(key, _)| lookup.compare(key),
-                |(key, _)| key.hash,
-            ) {
-                Occupied(mut entry) => entry.get_mut().1.record(value).map_err(MetricsError::from),
-                Vacant(entry) => {
-                    let histogram_config = self
-                        .histogram_configs
-                        .get(lookup.metric.as_ref())
-                        .unwrap_or(&self.default_histogram_config);
-                    get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
-                        Ok(()),
-                        |mut histogram| {
-                            let result = histogram.record(value);
-                            if result.is_ok() {
-                                entry.insert((lookup.into_key(), histogram));
-                            } else {
-                                // The value was rejected: the wrapper stays
-                                // empty, so it is recycled instead of being
-                                // inserted into the table.
-                                split.pool_histograms[histogram.pool_id].push(histogram);
-                            }
-                            result.map_err(MetricsError::from)
-                        },
-                    )
-                }
-            };
+            let result =
+                match split.timings.entry(
+                    lookup.hash,
+                    |(key, _)| lookup.compare(key),
+                    |(key, _)| key.hash,
+                ) {
+                    Occupied(mut entry) => entry.get_mut().1.record(value),
+                    Vacant(entry) => {
+                        let histogram_config = self
+                            .histogram_configs
+                            .get(lookup.metric.as_ref())
+                            .unwrap_or(&self.default_histogram_config);
+                        get_histogram_from_pool_config(split.pool_histograms, histogram_config)
+                            .map_or(Ok(()), |mut histogram| {
+                                let result = histogram.record(value);
+                                if result.is_ok() {
+                                    entry.insert((lookup.into_key(), histogram));
+                                } else {
+                                    // The value was rejected: the wrapper stays
+                                    // empty, so it is recycled instead of being
+                                    // inserted into the table.
+                                    split.pool_histograms[histogram.pool_id].push(histogram);
+                                }
+                                result
+                            })
+                    }
+                };
             drop(aggregator);
             result
         }
     }
 
-    fn record_timing_prepared(&self, prepared: &PreparedMetric<S>, value: u64) -> MetricResult<()> {
+    fn record_timing_prepared(
+        &self,
+        prepared: &PreparedMetric<S>,
+        value: u64,
+    ) -> Result<(), RecordError> {
         let buffer = self.get_or_create_thread_local_aggregator();
         let mut aggregator = buffer.lock();
         let split = aggregator.split_borrow_timings();
@@ -596,7 +645,7 @@ where
             .timings
             .find_mut(prepared.hash(), |(key, _)| key.id == entry_id)
         {
-            return histogram.record(value).map_err(MetricsError::from);
+            return histogram.record(value);
         }
 
         let result = match split.timings.entry(
@@ -604,7 +653,7 @@ where
             |(key, _)| match_prepared_agg_key(key, prepared),
             |(key, _)| key.hash,
         ) {
-            Occupied(mut entry) => entry.get_mut().1.record(value).map_err(MetricsError::from),
+            Occupied(mut entry) => entry.get_mut().1.record(value),
             Vacant(entry) => {
                 let histogram_config = self
                     .histogram_configs
@@ -623,7 +672,7 @@ where
                             // the table.
                             split.pool_histograms[histogram.pool_id].push(histogram);
                         }
-                        result.map_err(MetricsError::from)
+                        result
                     },
                 )
             }
@@ -925,45 +974,8 @@ where
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
-        let tags = tags.as_mut();
-        if tags.len() > 1 {
-            tags.sort_unstable();
-        }
-        let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
-        let buffer = self.get_or_create_thread_local_aggregator();
-
-        let mut aggregator = buffer.lock();
-        let split = aggregator.split_borrow();
-        let result = match split.histograms.entry(
-            lookup.hash,
-            |(key, _)| lookup.compare(key),
-            |(key, _)| key.hash,
-        ) {
-            Occupied(mut entry) => entry.get_mut().1.record(value).map_err(MetricsError::from),
-            Vacant(entry) => {
-                let histogram_config = self
-                    .histogram_configs
-                    .get(lookup.metric.as_ref())
-                    .unwrap_or(&self.default_histogram_config);
-                get_histogram_from_pool_config(split.pool_histograms, histogram_config).map_or(
-                    Ok(()),
-                    |mut histogram| {
-                        let result = histogram.record(value);
-                        if result.is_ok() {
-                            entry.insert((lookup.into_key(), histogram));
-                        } else {
-                            // The value was rejected: the wrapper stays
-                            // empty, so it is recycled instead of being
-                            // inserted into the table.
-                            split.pool_histograms[histogram.pool_id].push(histogram);
-                        }
-                        result.map_err(MetricsError::from)
-                    },
-                )
-            }
-        };
-        drop(aggregator);
-        result
+        self.record_histogram(metric, value, tags.as_mut())
+            .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1004,6 +1016,7 @@ where
         TT: AsMut<[RylvTag<'t>]>,
     {
         self.record_timing(metric, value, tags.as_mut())
+            .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1014,6 +1027,7 @@ where
         tags: &SortedTags<S>,
     ) -> MetricResult<()> {
         self.record_histogram_sorted(metric, value, tags)
+            .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1039,6 +1053,7 @@ where
         tags: &SortedTags<S>,
     ) -> MetricResult<()> {
         self.record_timing_sorted(metric, value, tags)
+            .map_err(histogram_record_error)
     }
 
     #[cold]
@@ -1068,6 +1083,7 @@ where
         value: u64,
     ) -> MetricResult<()> {
         self.record_histogram_prepared(prepared, value)
+            .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1092,6 +1108,7 @@ where
         value: u64,
     ) -> MetricResult<()> {
         self.record_timing_prepared(prepared, value)
+            .map_err(histogram_record_error)
     }
 }
 

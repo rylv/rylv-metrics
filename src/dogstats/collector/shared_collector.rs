@@ -15,9 +15,11 @@ use crate::dogstats::histogram_config::{
 };
 use crate::dogstats::sorted_tags::{combine_metric_tags_hash, hash_tags, PreparedMetric};
 use crate::dogstats::{Aggregator, RylvStr, RylvTag, SortedTags};
-use crate::{DefaultMetricHasher, MetricResult, MetricsError};
+use crate::error::histogram_record_error;
+use crate::{DefaultMetricHasher, MetricResult};
 use arc_swap::ArcSwap;
 use dashmap::{DashMap, SharedValue};
+use hdrhistogram::RecordError;
 
 /// State for an averaged gauge: an exact wide sum plus a sample count.
 ///
@@ -1110,6 +1112,7 @@ where
             value,
             tags.as_mut(),
         )
+        .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1161,6 +1164,7 @@ where
             value,
             tags.as_mut(),
         )
+        .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1179,6 +1183,7 @@ where
             value,
             tags,
         )
+        .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1215,6 +1220,7 @@ where
             value,
             tags,
         )
+        .map_err(histogram_record_error)
     }
 
     #[cold]
@@ -1243,6 +1249,7 @@ where
             prepared,
             value,
         )
+        .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1273,6 +1280,7 @@ where
             prepared,
             value,
         )
+        .map_err(histogram_record_error)
     }
 }
 
@@ -1453,7 +1461,7 @@ fn record_histogram_in_aggregator<S>(
     metric: RylvStr<'_>,
     value: u64,
     mut_tags: &mut [RylvTag<'_>],
-) -> MetricResult<()>
+) -> Result<(), RecordError>
 where
     S: BuildHasher + Clone,
 {
@@ -1473,11 +1481,7 @@ where
     );
 
     match search_result {
-        Ok(bucket) => unsafe { bucket.as_mut() }
-            .1
-            .get_mut()
-            .record(value)
-            .map_err(MetricsError::from),
+        Ok(bucket) => unsafe { bucket.as_mut() }.1.get_mut().record(value),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1501,7 +1505,7 @@ where
                     aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result.map_err(MetricsError::from);
+                return result;
             }
             Ok(())
         }
@@ -1515,7 +1519,7 @@ fn record_histogram_in_aggregator_sorted<S>(
     metric: RylvStr<'_>,
     value: u64,
     sorted_tags: &SortedTags<S>,
-) -> MetricResult<()>
+) -> Result<(), RecordError>
 where
     S: BuildHasher + Clone,
 {
@@ -1538,11 +1542,7 @@ where
     );
 
     match search_result {
-        Ok(bucket) => unsafe { bucket.as_mut() }
-            .1
-            .get_mut()
-            .record(value)
-            .map_err(MetricsError::from),
+        Ok(bucket) => unsafe { bucket.as_mut() }.1.get_mut().record(value),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1566,7 +1566,7 @@ where
                     aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result.map_err(MetricsError::from);
+                return result;
             }
             Ok(())
         }
@@ -1579,7 +1579,7 @@ fn record_histogram_in_aggregator_prepared<S>(
     default_histogram_config: &ResolvedHistogramConfig,
     prepared: &PreparedMetric<S>,
     value: u64,
-) -> MetricResult<()>
+) -> Result<(), RecordError>
 where
     S: BuildHasher + Clone,
 {
@@ -1593,17 +1593,13 @@ where
         guard.find_or_find_insert_slot(prepared.hash(), |(k, _)| k.id == entry_id, |(k, _)| k.hash);
 
     match search_result {
-        Ok(bucket) => unsafe { bucket.as_mut() }
-            .1
-            .get_mut()
-            .record(value)
-            .map_err(MetricsError::from),
+        Ok(bucket) => unsafe { bucket.as_mut() }.1.get_mut().record(value),
         Err(insert_slot) => {
             if let Some(bucket) = guard.find(prepared.hash(), |(k, _)| {
                 match_prepared_signature(k, prepared)
             }) {
                 let (_, hist) = unsafe { bucket.as_mut() };
-                return hist.get_mut().record(value).map_err(MetricsError::from);
+                return hist.get_mut().record(value);
             }
 
             let histogram_config = histogram_configs
@@ -1628,7 +1624,7 @@ where
                     aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result.map_err(MetricsError::from);
+                return result;
             }
             Ok(())
         }
@@ -1642,7 +1638,7 @@ fn record_timing_in_aggregator<S>(
     metric: RylvStr<'_>,
     value: u64,
     mut_tags: &mut [RylvTag<'_>],
-) -> MetricResult<()>
+) -> Result<(), RecordError>
 where
     S: BuildHasher + Clone,
 {
@@ -1662,11 +1658,7 @@ where
     );
 
     match search_result {
-        Ok(bucket) => unsafe { bucket.as_mut() }
-            .1
-            .get_mut()
-            .record(value)
-            .map_err(MetricsError::from),
+        Ok(bucket) => unsafe { bucket.as_mut() }.1.get_mut().record(value),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1690,7 +1682,7 @@ where
                     aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result.map_err(MetricsError::from);
+                return result;
             }
             Ok(())
         }
@@ -1704,7 +1696,7 @@ fn record_timing_in_aggregator_sorted<S>(
     metric: RylvStr<'_>,
     value: u64,
     sorted_tags: &SortedTags<S>,
-) -> MetricResult<()>
+) -> Result<(), RecordError>
 where
     S: BuildHasher + Clone,
 {
@@ -1727,11 +1719,7 @@ where
     );
 
     match search_result {
-        Ok(bucket) => unsafe { bucket.as_mut() }
-            .1
-            .get_mut()
-            .record(value)
-            .map_err(MetricsError::from),
+        Ok(bucket) => unsafe { bucket.as_mut() }.1.get_mut().record(value),
         Err(insert_slot) => {
             let histogram_config = histogram_configs
                 .get(lookup_key.metric.as_ref())
@@ -1755,7 +1743,7 @@ where
                     aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result.map_err(MetricsError::from);
+                return result;
             }
             Ok(())
         }
@@ -1768,7 +1756,7 @@ fn record_timing_in_aggregator_prepared<S>(
     default_histogram_config: &ResolvedHistogramConfig,
     prepared: &PreparedMetric<S>,
     value: u64,
-) -> MetricResult<()>
+) -> Result<(), RecordError>
 where
     S: BuildHasher + Clone,
 {
@@ -1782,17 +1770,13 @@ where
         guard.find_or_find_insert_slot(prepared.hash(), |(k, _)| k.id == entry_id, |(k, _)| k.hash);
 
     match search_result {
-        Ok(bucket) => unsafe { bucket.as_mut() }
-            .1
-            .get_mut()
-            .record(value)
-            .map_err(MetricsError::from),
+        Ok(bucket) => unsafe { bucket.as_mut() }.1.get_mut().record(value),
         Err(insert_slot) => {
             if let Some(bucket) = guard.find(prepared.hash(), |(k, _)| {
                 match_prepared_signature(k, prepared)
             }) {
                 let (_, hist) = unsafe { bucket.as_mut() };
-                return hist.get_mut().record(value).map_err(MetricsError::from);
+                return hist.get_mut().record(value);
             }
 
             let histogram_config = histogram_configs
@@ -1817,7 +1801,7 @@ where
                     aggregator.pool_histograms[v.pool_id].push(v);
                 }
                 drop(guard);
-                return result.map_err(MetricsError::from);
+                return result;
             }
             Ok(())
         }
