@@ -2,6 +2,26 @@
 
 use std::fmt::Write as _;
 
+#[cfg(any(feature = "udp", test))]
+use crate::dogstats::collector::MetricValue;
+#[cfg(any(feature = "udp", test))]
+use itoa::Buffer;
+
+/// Formats a frame value into reusable buffers.
+///
+/// The returned string is valid until the selected buffer is used again.
+#[cfg(any(feature = "udp", test))]
+pub fn format_value<'a>(
+    value: MetricValue,
+    int_buffer: &'a mut Buffer,
+    float_buffer: &'a mut String,
+) -> &'a str {
+    match value {
+        MetricValue::Int(value) => int_buffer.format(value),
+        MetricValue::Float(value) => format_float(value, float_buffer),
+    }
+}
+
 /// Formats a float as a plain decimal: never scientific notation, no grouping
 /// separators, at most 6 fraction digits with ties rounded to even (over the
 /// exact binary value), and trailing fraction zeros omitted. This matches the
@@ -27,7 +47,9 @@ pub fn format_float(value: f64, out: &mut String) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::format_float;
+    use super::{format_float, format_value};
+    use crate::dogstats::collector::MetricValue;
+    use itoa::Buffer;
 
     fn fmt(value: f64) -> String {
         format_float(value, &mut String::new()).to_owned()
@@ -50,5 +72,24 @@ mod tests {
         assert_eq!(fmt(2.000_000_5), "2.000001");
         assert_eq!(fmt(0.000_000_5), "0");
         assert_eq!(fmt(0.000_001_5), "0.000002");
+    }
+
+    #[test]
+    fn format_value_reuses_buffers_across_value_types() {
+        let mut int_buffer = Buffer::new();
+        let mut float_buffer = String::new();
+
+        assert_eq!(
+            format_value(MetricValue::Float(1.25), &mut int_buffer, &mut float_buffer),
+            "1.25"
+        );
+        assert_eq!(
+            format_value(MetricValue::Int(-42), &mut int_buffer, &mut float_buffer),
+            "-42"
+        );
+        assert_eq!(
+            format_value(MetricValue::Float(2.5), &mut int_buffer, &mut float_buffer),
+            "2.5"
+        );
     }
 }
