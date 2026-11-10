@@ -7,20 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-10
+
+### Added
+- `RylvTag::from_parts` and `(key, value)` tuple conversion for compound tags.
+- `MetricValue` for drained frames, with integer and floating-point variants.
+
 ### Changed
-- Breaking: `MetricDrain::next_frame()` is replaced by `frames()` and an associated
-  `Cursor<'a>: Iterator<Item = MetricFrameRef<'a>>`. Frames borrow the drained owner
-  and can survive cursor destruction; custom drains must keep their backing data
-  stable for that borrow.
-- Shared and TLS drains own aggregators directly, removing the self-referential
-  heap allocation. Entry removal and recycling happen when the owner is dropped.
+- Breaking: counter and gauge values now use `i64` instead of `u64`. Counters
+  accept negative deltas and saturate at the `i64` limits; averaged gauges emit
+  their real mean instead of an integer.
+- Breaking: `MetricFrameRef::value` now has type `MetricValue` instead of `u64`,
+  and `MetricKind` distinguishes averaged from last-write-wins gauges.
+- Breaking: histogram and timing recording methods now return `MetricResult<()>`
+  when a value is rejected by the configured bounds. Histogram upper bounds
+  cannot exceed `i64::MAX`.
+- Pin Cargo builds and CI to Rust 1.88.0, the declared MSRV.
 
 ### Fixed
-- Batch UDP writers retain frame and formatting borrows until their scoped session
-  ends, and clear pending references on errors or early exit before storage is reused.
-- Recycled TLS timing histograms now observe the same pool cap as histograms.
+- Rejected TLS histogram samples return their wrappers to the recycling pool.
+- Float metric values use plain decimal formatting with up to six fractional
+  digits; collector test helpers reuse the same formatter as the UDP writer.
 
-## [0.4.0] - 2026-07-20
+## [0.4.0] - 2026-09-28
 
 ### Added
 - `RylvTag` type for tag values
@@ -32,10 +41,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Renamed `gauge` to `gauge_avg`
 - Raised Minimum Supported Rust Version (MSRV) to 1.88
+- `MetricDrain::next_frame()` was replaced by `frames()` and an associated
+  `Cursor<'a>: Iterator<Item = MetricFrameRef<'a>>`. Frames borrow the drained
+  owner and can survive cursor destruction; custom drains must keep their
+  backing data stable for that borrow.
+- Shared and TLS drains own aggregators directly, removing the self-referential
+  heap allocation. Entry removal and recycling happen when the owner is dropped.
 - Dependency updates (see `Cargo.lock`)
 
 ### Fixed
 - `tls_collector` tests now use `RylvTag` instead of `RylvStr` for tag arguments
+- Batch UDP writers retain frame and formatting borrows until their scoped session
+  ends, and clear pending references on errors or early exit before storage is reused.
+- Recycled TLS timing histograms now observe the same pool cap as histograms.
 
 ### Internal
 - Cleanup across collector and aggregator modules
