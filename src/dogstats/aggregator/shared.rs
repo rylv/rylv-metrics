@@ -6,7 +6,7 @@ use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use hdrhistogram::Histogram;
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicI64;
 
 impl<S: BuildHasher + Clone> Hash for AggregatorEntryKey<S> {
     fn hash<H: Hasher>(&self, _state: &mut H) {
@@ -22,7 +22,7 @@ where
 {
     pub histograms: DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
     pub timings: DashMap<AggregatorEntryKey<S>, HistogramWrapper, S>,
-    pub count: DashMap<AggregatorEntryKey<S>, AtomicU64, S>,
+    pub count: DashMap<AggregatorEntryKey<S>, AtomicI64, S>,
     pub gauge: DashMap<AggregatorEntryKey<S>, GaugeState, S>,
     pub gauge_last: DashMap<AggregatorEntryKey<S>, GaugeLastState, S>,
     pub pool_histograms: Vec<SegQueue<HistogramWrapper>>,

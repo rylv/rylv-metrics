@@ -188,11 +188,11 @@ where
     type Hasher = MC::Hasher;
 
     #[inline]
-    fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
-        self.inner.histogram(metric, value, tags);
+        self.inner.histogram(metric, value, tags)
     }
 
     #[inline]
@@ -204,7 +204,7 @@ where
     }
 
     #[inline]
-    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -212,7 +212,7 @@ where
     }
 
     #[inline]
-    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -220,7 +220,7 @@ where
     }
 
     #[inline]
-    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, tags: TT)
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
@@ -228,36 +228,46 @@ where
     }
 
     #[inline]
-    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT)
+    fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
     {
-        self.inner.timing(metric, value, tags);
+        self.inner.timing(metric, value, tags)
     }
 
     #[inline]
-    fn histogram_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
-        self.inner.histogram_sorted(metric, value, tags);
+    fn histogram_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<Self::Hasher>,
+    ) -> MetricResult<()> {
+        self.inner.histogram_sorted(metric, value, tags)
     }
 
     #[inline]
-    fn count_add_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+    fn count_add_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<Self::Hasher>) {
         self.inner.count_add_sorted(metric, value, tags);
     }
 
     #[inline]
-    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+    fn gauge_avg_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<Self::Hasher>) {
         self.inner.gauge_avg_sorted(metric, value, tags);
     }
 
     #[inline]
-    fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
+    fn gauge_sorted(&self, metric: RylvStr<'_>, value: i64, tags: &SortedTags<Self::Hasher>) {
         self.inner.gauge_sorted(metric, value, tags);
     }
 
     #[inline]
-    fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, tags: &SortedTags<Self::Hasher>) {
-        self.inner.timing_sorted(metric, value, tags);
+    fn timing_sorted(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &SortedTags<Self::Hasher>,
+    ) -> MetricResult<()> {
+        self.inner.timing_sorted(metric, value, tags)
     }
 
     #[cold]
@@ -278,28 +288,36 @@ where
     }
 
     #[inline]
-    fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
-        self.inner.histogram_prepared(prepared, value);
+    fn histogram_prepared(
+        &self,
+        prepared: &PreparedMetric<Self::Hasher>,
+        value: u64,
+    ) -> MetricResult<()> {
+        self.inner.histogram_prepared(prepared, value)
     }
 
     #[inline]
-    fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
         self.inner.count_add_prepared(prepared, value);
     }
 
     #[inline]
-    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
         self.inner.gauge_avg_prepared(prepared, value);
     }
 
     #[inline]
-    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+    fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
         self.inner.gauge_prepared(prepared, value);
     }
 
     #[inline]
-    fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
-        self.inner.timing_prepared(prepared, value);
+    fn timing_prepared(
+        &self,
+        prepared: &PreparedMetric<Self::Hasher>,
+        value: u64,
+    ) -> MetricResult<()> {
+        self.inner.timing_prepared(prepared, value)
     }
 }
 
@@ -307,6 +325,7 @@ where
 mod tests {
     use super::{MetricCollector, MetricCollectorOptions, StatsWriterType};
     use crate::dogstats::collector::{DrainMetricCollectorTrait, MetricDrain, MetricFrameRef};
+    use crate::MetricResult;
     #[cfg(target_vendor = "apple")]
     use crate::MetricsError;
     use crate::{MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag, SortedTags};
@@ -334,11 +353,17 @@ mod tests {
     impl MetricCollectorTrait for FakeInner {
         type Hasher = std::hash::BuildHasherDefault<std::collections::hash_map::DefaultHasher>;
 
-        fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        fn histogram<'m, 't, TT>(
+            &self,
+            metric: RylvStr<'m>,
+            value: u64,
+            _tags: TT,
+        ) -> MetricResult<()>
         where
             TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("histogram:{}:{value}", metric.as_ref()));
+            Ok(())
         }
 
         fn count<'m, 't, TT>(&self, metric: RylvStr<'m>, _tags: TT)
@@ -348,32 +373,33 @@ mod tests {
             self.record(format!("count:{}", metric.as_ref()));
         }
 
-        fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        fn count_add<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, _tags: TT)
         where
             TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("count_add:{}:{value}", metric.as_ref()));
         }
 
-        fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, _tags: TT)
         where
             TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("gauge_avg:{}:{value}", metric.as_ref()));
         }
 
-        fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        fn gauge<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, _tags: TT)
         where
             TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("gauge:{}:{value}", metric.as_ref()));
         }
 
-        fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT)
+        fn timing<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, _tags: TT) -> MetricResult<()>
         where
             TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("timing:{}:{value}", metric.as_ref()));
+            Ok(())
         }
 
         fn histogram_sorted(
@@ -381,14 +407,15 @@ mod tests {
             metric: RylvStr<'_>,
             value: u64,
             _tags: &SortedTags<Self::Hasher>,
-        ) {
+        ) -> MetricResult<()> {
             self.record(format!("histogram_sorted:{}:{value}", metric.as_ref()));
+            Ok(())
         }
 
         fn count_add_sorted(
             &self,
             metric: RylvStr<'_>,
-            value: u64,
+            value: i64,
             _tags: &SortedTags<Self::Hasher>,
         ) {
             self.record(format!("count_add_sorted:{}:{value}", metric.as_ref()));
@@ -397,18 +424,24 @@ mod tests {
         fn gauge_avg_sorted(
             &self,
             metric: RylvStr<'_>,
-            value: u64,
+            value: i64,
             _tags: &SortedTags<Self::Hasher>,
         ) {
             self.record(format!("gauge_avg_sorted:{}:{value}", metric.as_ref()));
         }
 
-        fn gauge_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
+        fn gauge_sorted(&self, metric: RylvStr<'_>, value: i64, _tags: &SortedTags<Self::Hasher>) {
             self.record(format!("gauge_sorted:{}:{value}", metric.as_ref()));
         }
 
-        fn timing_sorted(&self, metric: RylvStr<'_>, value: u64, _tags: &SortedTags<Self::Hasher>) {
+        fn timing_sorted(
+            &self,
+            metric: RylvStr<'_>,
+            value: u64,
+            _tags: &SortedTags<Self::Hasher>,
+        ) -> MetricResult<()> {
             self.record(format!("timing_sorted:{}:{value}", metric.as_ref()));
+            Ok(())
         }
 
         fn prepare_sorted_tags<'a>(
@@ -430,39 +463,49 @@ mod tests {
             PreparedMetric::new(metric, tags, std::hash::Hasher::finish(&hasher))
         }
 
-        fn histogram_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        fn histogram_prepared(
+            &self,
+            prepared: &PreparedMetric<Self::Hasher>,
+            value: u64,
+        ) -> MetricResult<()> {
             self.record(format!(
                 "histogram_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
+            Ok(())
         }
 
-        fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        fn count_add_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
             self.record(format!(
                 "count_add_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
         }
 
-        fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        fn gauge_avg_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
             self.record(format!(
                 "gauge_avg_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
         }
 
-        fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        fn gauge_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: i64) {
             self.record(format!(
                 "gauge_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
         }
 
-        fn timing_prepared(&self, prepared: &PreparedMetric<Self::Hasher>, value: u64) {
+        fn timing_prepared(
+            &self,
+            prepared: &PreparedMetric<Self::Hasher>,
+            value: u64,
+        ) -> MetricResult<()> {
             self.record(format!(
                 "timing_prepared:{}:{value}",
                 prepared.metric().as_ref()
             ));
+            Ok(())
         }
     }
 
@@ -561,24 +604,24 @@ mod tests {
             9,
             &mut [RylvTag::from_static("tag:test")],
         );
-        collector.histogram(
+        let _ = collector.histogram(
             RylvStr::from_static("latency"),
             7,
             &mut [RylvTag::from_static("tag:test")],
         );
-        collector.timing(
+        let _ = collector.timing(
             RylvStr::from_static("duration"),
             13,
             &mut [RylvTag::from_static("tag:test")],
         );
         collector.count_add_sorted(RylvStr::from_static("sorted_count"), 2, &sorted);
         collector.gauge_avg_sorted(RylvStr::from_static("sorted_gauge"), 5, &sorted);
-        collector.histogram_sorted(RylvStr::from_static("sorted_hist"), 11, &sorted);
-        collector.timing_sorted(RylvStr::from_static("sorted_timing"), 14, &sorted);
+        let _ = collector.histogram_sorted(RylvStr::from_static("sorted_hist"), 11, &sorted);
+        let _ = collector.timing_sorted(RylvStr::from_static("sorted_timing"), 14, &sorted);
         collector.count_add_prepared(&prepared, 4);
         collector.gauge_avg_prepared(&prepared, 6);
-        collector.histogram_prepared(&prepared, 8);
-        collector.timing_prepared(&prepared, 15);
+        let _ = collector.histogram_prepared(&prepared, 8);
+        let _ = collector.timing_prepared(&prepared, 15);
 
         let calls = inner.take_calls();
         assert_eq!(

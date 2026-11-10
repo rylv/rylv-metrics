@@ -1,6 +1,6 @@
 [package]
 name = "rylv-metrics"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.88"
 description = "High-performance DogStatsD metrics client with client-side aggregation"
@@ -80,6 +80,12 @@ name = "collector_compare"
 path = "benches/collector_compare.rs"
 harness = false
 required-features = ["tls-collector", "shared-collector"]
+
+[[bench]]
+name = "shared_collector_contention"
+path = "benches/shared_collector_contention.rs"
+harness = false
+required-features = ["shared-collector"]
 
 [[example]]
 name = "basic"

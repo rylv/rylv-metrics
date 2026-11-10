@@ -28,7 +28,7 @@ where
 
                 let metric_type = match frame.kind {
                     rylv_metrics::MetricKind::Count => "c",
-                    rylv_metrics::MetricKind::Gauge => "g",
+                    rylv_metrics::MetricKind::GaugeAvg | rylv_metrics::MetricKind::Gauge => "g",
                     rylv_metrics::MetricKind::Timing => "ms",
                 };
                 if frame.tags.is_empty() {
@@ -88,7 +88,7 @@ fn test_shared_drain_basic() {
         &mut [RylvTag::from_static("host:web")],
     );
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency"),
         42,
         &mut [RylvTag::from_static("endpoint:/")],
@@ -122,7 +122,7 @@ fn test_shared_custom_histogram_config() {
     };
 
     let collector = SharedCollector::new(options);
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("custom.hist"),
         100,
         &mut [RylvTag::from_static("scope:test")],
@@ -155,7 +155,7 @@ fn test_shared_drain_frames_borrowed_output() {
                 assert_eq!(frame.prefix, "");
                 assert_eq!(frame.metric, "frames.count");
                 assert_eq!(frame.tags, "scope:test");
-                assert_eq!(frame.value, 1);
+                assert_eq!(frame.value, rylv_metrics::MetricValue::Int(1));
                 assert_eq!(frame.kind, rylv_metrics::MetricKind::Count);
             }
             break;
@@ -243,22 +243,22 @@ fn test_shared_parity_with_metric_collector_custom_writer() {
         &mut [RylvTag::from_static("host:web")],
     );
 
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency"),
         42,
         &mut [RylvTag::from_static("endpoint:/")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency"),
         100,
         &mut [RylvTag::from_static("endpoint:/")],
     );
-    shared_collector.histogram(
+    let _ = shared_collector.histogram(
         RylvStr::from_static("latency"),
         42,
         &mut [RylvTag::from_static("endpoint:/")],
     );
-    shared_collector.histogram(
+    let _ = shared_collector.histogram(
         RylvStr::from_static("latency"),
         100,
         &mut [RylvTag::from_static("endpoint:/")],

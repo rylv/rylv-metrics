@@ -635,7 +635,7 @@ impl<T: Writer> StatsWriterApple<T> {
 const fn metric_str(metric_type: MetricKind) -> &'static str {
     match metric_type {
         MetricKind::Count => "c",
-        MetricKind::Gauge => "g",
+        MetricKind::GaugeAvg | MetricKind::Gauge => "g",
         MetricKind::Timing => "ms",
     }
 }
@@ -916,7 +916,7 @@ mod tests {
         StatsWriterTrait::flush(&mut writer).unwrap();
 
         let written = mock.take_written();
-        assert!(!written.is_empty());
+        assert_ne!(written, Vec::<Vec<u8>>::new());
     }
 
     #[test]

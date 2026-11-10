@@ -42,7 +42,7 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
             RylvTag::from_static("region:us-east-1"),
         ];
         b.iter(|| {
-            collector.histogram(
+            let _ = collector.histogram(
                 black_box(RylvStr::from_static("bench.histogram")),
                 black_box(42),
                 black_box(&mut tags),
@@ -58,7 +58,7 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
             RylvTag::from_static("region:us-east-1"),
         ]);
         b.iter(|| {
-            collector.histogram_sorted(
+            let _ = collector.histogram_sorted(
                 black_box(RylvStr::from_static("bench.histogram")),
                 black_box(42),
                 black_box(&sorted),
@@ -75,7 +75,7 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
         ]);
         let prepared = collector.prepare_metric(RylvStr::from_static("bench.histogram"), sorted);
         b.iter(|| {
-            collector.histogram_prepared(black_box(&prepared), black_box(42));
+            let _ = collector.histogram_prepared(black_box(&prepared), black_box(42));
         });
     });
 
@@ -88,7 +88,7 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
             RylvTag::from_static("region:us-east-1"),
         ];
         b.iter(|| {
-            collector.histogram(
+            let _ = collector.histogram(
                 black_box(RylvStr::from_static("bench.histogram")),
                 black_box(42),
                 black_box(&mut tags),
@@ -104,7 +104,7 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
             RylvTag::from_static("region:us-east-1"),
         ]);
         b.iter(|| {
-            collector.histogram_sorted(
+            let _ = collector.histogram_sorted(
                 black_box(RylvStr::from_static("bench.histogram")),
                 black_box(42),
                 black_box(&sorted),
@@ -121,7 +121,7 @@ fn benchmark_histogram_single_thread(c: &mut Criterion) {
         ]);
         let prepared = collector.prepare_metric(RylvStr::from_static("bench.histogram"), sorted);
         b.iter(|| {
-            collector.histogram_prepared(black_box(&prepared), black_box(42));
+            let _ = collector.histogram_prepared(black_box(&prepared), black_box(42));
         });
     });
 
@@ -154,7 +154,7 @@ fn run_parallel_histogram_regular<C: MetricCollectorTrait + Sync>(
                     RylvTag::from_static("region:us-east-1"),
                 ];
                 for _ in 0..work {
-                    collector.histogram(
+                    let _ = collector.histogram(
                         RylvStr::from_static("bench.parallel.histogram"),
                         42,
                         &mut tags,
@@ -187,7 +187,7 @@ fn run_parallel_histogram_sorted<C: MetricCollectorTrait + Sync>(
                     RylvTag::from_static("region:us-east-1"),
                 ]);
                 for _ in 0..work {
-                    collector.histogram_sorted(
+                    let _ = collector.histogram_sorted(
                         RylvStr::from_static("bench.parallel.histogram"),
                         42,
                         &sorted,
@@ -216,7 +216,7 @@ fn run_parallel_histogram_prepared_shared(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 for _ in 0..work {
-                    collector.histogram_prepared(prepared, 42);
+                    let _ = collector.histogram_prepared(prepared, 42);
                 }
             });
         }
@@ -241,7 +241,7 @@ fn run_parallel_histogram_prepared_tls(
             let work = base + usize::from(index < remainder);
             scope.spawn(move || {
                 for _ in 0..work {
-                    collector.histogram_prepared(prepared, 42);
+                    let _ = collector.histogram_prepared(prepared, 42);
                 }
             });
         }

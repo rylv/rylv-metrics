@@ -120,19 +120,25 @@ You can configure per-metric or default histogram behavior with `HistogramConfig
 
 ### Counter
 
-Increments a counter, aggregated client-side:
+Increments a counter, aggregated client-side. The window's net total is sent on
+flush; negative deltas are supported, so the net can be negative (a zero net is
+skipped):
 
 ```rust
 count!(collector, "requests.total", "status:200");
 count_add!(collector, "bytes.sent", 1024, "endpoint:upload");
+count_add!(collector, "inflight.requests", -1, "endpoint:upload");
 ```
 
 ### Gauge
 
-Records point-in-time values:
+Records point-in-time values. `gauge_avg` averages the recorded values over the
+window and emits the real mean (negative values included); `gauge` is
+last-write-wins:
 
 ```rust
 gauge_avg!(collector, "memory.used", 1024000, "host:server1");
+gauge!(collector, "queue.depth", 42, "host:server1");
 ```
 
 ## Custom Writer

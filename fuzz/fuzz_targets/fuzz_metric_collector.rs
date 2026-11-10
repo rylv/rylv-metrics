@@ -34,11 +34,13 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    // Parse the fuzz input
+    // Parse the fuzz input. Counters and gauges take `i64` (bit-cast keeps
+    // negative-value coverage); histograms keep the unsigned domain.
     let op = data[0] % 4; // Operation type
-    let value = u64::from_le_bytes([
+    let raw = u64::from_le_bytes([
         data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
     ]);
+    let value = i64::from_le_bytes(raw.to_le_bytes());
 
     // Use remaining bytes as metric name and tags
     let remaining = &data[9..];
@@ -63,7 +65,9 @@ fuzz_target!(|data: &[u8]| {
         0 => collector.count(metric, &mut tag_refs),
         1 => collector.count_add(metric, value, &mut tag_refs),
         2 => collector.gauge_avg(metric, value, &mut tag_refs),
-        3 => collector.histogram(metric, value, &mut tag_refs),
+        3 => {
+            let _ = collector.histogram(metric, raw, &mut tag_refs);
+        }
         _ => unreachable!(),
     }
 

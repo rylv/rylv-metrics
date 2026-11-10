@@ -1,7 +1,7 @@
 #[cfg(feature = "shared-collector")]
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, MetricKind as FrameMetricKind,
-    MetricSuffix, RylvStr, RylvTag, SharedCollector,
+    MetricSuffix, MetricValue, RylvStr, RylvTag, SharedCollector,
 };
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 use rylv_metrics::{MetricKind, MetricResult, StatsWriterTrait, StatsWriterType};
@@ -37,7 +37,7 @@ impl StatsWriterTrait for MiriCustomWriter {
     ) -> MetricResult<()> {
         let metric_type = match metric_type {
             MetricKind::Count => "c",
-            MetricKind::Gauge => "g",
+            MetricKind::GaugeAvg | MetricKind::Gauge => "g",
             MetricKind::Timing => "ms",
         };
         for metric in metrics {
@@ -127,12 +127,12 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
         256,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.timing(
+    let _ = collector.timing(
         RylvStr::from_static("duration_ms"),
         55,
         &mut [RylvTag::from_static("env:test")],
@@ -163,7 +163,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
 
         match frame.kind {
             FrameMetricKind::Count => saw_count = true,
-            FrameMetricKind::Gauge => {
+            FrameMetricKind::GaugeAvg | FrameMetricKind::Gauge => {
                 saw_gauge = true;
                 if frame.metric == "latency_ms" {
                     saw_histogram = true;
@@ -187,7 +187,7 @@ fn miri_shared_drain_keeps_borrowed_frame_fields_valid() {
 #[test]
 fn miri_shared_drain_can_be_dropped_before_exhaustion() {
     let collector = SharedCollector::default();
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],
@@ -203,6 +203,107 @@ fn miri_shared_drain_can_be_dropped_before_exhaustion() {
     assert!(collector.try_begin_drain().is_some());
 }
 
+#[cfg(feature = "shared-collector")]
+#[test]
+fn miri_shared_gauge_state_spinlock_under_concurrent_record_and_drain() {
+    // The averaged-gauge sum is an `UnsafeCell<i128>` guarded by a manual CAS
+    // spinlock; the invariant "the sum is accessed only while holding
+    // `sum_lock`" is a concurrent claim, so recorders and a drainer must run
+    // together under Miri.
+    //
+    // Two schedule-dependent paths of the dependencies perform
+    // integer-to-pointer casts, which Miri rejects under strict provenance, so
+    // each round is arranged to stay off both:
+    // - dashmap's shard lock parks through `parking_lot_core` when a thread
+    //   waits on another thread's write lock, and a write lock is taken to
+    //   insert a missing entry. The recorders therefore only ever find
+    //   existing entries: this thread inserts the keys into the current
+    //   generation before they start, and the drain installs the generation
+    //   recycled by the previous drain, which kept its entries because it was
+    //   recorded into before being drained.
+    // - arc-swap's helping fallback runs when a `load` races the `swap` that
+    //   begins a drain. The drain therefore begins (swaps generations) before
+    //   the recorders start; they then record concurrently, contending with
+    //   each other on the same gauge's spinlock, while this thread drains the
+    //   outgoing generation (`take_sum`) and recycles it.
+    const ROUNDS: i64 = 4;
+    const RECORDERS: i64 = 2;
+    const RECORDS_PER_ROUND: i64 = 16;
+
+    fn record(collector: &SharedCollector, value: i64) {
+        collector.gauge_avg(
+            RylvStr::from_static("miri.gauge"),
+            value,
+            &mut [RylvTag::from_static("env:miri")],
+        );
+        collector.count_add(
+            RylvStr::from_static("miri.gauge"),
+            1,
+            &mut [RylvTag::from_static("env:miri")],
+        );
+    }
+
+    // Traverses a drained generation and returns its count total.
+    fn drained_count(drain: &mut impl MetricDrain) -> i64 {
+        let mut counted = 0;
+        for frame in drain.frames() {
+            assert_eq!(frame.metric, "miri.gauge");
+            match (frame.kind, frame.value) {
+                (FrameMetricKind::Count, MetricValue::Int(count)) => counted += count,
+                (FrameMetricKind::GaugeAvg, MetricValue::Float(mean)) => {
+                    assert!((-32.0..=31.0).contains(&mean), "mean {mean} out of range");
+                }
+                other => panic!("unexpected frame {other:?}"),
+            }
+        }
+        counted
+    }
+
+    fn begin_drain(collector: &SharedCollector) -> impl MetricDrain + '_ {
+        collector
+            .try_begin_drain()
+            .expect("no other thread holds the outgoing generation")
+    }
+
+    let collector = SharedCollector::default();
+
+    // Leave a recycled generation holding the keys for the first round.
+    record(&collector, 0);
+    let mut drained = drained_count(&mut begin_drain(&collector));
+
+    for _ in 0..ROUNDS {
+        record(&collector, 0);
+        let mut drain = begin_drain(&collector);
+        std::thread::scope(|scope| {
+            for _ in 0..RECORDERS {
+                let collector = &collector;
+                scope.spawn(move || {
+                    for value in 0..RECORDS_PER_ROUND {
+                        record(collector, value * 4 - 32);
+                    }
+                });
+            }
+
+            // Drain and recycle the outgoing generation while the recorders
+            // run: its `take_sum` follows `record` calls made on other
+            // threads in the previous round.
+            drained += drained_count(&mut drain);
+            drop(drain);
+        });
+    }
+
+    // Every count recorded so far is drained exactly once.
+    drained += drained_count(&mut begin_drain(&collector));
+    assert_eq!(drained, 1 + ROUNDS * (1 + RECORDERS * RECORDS_PER_ROUND));
+
+    // After the threads join, the collector still accepts records and drains.
+    collector.gauge_avg(RylvStr::from_static("miri.gauge"), 7, &mut []);
+    let mut drain = collector
+        .try_begin_drain()
+        .expect("drain should become available after the threads join");
+    assert!(drain.frames().next().is_some());
+}
+
 #[cfg(feature = "tls-collector")]
 #[test]
 fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
@@ -216,12 +317,12 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
         256,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],
     );
-    collector.timing(
+    let _ = collector.timing(
         RylvStr::from_static("duration_ms"),
         55,
         &mut [RylvTag::from_static("env:test")],
@@ -245,7 +346,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
 
         match frame.kind {
             FrameMetricKind::Count => saw_count = true,
-            FrameMetricKind::Gauge => {
+            FrameMetricKind::GaugeAvg | FrameMetricKind::Gauge => {
                 saw_gauge = true;
                 if frame.metric == "latency_ms" {
                     saw_histogram = true;
@@ -269,7 +370,7 @@ fn miri_tls_drain_keeps_borrowed_frame_fields_valid() {
 #[test]
 fn miri_tls_drain_can_be_dropped_before_exhaustion() {
     let collector = TLSCollector::new(TLSCollectorOptions::default());
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("latency_ms"),
         42,
         &mut [RylvTag::from_static("env:test")],

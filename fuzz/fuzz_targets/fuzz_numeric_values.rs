@@ -33,13 +33,17 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    // Extract two u64 values from the fuzz input
-    let value1 = u64::from_le_bytes([
+    // Extract two raw 64-bit values from the fuzz input. Counters and gauges
+    // take `i64` (bit-cast keeps negative-value coverage); histograms keep the
+    // unsigned domain and reject over-max values themselves.
+    let raw1 = u64::from_le_bytes([
         data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
-    let value2 = u64::from_le_bytes([
+    let raw2 = u64::from_le_bytes([
         data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
     ]);
+    let value1 = i64::from_le_bytes(raw1.to_le_bytes());
+    let value2 = i64::from_le_bytes(raw2.to_le_bytes());
 
     let tags = vec!["fuzz:test".to_string()];
     let mut tag_refs: Vec<RylvTag<'_>> = tags.iter().map(|t| RylvTag::from(t.as_str())).collect();
@@ -47,17 +51,18 @@ fuzz_target!(|data: &[u8]| {
     // Test with potentially extreme values
     collector.count_add(RylvStr::from_static("fuzz.counter"), value1, &mut tag_refs);
     collector.gauge_avg(RylvStr::from_static("fuzz.gauge"), value2, &mut tag_refs);
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("fuzz.histogram"),
-        value1,
+        raw1,
         &mut tag_refs,
     );
 
     // Test common edge cases
     collector.count_add(RylvStr::from_static("fuzz.zero"), 0, &mut tag_refs);
-    collector.count_add(RylvStr::from_static("fuzz.max"), u64::MAX, &mut tag_refs);
+    collector.count_add(RylvStr::from_static("fuzz.max"), i64::MAX, &mut tag_refs);
+    collector.count_add(RylvStr::from_static("fuzz.min"), i64::MIN, &mut tag_refs);
     collector.gauge_avg(RylvStr::from_static("fuzz.one"), 1, &mut tag_refs);
-    collector.histogram(
+    let _ = collector.histogram(
         RylvStr::from_static("fuzz.edge"),
         u64::MAX / 2,
         &mut tag_refs,

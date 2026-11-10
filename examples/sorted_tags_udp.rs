@@ -33,7 +33,7 @@ fn main() {
     let tags = sorted_tags!(collector, "service:web", "route:/users", "env:prod");
 
     count_add_sorted!(collector, "requests.total", 1, &tags);
-    histogram_sorted!(collector, "requests.latency_ms", 42, &tags);
+    let _ = histogram_sorted!(collector, "requests.latency_ms", 42, &tags);
 
     // Single-thread fast path.
     let prepared = collector.prepare_metric(RylvStr::from_static("requests.total"), tags);

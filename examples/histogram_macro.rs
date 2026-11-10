@@ -18,7 +18,7 @@ fn main() {
         .expect("failed to create collector");
 
     // Example 1: Static string tags
-    histogram!(
+    let _ = histogram!(
         collector,
         "request.duration",
         150,
@@ -28,7 +28,7 @@ fn main() {
 
     // Example 2: Mixed static and owned string tags
     let status_code = 200;
-    histogram!(
+    let _ = histogram!(
         collector,
         "response.size",
         1024,
@@ -37,10 +37,10 @@ fn main() {
     );
 
     // Example 3: Without tags
-    histogram!(collector, "memory.usage", 512);
+    let _ = histogram!(collector, "memory.usage", 512);
 
     // Example 4: Many tags
-    histogram!(
+    let _ = histogram!(
         collector,
         "database.query",
         45,
