@@ -1,6 +1,7 @@
 use crate::dogstats::collector::{
     DrainMetricCollectorTrait, MetricDrain, MetricSuffix, MetricValue,
 };
+use crate::dogstats::format::format_value;
 use crate::dogstats::writer::StatsWriterHolder;
 use crate::MetricResult;
 
@@ -81,7 +82,7 @@ where
                 stats_writer.write_copied(
                     &metric_parts[..part_count],
                     metric.tags,
-                    Self::format_value(metric.value, &mut self.buffer, &mut self.float_buffer),
+                    format_value(metric.value, &mut self.buffer, &mut self.float_buffer),
                     metric.kind,
                 )
             } else {
@@ -108,27 +109,13 @@ where
         SendResult::Ok
     }
 
-    /// Formats a frame value for the stack path: the returned string borrows
-    /// `int_buffer` (integers) or `float_buffer` (floats) and is valid until
-    /// either is used again.
-    fn format_value<'a>(
-        value: MetricValue,
-        int_buffer: &'a mut Buffer,
-        float_buffer: &'a mut String,
-    ) -> &'a str {
-        match value {
-            MetricValue::Int(value) => int_buffer.format(value),
-            MetricValue::Float(value) => format_float(value, float_buffer),
-        }
-    }
-
     fn get_value<'a>(
         value: MetricValue,
         bump: &'a Bump,
         int_buffer: &mut Buffer,
         float_buffer: &mut String,
     ) -> &'a str {
-        let value = Self::format_value(value, int_buffer, float_buffer);
+        let value = format_value(value, int_buffer, float_buffer);
         bump.alloc_str(value)
     }
 
@@ -193,5 +180,3 @@ where
         }
     }
 }
-
-pub(super) use super::format::format_float;

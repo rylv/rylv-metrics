@@ -2022,14 +2022,16 @@ mod tests {
     };
     use crate::dogstats::aggregator::HistogramWrapper;
     use crate::dogstats::collector::{
-        DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix, MetricValue,
+        DrainMetricCollectorTrait, MetricDrain, MetricKind, MetricSuffix,
     };
+    use crate::dogstats::format::format_value;
     use crate::dogstats::histogram_config::{
         resolve_histogram_configs, Bounds, HistogramBaseMetric, HistogramBaseMetrics,
         HistogramConfig,
     };
     use crate::{MetricCollectorTrait, RylvStr, RylvTag};
     use hdrhistogram::Histogram;
+    use itoa::Buffer;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -2048,6 +2050,8 @@ mod tests {
 
     fn format_drained_lines(mut drain: impl MetricDrain) -> Vec<String> {
         let mut lines = Vec::new();
+        let mut int_buffer = Buffer::new();
+        let mut float_buffer = String::with_capacity(32);
         for frame in drain.frames() {
             let mut metric = String::new();
             metric.push_str(frame.prefix);
@@ -2064,12 +2068,7 @@ mod tests {
                 MetricKind::GaugeAvg | MetricKind::Gauge => "g",
                 MetricKind::Timing => "ms",
             };
-            let value = match frame.value {
-                MetricValue::Int(value) => value.to_string(),
-                MetricValue::Float(value) => {
-                    crate::dogstats::format::format_float(value, &mut String::new()).to_owned()
-                }
-            };
+            let value = format_value(frame.value, &mut int_buffer, &mut float_buffer);
             if frame.tags.is_empty() {
                 lines.push(format!("{metric}:{value}|{metric_type}\n"));
             } else {
