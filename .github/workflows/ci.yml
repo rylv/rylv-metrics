@@ -10,6 +10,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  kani:
+    name: Verify equal_slice with Kani
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-kani-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-kani-
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Install Kani
+        run: make kani-setup
+
+      - name: Check byte-slice comparison
+        run: make kani-check
+
+  quint:
+    name: Check Quint models and Rust conformance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Quint model and replay traces
+        run: make quint-conformance
+
   test:
     name: Test on ${{ matrix.os }} (${{ matrix.target }})
     runs-on: ${{ matrix.os }}

@@ -335,6 +335,13 @@ where
 
     #[cold]
     fn flush_all_to_global(&self) -> GlobalAggregatorHb<S> {
+        self.flush_all_to_global_with_hook(|| {})
+    }
+
+    fn flush_all_to_global_with_hook(
+        &self,
+        mut after_local_swap: impl FnMut(),
+    ) -> GlobalAggregatorHb<S> {
         // Lock global only to swap the active generation with a fresh recycled one.
         let mut global_to_merge = {
             let mut global_guard = self.global_aggregator.lock();
@@ -357,6 +364,9 @@ where
                 .unwrap_or_else(|| local_guard.empty_like());
             let mut local = local_guard.swap_with(fresh);
             drop(local_guard);
+            // A producer can now write to the fresh local buffer while this
+            // detached buffer is still waiting to be merged.
+            after_local_swap();
             merge_local_aggregator_into_global_hashbrown(
                 &mut local,
                 &mut global_to_merge,
@@ -2011,6 +2021,9 @@ where
         self.next_frame()
     }
 }
+
+#[cfg(test)]
+mod quint_conformance;
 
 #[cfg(test)]
 mod tests {

@@ -12,6 +12,10 @@ help:
 	@echo "  check              Run cargo check for all features and targets"
 	@echo "  test               Run cargo test --all-features"
 	@echo "  test-default       Run cargo test with default feature set"
+	@echo "  quint-check        Check SharedCollector and TLSCollector models"
+	@echo "  quint-conformance  Replay Quint traces against both collectors"
+	@echo "  kani-setup         Install the Kani verifier"
+	@echo "  kani-check         Verify equal_slice and its chunk arithmetic with Kani"
 	@echo "  verify             Run the main local CI-equivalent checks"
 	@echo "  prepare-commit     Run verification, stage changes, and create a commit"
 	@echo "  prepare-publish    Run release-prep checks without modifying git history"
@@ -58,6 +62,34 @@ doctest:
 	@echo "=> Running doctests"
 	@cargo test --doc --all-features
 
+.PHONY: quint-check
+quint-check:
+	@npx --yes --package=@informalsystems/quint@0.33.0 quint test specs/shared_collector_drain.qnt
+	@npx --yes --package=@informalsystems/quint@0.33.0 quint run specs/shared_collector_drain.qnt --invariant=safe --max-samples=10000 --max-steps=30 --verbosity=0
+	@npx --yes --package=@informalsystems/quint@0.33.0 quint test specs/tls_collector_drain.qnt
+	@npx --yes --package=@informalsystems/quint@0.33.0 quint run specs/tls_collector_drain.qnt --invariant=safe --max-samples=10000 --max-steps=30 --verbosity=0
+
+.PHONY: quint-conformance
+quint-conformance: quint-check
+	@set -eu; \
+	shared_traces=$$(mktemp -d); \
+	tls_traces=$$(mktemp -d); \
+	trap 'rm -rf "$$shared_traces" "$$tls_traces"' EXIT; \
+	npx --yes --package=@informalsystems/quint@0.33.0 quint run specs/shared_collector_drain.qnt --invariant=safe --seed=0x1271abcd --max-samples=64 --n-traces=64 --max-steps=30 --n-threads=1 --mbt --out-itf="$$shared_traces/trace_{seq}.itf.json" --verbosity=0; \
+	RYLV_QUINT_TRACE_DIR="$$shared_traces" cargo test --features shared-collector --lib quint_trace_conformance; \
+	npx --yes --package=@informalsystems/quint@0.33.0 quint run specs/tls_collector_drain.qnt --invariant=safe --seed=0x715c01ab --max-samples=64 --n-traces=64 --max-steps=30 --n-threads=1 --mbt --out-itf="$$tls_traces/trace_{seq}.itf.json" --verbosity=0; \
+	RYLV_QUINT_TLS_TRACE_DIR="$$tls_traces" cargo test --features tls-collector --lib quint_tls_trace_conformance; \
+	cargo test --features tls-collector --lib write_after_local_swap_is_drained_in_next_generation
+
+.PHONY: kani-setup
+kani-setup:
+	cargo install --locked kani-verifier --version 0.68.0
+	cargo kani setup
+
+.PHONY: kani-check
+kani-check:
+	cargo kani --lib -Z loop-contracts
+
 .PHONY: verify
 verify:
 	@echo "=> Running local verification"
@@ -66,6 +98,7 @@ verify:
 	@$(MAKE) clippy
 	@$(MAKE) test
 	@$(MAKE) doctest
+	@$(MAKE) quint-conformance
 
 .PHONY: prepare-commit
 prepare-commit:
