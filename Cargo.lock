@@ -697,6 +697,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "rustix",
+ "serde_json",
  "thiserror",
  "thread_local",
  "tracing",

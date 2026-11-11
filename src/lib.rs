@@ -48,6 +48,7 @@
 //! ```
 
 // #![deny(unsafe_code)]
+#![cfg_attr(kani, feature(stmt_expr_attributes, proc_macro_hygiene))]
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]

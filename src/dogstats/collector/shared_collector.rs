@@ -2013,6 +2013,9 @@ fn record_gauge_last_in_aggregator_prepared<S>(
 }
 
 #[cfg(test)]
+mod quint_conformance;
+
+#[cfg(test)]
 mod tests {
     use super::{
         drain_aggregator_frames, record_count_add_in_aggregator,
