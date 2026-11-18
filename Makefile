@@ -10,7 +10,7 @@ SYNC_TLS_BENCH_FEATURES = udp tls-collector shared-collector
 help:
 	@echo "Available targets:"
 	@echo "  check              Run cargo check for all features and targets"
-	@echo "  test               Run cargo test --all-features"
+	@echo "  test               Run cargo test --workspace --all-features"
 	@echo "  test-default       Run cargo test with default feature set"
 	@echo "  quint-check        Check SharedCollector and TLSCollector models"
 	@echo "  quint-conformance  Replay Quint traces against both collectors"
@@ -30,12 +30,12 @@ clean:
 .PHONY: check
 check:
 	@echo "=> Running cargo check (all features, all targets)"
-	@cargo check --all-features --all-targets
+	@cargo check --workspace --all-features --all-targets
 
 .PHONY: clippy
 clippy:
 	@echo "=> Executing cargo clippy"
-	@cargo clippy --all-features --color auto --all-targets -- -D warnings
+	@cargo clippy --workspace --all-features --color auto --all-targets -- -D warnings
 
 .PHONY: fmt
 fmt:
@@ -50,7 +50,7 @@ fmt-check:
 .PHONY: test
 test:
 	@echo "=> Running tests (all features)"
-	@cargo test --all-features
+	@cargo test --workspace --all-features
 
 .PHONY: test-default
 test-default:
@@ -60,7 +60,7 @@ test-default:
 .PHONY: doctest
 doctest:
 	@echo "=> Running doctests"
-	@cargo test --doc --all-features
+	@cargo test --doc --workspace --all-features
 
 .PHONY: quint-check
 quint-check:
@@ -140,15 +140,15 @@ docker-build:
 
 .PHONY: docker-check
 docker-check:
-	$(DOCKER_RUN) cargo check --all-features --all-targets
+	$(DOCKER_RUN) cargo check --workspace --all-features --all-targets
 
 .PHONY: docker-test
 docker-test:
-	$(DOCKER_RUN) cargo test --all-features
+	$(DOCKER_RUN) cargo test --workspace --all-features
 
 .PHONY: docker-ci
 docker-ci:
-	$(DOCKER_RUN) sh -c "cargo check --all-features --all-targets && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features && cargo test --doc --all-features"
+	$(DOCKER_RUN) sh -c "cargo check --workspace --all-features --all-targets && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && cargo test --doc --workspace --all-features"
 
 .PHONY: coverage
 coverage:

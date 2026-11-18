@@ -105,6 +105,37 @@ collector.count_add_sorted(RylvStr::from_static("requests.total"), 1, &tags);
 
 `prepare_sorted_tags` resolves and sorts the tags once, so `tags` can be reused across metric calls. A `(key, value)` tuple also converts to `RylvTag` when both parts convert to `RylvStr`. For two static parts, use `RylvTag::from_static_compound("env", "prod")`.
 
+### Typed tags
+
+Enable the optional `derive` feature alongside a collector feature:
+
+```toml
+rylv-metrics = { version = "0.5", features = ["derive", "shared-collector"] }
+```
+
+```rust
+use rylv_metrics::{MetricCollectorTrait, RylvStr, RylvTags, SharedCollector};
+
+#[derive(RylvTags)]
+struct RequestTags<'a> {
+    env: &'a str,
+    #[rylv(rename = "http.route")]
+    route: &'a str,
+    status: String,
+}
+
+let collector = SharedCollector::default();
+let tags = RequestTags { env: "prod", route: "/users", status: "200".into() };
+collector.count_add_typed(RylvStr::from_static("requests.total"), 1, &tags);
+```
+
+The derive computes canonical key order at compile time. `*_typed` constructs
+the tags on the stack and skips sorting on each call, while hashing the current
+values. Use the slice API for keys or tag counts chosen at runtime. Use
+`SortedTags` when the entire set can be prepared and reused, since it also
+caches the tags hash. Use `PreparedMetric` when the metric name and tag values
+are both reusable; it also caches the metric identity.
+
 ## Metric Types
 
 ### Histogram

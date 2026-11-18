@@ -1,0 +1,5 @@
+error: RylvTags requires named fields
+ --> tests/ui/typed_tags_tuple.rs:4:11
+  |
+4 | struct Bad(&'static str);
+  |           ^^^^^^^^^^^^^^

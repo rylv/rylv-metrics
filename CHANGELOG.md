@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional `RylvTags` derive and typed collector methods for canonically ordered tags without per-call sorting.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added

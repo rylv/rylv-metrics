@@ -102,7 +102,7 @@ jobs:
         run: cargo check --verbose
 
       - name: Run cargo check (all features, all targets)
-        run: cargo check --all-features --all-targets --verbose
+        run: cargo check --workspace --all-features --all-targets --verbose
 
       - name: Run cargo build
         run: cargo build --verbose
@@ -111,7 +111,7 @@ jobs:
         run: cargo test --verbose
 
       - name: Run cargo test (all features)
-        run: cargo test --all-features --verbose
+        run: cargo test --workspace --all-features --verbose
 
       - name: Run cargo test (no default features)
         run: cargo test --no-default-features --verbose
@@ -153,7 +153,7 @@ jobs:
           key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   semver:
     name: Semver checks
@@ -383,7 +383,7 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
 
       - name: Run doctests
-        run: cargo test --doc --all-features
+        run: cargo test --doc --workspace --all-features
 
   bench:
     name: Benchmark regression check

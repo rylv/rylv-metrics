@@ -13,6 +13,10 @@ keywords = ["metrics", "dogstatsd", "statsd", "monitoring", "telemetry"]
 categories = ["development-tools::profiling", "network-programming"]
 exclude = [".github/", "fuzz/", "Makefile", ".gitignore"]
 
+[workspace]
+members = ["rylv-metrics-derive"]
+exclude = ["fuzz"]
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
@@ -35,6 +39,7 @@ thread_local = { version = "1.1.9", default-features = false, optional = true }
 rustix = { version = "1.1.2", default-features = false, features = ["std", "net", "time"], optional = true }
 libc = { version = "0.2", default-features=false, optional = true }
 bumpalo = { version = "3.19.0", default-features = false}
+rylv-metrics-derive = { path = "rylv-metrics-derive", version = "0.5.0", optional = true }
 
 # Used in benchmarks for profiling
 dhat = {version="0.3.3", default-features = false, optional=true}
@@ -44,6 +49,7 @@ allocation-counter = { version = "0", default-features = false, optional = true 
 criterion = "0.5.1"
 ahash = "0.8.12"
 serde_json = "1.0"
+trybuild = "1.0"
 
 [[bin]]
 name = "shared_dhat_single"
@@ -86,10 +92,20 @@ harness = false
 required-features = ["tls-collector", "shared-collector"]
 
 [[bench]]
+name = "typed_tags"
+path = "benches/typed_tags.rs"
+harness = false
+required-features = ["derive", "shared-collector", "tls-collector"]
+
+[[bench]]
 name = "shared_collector_contention"
 path = "benches/shared_collector_contention.rs"
 harness = false
 required-features = ["shared-collector"]
+
+[[example]]
+name = "typed_tags"
+required-features = ["derive", "shared-collector"]
 
 [[example]]
 name = "basic"
@@ -141,6 +157,7 @@ required-features = ["udp"]
 
 [features]
 default = []
+derive = ["dep:rylv-metrics-derive"]
 custom_writer = []
 shared-collector = ["dep:dashmap", "dep:arc-swap"]
 tls-collector = ["dep:thread_local", "dep:hashbrown", "dep:parking_lot"]
