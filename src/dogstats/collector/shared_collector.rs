@@ -1100,18 +1100,17 @@ where
         value: u64,
         tags: &T,
     ) -> MetricResult<()> {
-        tags.__with_sorted_tags(|tags| {
-            let aggregator = self.current_aggregator.load();
-            record_histogram_in_aggregator_presorted(
-                &aggregator,
-                &self.histogram_configs,
-                &self.default_histogram_config,
-                metric,
-                value,
-                tags,
-            )
-            .map_err(histogram_record_error)
-        })
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_histogram_in_aggregator_presorted(
+            &aggregator,
+            &self.histogram_configs,
+            &self.default_histogram_config,
+            metric,
+            value,
+            guard.as_mut(),
+        )
+        .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1121,18 +1120,17 @@ where
         value: u64,
         tags: &T,
     ) -> MetricResult<()> {
-        tags.__with_sorted_tags(|tags| {
-            let aggregator = self.current_aggregator.load();
-            record_timing_in_aggregator_presorted(
-                &aggregator,
-                &self.histogram_configs,
-                &self.default_histogram_config,
-                metric,
-                value,
-                tags,
-            )
-            .map_err(histogram_record_error)
-        })
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_timing_in_aggregator_presorted(
+            &aggregator,
+            &self.histogram_configs,
+            &self.default_histogram_config,
+            metric,
+            value,
+            guard.as_mut(),
+        )
+        .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1142,26 +1140,23 @@ where
 
     #[inline]
     fn count_add_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| {
-            let aggregator = self.current_aggregator.load();
-            record_count_add_in_aggregator_presorted(&aggregator, metric, value, tags);
-        });
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_count_add_in_aggregator_presorted(&aggregator, metric, value, guard.as_mut());
     }
 
     #[inline]
     fn gauge_avg_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| {
-            let aggregator = self.current_aggregator.load();
-            record_gauge_in_aggregator_presorted(&aggregator, metric, value, tags);
-        });
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_gauge_in_aggregator_presorted(&aggregator, metric, value, guard.as_mut());
     }
 
     #[inline]
     fn gauge_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| {
-            let aggregator = self.current_aggregator.load();
-            record_gauge_last_in_aggregator_presorted(&aggregator, metric, value, tags);
-        });
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_gauge_last_in_aggregator_presorted(&aggregator, metric, value, guard.as_mut());
     }
 
     #[inline]

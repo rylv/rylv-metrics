@@ -161,15 +161,18 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             )
         }
     });
+    let count = entries.len();
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics #path::RylvTags for #name #ty_generics #where_clause {
+            type Guard<'__rylv_guard> = #path::RylvTagsGuard<'__rylv_guard, #count>
+                where Self: '__rylv_guard;
+
             #[inline]
-            fn __with_sorted_tags<R>(&self, f: impl FnOnce(&mut [#path::RylvTag<'_>]) -> R) -> R {
-                let mut tags = [#(#tags),*];
-                f(&mut tags)
+            fn sorted_tags(&self) -> Self::Guard<'_> {
+                #path::RylvTagsGuard::new([#(#tags),*])
             }
         }
     })

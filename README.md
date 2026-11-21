@@ -135,9 +135,10 @@ collector.count_add_typed(RylvStr::from_static("requests.total"), 1, &tags);
 
 Each included field must be `RylvStr`; use `from_static` for known constants,
 `Borrowed` for temporary values, and `Owned` or `OwnedStr` for owned values.
-The derive computes canonical key order at compile time. `*_typed` constructs
-the tags on the stack and skips sorting on each call, while hashing the current
-values. Use the slice API for keys or tag counts chosen at runtime. Use
+The derive computes canonical key order at compile time. `sorted_tags()` returns
+a stack-backed `RylvTagsGuard` that owns the temporary tag array. `*_typed`
+uses this guard without sorting on each call, while hashing the current values.
+Use the slice API for keys or tag counts chosen at runtime. Use
 `SortedTags` when the entire set can be prepared and reused, since it also
 caches the tags hash. Use `PreparedMetric` when the metric name and tag values
 are both reusable; it also caches the metric identity.

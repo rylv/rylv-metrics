@@ -37,7 +37,7 @@ pub trait MetricCollectorTrait {
         value: u64,
         tags: &T,
     ) -> MetricResult<()> {
-        tags.__with_sorted_tags(|tags| self.histogram(metric, value, tags))
+        self.histogram(metric, value, tags.sorted_tags())
     }
 
     /// Increments a counter by one with a compile-time ordered tag set.
@@ -49,19 +49,19 @@ pub trait MetricCollectorTrait {
     /// Adds a signed value to a counter with a compile-time ordered tag set.
     #[inline]
     fn count_add_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| self.count_add(metric, value, tags));
+        self.count_add(metric, value, tags.sorted_tags());
     }
 
     /// Records an averaged gauge with a compile-time ordered tag set.
     #[inline]
     fn gauge_avg_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| self.gauge_avg(metric, value, tags));
+        self.gauge_avg(metric, value, tags.sorted_tags());
     }
 
     /// Records a last-write-wins gauge with a compile-time ordered tag set.
     #[inline]
     fn gauge_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| self.gauge(metric, value, tags));
+        self.gauge(metric, value, tags.sorted_tags());
     }
 
     /// Records a timing with a compile-time ordered tag set.
@@ -75,7 +75,7 @@ pub trait MetricCollectorTrait {
         value: u64,
         tags: &T,
     ) -> MetricResult<()> {
-        tags.__with_sorted_tags(|tags| self.timing(metric, value, tags))
+        self.timing(metric, value, tags.sorted_tags())
     }
 
     /// Records a histogram value for distribution tracking.

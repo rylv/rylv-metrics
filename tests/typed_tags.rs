@@ -1,6 +1,30 @@
 #![cfg(feature = "derive")]
 
-use rylv_metrics::{RylvStr, RylvTag, RylvTags};
+use rylv_metrics::{RylvStr, RylvTag, RylvTags, RylvTagsGuard};
+
+struct Manual<'a> {
+    env: &'a str,
+}
+
+impl RylvTags for Manual<'_> {
+    type Guard<'a>
+        = RylvTagsGuard<'a, 1>
+    where
+        Self: 'a;
+
+    fn sorted_tags(&self) -> Self::Guard<'_> {
+        RylvTagsGuard::new([RylvTag::from_parts(RylvStr::from_static("env"), self.env)])
+    }
+}
+
+#[test]
+fn manual_implementation_returns_guard() {
+    let tags = Manual { env: "prod" };
+    assert_eq!(
+        tags.sorted_tags().as_ref()[0],
+        RylvTag::from_static("env:prod")
+    );
+}
 
 #[derive(RylvTags)]
 struct Ordered<'a> {
@@ -28,24 +52,24 @@ fn derived_order_matches_rylv_tag_ord_for_dynamic_values() {
             dot: RylvStr::Borrowed(value),
             slash: RylvStr::Borrowed(value),
         };
-        tags.__with_sorted_tags(|actual| {
-            let mut expected = [
-                ("host", value).into(),
-                ("host2", value).into(),
-                ("a", value).into(),
-                ("a_b", value).into(),
-                ("a-b", value).into(),
-                ("a.b", value).into(),
-                ("a/b", value).into(),
-            ];
-            expected.sort_unstable();
-            assert_eq!(actual.len(), expected.len());
-            for (a, b) in actual.iter().zip(expected.iter()) {
-                assert_eq!(a, b);
-            }
-            assert_eq!(actual[0], RylvTag::from_parts("a-b", value));
-            assert_eq!(actual[5], RylvTag::from_parts("host2", value));
-        });
+        let guard = tags.sorted_tags();
+        let actual = guard.as_ref();
+        let mut expected = [
+            ("host", value).into(),
+            ("host2", value).into(),
+            ("a", value).into(),
+            ("a_b", value).into(),
+            ("a-b", value).into(),
+            ("a.b", value).into(),
+            ("a/b", value).into(),
+        ];
+        expected.sort_unstable();
+        assert_eq!(actual.len(), expected.len());
+        for (a, b) in actual.iter().zip(expected.iter()) {
+            assert_eq!(a, b);
+        }
+        assert_eq!(actual[0], RylvTag::from_parts("a-b", value));
+        assert_eq!(actual[5], RylvTag::from_parts("host2", value));
     }
 }
 
@@ -68,12 +92,12 @@ fn generics_raw_identifiers_skipped_fields_and_empty_structs_work() {
         ignored: 123,
     };
     assert_eq!(tags.ignored, 123);
-    tags.__with_sorted_tags(|slice| {
-        assert_eq!(slice.len(), 2);
-        assert_eq!(slice[0], RylvTag::from_static("type:kind"));
-        assert_eq!(slice[1], RylvTag::from_static("value:hello"));
-    });
-    Empty {}.__with_sorted_tags(|slice| assert!(slice.is_empty()));
+    let guard = tags.sorted_tags();
+    let slice = guard.as_ref();
+    assert_eq!(slice.len(), 2);
+    assert_eq!(slice[0], RylvTag::from_static("type:kind"));
+    assert_eq!(slice[1], RylvTag::from_static("value:hello"));
+    assert!(Empty {}.sorted_tags().as_ref().is_empty());
 }
 
 #[test]
@@ -90,20 +114,20 @@ fn derived_values_keep_static_and_borrow_dynamic() {
         borrowed_value: RylvStr::Borrowed(&dynamic),
         owned_value: RylvStr::from(String::from("owned")),
     };
-    tags.__with_sorted_tags(|tags| {
-        assert!(matches!(
-            tags[0],
-            RylvTag::Compound(_, RylvStr::Borrowed("dynamic"))
-        ));
-        assert!(matches!(
-            tags[1],
-            RylvTag::Compound(_, RylvStr::Borrowed("owned"))
-        ));
-        assert!(matches!(
-            tags[2],
-            RylvTag::Compound(_, RylvStr::Static("prod"))
-        ));
-    });
+    let guard = tags.sorted_tags();
+    let tags = guard.as_ref();
+    assert!(matches!(
+        tags[0],
+        RylvTag::Compound(_, RylvStr::Borrowed("dynamic"))
+    ));
+    assert!(matches!(
+        tags[1],
+        RylvTag::Compound(_, RylvStr::Borrowed("owned"))
+    ));
+    assert!(matches!(
+        tags[2],
+        RylvTag::Compound(_, RylvStr::Static("prod"))
+    ));
 }
 
 #[cfg(any(feature = "shared-collector", feature = "tls-collector"))]

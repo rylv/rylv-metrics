@@ -1016,10 +1016,9 @@ where
         value: u64,
         tags: &T,
     ) -> MetricResult<()> {
-        tags.__with_sorted_tags(|tags| {
-            self.record_histogram_presorted(metric, value, tags)
-                .map_err(histogram_record_error)
-        })
+        let mut guard = tags.sorted_tags();
+        self.record_histogram_presorted(metric, value, guard.as_mut())
+            .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1029,10 +1028,9 @@ where
         value: u64,
         tags: &T,
     ) -> MetricResult<()> {
-        tags.__with_sorted_tags(|tags| {
-            self.record_timing_presorted(metric, value, tags)
-                .map_err(histogram_record_error)
-        })
+        let mut guard = tags.sorted_tags();
+        self.record_timing_presorted(metric, value, guard.as_mut())
+            .map_err(histogram_record_error)
     }
 
     #[inline]
@@ -1042,23 +1040,20 @@ where
 
     #[inline]
     fn count_add_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| {
-            self.record_count_add_presorted(metric, value, tags);
-        });
+        let mut guard = tags.sorted_tags();
+        self.record_count_add_presorted(metric, value, guard.as_mut());
     }
 
     #[inline]
     fn gauge_avg_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| {
-            self.record_gauge_presorted(metric, value, tags);
-        });
+        let mut guard = tags.sorted_tags();
+        self.record_gauge_presorted(metric, value, guard.as_mut());
     }
 
     #[inline]
     fn gauge_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
-        tags.__with_sorted_tags(|tags| {
-            self.record_gauge_last_presorted(metric, value, tags);
-        });
+        let mut guard = tags.sorted_tags();
+        self.record_gauge_last_presorted(metric, value, guard.as_mut());
     }
 
     #[inline]
