@@ -358,6 +358,7 @@ pub fn next_metric_id() -> u64 {
 mod tests {
     use super::SortedTags;
     use crate::{DefaultMetricHasher, RylvStr, RylvTag};
+    use proptest::prelude::*;
 
     fn default_hasher() -> DefaultMetricHasher {
         DefaultMetricHasher::default()
@@ -524,6 +525,36 @@ mod tests {
         let fp = metric_tags_fingerprint_from_tags("m", &tags);
         let fp_joined = metric_tags_fingerprint("m", "a:1,b:2");
         assert_eq!(fp, fp_joined);
+    }
+
+    proptest! {
+        #[test]
+        fn full_and_compound_tags_have_equal_hashes(
+            first in proptest::collection::vec(any::<char>(), 0..96)
+                .prop_map(|chars| chars.into_iter().collect::<String>()),
+            second in proptest::collection::vec(any::<char>(), 0..96)
+                .prop_map(|chars| chars.into_iter().collect::<String>()),
+        ) {
+            let full = [
+                RylvTag::from(format!("a:{first}")),
+                RylvTag::from(format!("b:{second}")),
+            ];
+            let compound = [
+                RylvTag::from_parts("a", first.as_str()),
+                RylvTag::from_parts("b", second.as_str()),
+            ];
+            let joined = format!("a:{first},b:{second}");
+            let hasher = default_hasher();
+            prop_assert_eq!(super::hash_tags(&hasher, &full), super::hash_tags(&hasher, &compound));
+            prop_assert_eq!(
+                super::metric_tags_fingerprint_from_tags("metric", &full),
+                super::metric_tags_fingerprint_from_tags("metric", &compound),
+            );
+            prop_assert_eq!(
+                super::metric_tags_fingerprint_from_tags("metric", &compound),
+                super::metric_tags_fingerprint("metric", &joined),
+            );
+        }
     }
 
     #[test]

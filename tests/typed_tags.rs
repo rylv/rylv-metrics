@@ -1,6 +1,28 @@
 #![cfg(feature = "derive")]
 
+use proptest::prelude::*;
 use rylv_metrics::{RylvStr, RylvTag, RylvTags, RylvTagsGuard};
+use std::sync::Arc;
+
+fn arbitrary_value<'a>(variant: u8, value: &'a str) -> RylvStr<'a> {
+    match variant {
+        0 => RylvStr::from_static("prod"),
+        1 => RylvStr::Borrowed(value),
+        2 => RylvStr::from(value.to_owned()),
+        _ => RylvStr::from(Arc::<str>::from(value)),
+    }
+}
+
+fn arbitrary_values() -> impl Strategy<Value = Vec<(u8, String)>> {
+    proptest::collection::vec(
+        (
+            0_u8..4,
+            proptest::collection::vec(any::<char>(), 0..96)
+                .prop_map(|chars| chars.into_iter().collect()),
+        ),
+        7,
+    )
+}
 
 struct Manual<'a> {
     env: &'a str,
@@ -70,6 +92,39 @@ fn derived_order_matches_rylv_tag_ord_for_dynamic_values() {
         }
         assert_eq!(actual[0], RylvTag::from_parts("a-b", value));
         assert_eq!(actual[5], RylvTag::from_parts("host2", value));
+    }
+}
+
+proptest! {
+    #[test]
+    fn derived_order_matches_runtime_sort_for_independent_values(fields in arbitrary_values()) {
+        let values: Vec<_> = fields.iter().map(|(variant, value)| {
+            if *variant == 0 { "prod" } else { value.as_str() }
+        }).collect();
+        let tags = Ordered {
+            host: arbitrary_value(fields[0].0, &fields[0].1),
+            host2: arbitrary_value(fields[1].0, &fields[1].1),
+            a: arbitrary_value(fields[2].0, &fields[2].1),
+            a_b: arbitrary_value(fields[3].0, &fields[3].1),
+            dash: arbitrary_value(fields[4].0, &fields[4].1),
+            dot: arbitrary_value(fields[5].0, &fields[5].1),
+            slash: arbitrary_value(fields[6].0, &fields[6].1),
+        };
+        let guard = tags.sorted_tags();
+        let mut expected: Vec<_> = [
+            ("host", values[0]),
+            ("host2", values[1]),
+            ("a", values[2]),
+            ("a_b", values[3]),
+            ("a-b", values[4]),
+            ("a.b", values[5]),
+            ("a/b", values[6]),
+        ]
+        .into_iter()
+        .map(|(key, value)| RylvTag::from(format!("{key}:{value}")))
+        .collect();
+        expected.sort_unstable();
+        prop_assert_eq!(guard.as_ref(), expected.as_slice());
     }
 }
 

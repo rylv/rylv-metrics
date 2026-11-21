@@ -50,6 +50,7 @@ criterion = "0.5.1"
 ahash = "0.8.12"
 serde_json = "1.0"
 trybuild = "1.0"
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
 [[bin]]
 name = "shared_dhat_single"
