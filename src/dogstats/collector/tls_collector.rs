@@ -410,6 +410,7 @@ where
         self.record_histogram_presorted(metric, value, tags)
     }
 
+    #[inline]
     fn record_histogram_presorted(
         &self,
         metric: RylvStr<'_>,
@@ -566,6 +567,7 @@ where
         self.record_timing_presorted(metric, value, tags)
     }
 
+    #[inline]
     fn record_timing_presorted(
         &self,
         metric: RylvStr<'_>,
@@ -718,6 +720,7 @@ where
         self.record_count_add_presorted(metric, value, tags);
     }
 
+    #[inline]
     fn record_count_add_presorted(&self, metric: RylvStr<'_>, value: i64, tags: &[RylvTag<'_>]) {
         debug_assert!(tags.is_sorted());
         let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
@@ -797,6 +800,7 @@ where
         self.record_gauge_presorted(metric, value, tags);
     }
 
+    #[inline]
     fn record_gauge_presorted(&self, metric: RylvStr<'_>, value: i64, tags: &[RylvTag<'_>]) {
         debug_assert!(tags.is_sorted());
         let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
@@ -902,6 +906,7 @@ where
         self.record_gauge_last_presorted(metric, value, tags);
     }
 
+    #[inline]
     fn record_gauge_last_presorted(&self, metric: RylvStr<'_>, value: i64, tags: &[RylvTag<'_>]) {
         debug_assert!(tags.is_sorted());
         let lookup = build_lookup_key(metric, tags, &self.hasher_builder);
