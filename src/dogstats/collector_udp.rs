@@ -702,12 +702,14 @@ mod tests {
         #[derive(crate::RylvTags)]
         #[rylv(crate = "crate")]
         struct Tags {
-            env: &'static str,
+            env: RylvStr<'static>,
         }
 
         let inner = Arc::new(FakeInner::default());
         let collector = collector_with_inner(Arc::clone(&inner));
-        let tags = Tags { env: "test" };
+        let tags = Tags {
+            env: RylvStr::from_static("test"),
+        };
         collector.count_add_typed(RylvStr::from_static("requests"), 7, &tags);
         inner.gauge_avg_typed(RylvStr::from_static("load"), 9, &tags);
         assert_eq!(

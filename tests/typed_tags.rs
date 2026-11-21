@@ -1,33 +1,32 @@
 #![cfg(feature = "derive")]
 
-use rylv_metrics::{RylvStr, RylvTag, RylvTags, RylvValue};
-use std::{borrow::Cow, sync::Arc};
+use rylv_metrics::{RylvStr, RylvTag, RylvTags};
 
 #[derive(RylvTags)]
 struct Ordered<'a> {
-    host: &'a str,
-    host2: &'a str,
-    a: &'a str,
-    a_b: &'a str,
+    host: RylvStr<'a>,
+    host2: RylvStr<'a>,
+    a: RylvStr<'a>,
+    a_b: RylvStr<'a>,
     #[rylv(rename = "a-b")]
-    dash: &'a str,
+    dash: RylvStr<'a>,
     #[rylv(rename = "a.b")]
-    dot: &'a str,
+    dot: RylvStr<'a>,
     #[rylv(rename = "a/b")]
-    slash: &'a str,
+    slash: RylvStr<'a>,
 }
 
 #[test]
 fn derived_order_matches_rylv_tag_ord_for_dynamic_values() {
     for value in ["", "x:y", "long-value"] {
         let tags = Ordered {
-            host: value,
-            host2: value,
-            a: value,
-            a_b: value,
-            dash: value,
-            dot: value,
-            slash: value,
+            host: RylvStr::Borrowed(value),
+            host2: RylvStr::Borrowed(value),
+            a: RylvStr::Borrowed(value),
+            a_b: RylvStr::Borrowed(value),
+            dash: RylvStr::Borrowed(value),
+            dot: RylvStr::Borrowed(value),
+            slash: RylvStr::Borrowed(value),
         };
         tags.__with_sorted_tags(|actual| {
             let mut expected = [
@@ -52,10 +51,10 @@ fn derived_order_matches_rylv_tag_ord_for_dynamic_values() {
 
 #[derive(RylvTags)]
 struct Generic<'a, T> {
-    r#type: &'a str,
-    value: T,
+    r#type: RylvStr<'a>,
+    value: RylvStr<'a>,
     #[rylv(skip)]
-    ignored: usize,
+    ignored: T,
 }
 
 #[derive(RylvTags)]
@@ -64,8 +63,8 @@ struct Empty {}
 #[test]
 fn generics_raw_identifiers_skipped_fields_and_empty_structs_work() {
     let tags = Generic {
-        r#type: "kind",
-        value: String::from("hello"),
+        r#type: RylvStr::from_static("kind"),
+        value: RylvStr::from(String::from("hello")),
         ignored: 123,
     };
     assert_eq!(tags.ignored, 123);
@@ -78,32 +77,33 @@ fn generics_raw_identifiers_skipped_fields_and_empty_structs_work() {
 }
 
 #[test]
-fn all_supported_value_types_borrow_and_static_stays_static() {
-    let borrowed = String::from("borrowed");
-    let arc_str: Arc<str> = Arc::from("arc-str");
-    let arc_string = Arc::new(String::from("arc-string"));
-    let cow: Cow<'_, str> = Cow::Owned(String::from("cow"));
-    assert!(matches!(
-        RylvStr::from_static("static").__as_rylv_str(),
-        RylvStr::Static("static")
-    ));
-    for value in [
-        RylvStr::Borrowed("borrowed"),
-        RylvStr::from(String::from("borrowed")),
-        RylvStr::from(Arc::<str>::from("borrowed")),
-    ] {
-        assert!(matches!(
-            value.__as_rylv_str(),
-            RylvStr::Borrowed("borrowed")
-        ));
+fn derived_values_keep_static_and_borrow_dynamic() {
+    #[derive(RylvTags)]
+    struct Values<'a> {
+        static_value: RylvStr<'a>,
+        borrowed_value: RylvStr<'a>,
+        owned_value: RylvStr<'a>,
     }
-    assert_eq!((&"str").__as_rylv_str().as_ref(), "str");
-    assert_eq!(borrowed.__as_rylv_str().as_ref(), "borrowed");
-    assert_eq!(arc_str.__as_rylv_str().as_ref(), "arc-str");
-    assert_eq!(arc_string.__as_rylv_str().as_ref(), "arc-string");
-    assert_eq!(cow.__as_rylv_str().as_ref(), "cow");
-    let reference = &borrowed;
-    assert_eq!(RylvValue::__as_rylv_str(&reference).as_ref(), "borrowed");
+    let dynamic = String::from("dynamic");
+    let tags = Values {
+        static_value: RylvStr::from_static("prod"),
+        borrowed_value: RylvStr::Borrowed(&dynamic),
+        owned_value: RylvStr::from(String::from("owned")),
+    };
+    tags.__with_sorted_tags(|tags| {
+        assert!(matches!(
+            tags[0],
+            RylvTag::Compound(_, RylvStr::Borrowed("dynamic"))
+        ));
+        assert!(matches!(
+            tags[1],
+            RylvTag::Compound(_, RylvStr::Borrowed("owned"))
+        ));
+        assert!(matches!(
+            tags[2],
+            RylvTag::Compound(_, RylvStr::Static("prod"))
+        ));
+    });
 }
 
 #[cfg(any(feature = "shared-collector", feature = "tls-collector"))]
@@ -115,15 +115,15 @@ mod aggregation {
 
     #[derive(RylvTags)]
     struct RequestTags<'a> {
-        env: &'a str,
+        env: RylvStr<'a>,
         #[rylv(rename = "http.route")]
-        route: &'a str,
+        route: RylvStr<'a>,
     }
 
     fn check<C: DrainMetricCollectorTrait>(collector: C) {
         let tags = RequestTags {
-            env: "prod",
-            route: "/users",
+            env: RylvStr::from_static("prod"),
+            route: RylvStr::from_static("/users"),
         };
         let full = || {
             [
@@ -222,8 +222,8 @@ mod aggregation {
 
     fn rejected_values_preserve_error_semantics<C: DrainMetricCollectorTrait>(collector: C) {
         let tags = RequestTags {
-            env: "prod",
-            route: "/users",
+            env: RylvStr::from_static("prod"),
+            route: RylvStr::from_static("/users"),
         };
         assert!(collector
             .histogram_typed(RylvStr::from_static("histogram.error"), u64::MAX, &tags)

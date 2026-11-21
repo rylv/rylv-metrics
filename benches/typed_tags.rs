@@ -7,22 +7,22 @@ use std::time::Duration;
 
 #[derive(RylvTags)]
 struct Tags4<'a> {
-    a: &'a str,
-    b: &'a str,
-    c: &'a str,
-    d: &'a str,
+    a: RylvStr<'a>,
+    b: RylvStr<'a>,
+    c: RylvStr<'a>,
+    d: RylvStr<'a>,
 }
 
 #[derive(RylvTags)]
 struct Tags8<'a> {
-    a: &'a str,
-    b: &'a str,
-    c: &'a str,
-    d: &'a str,
-    e: &'a str,
-    f: &'a str,
-    g: &'a str,
-    h: &'a str,
+    a: RylvStr<'a>,
+    b: RylvStr<'a>,
+    c: RylvStr<'a>,
+    d: RylvStr<'a>,
+    e: RylvStr<'a>,
+    f: RylvStr<'a>,
+    g: RylvStr<'a>,
+    h: RylvStr<'a>,
 }
 
 fn make_tags<'a, const N: usize>(keys: &[&'static str; N], value: &'a str) -> [RylvTag<'a>; N] {
@@ -91,20 +91,20 @@ fn bench_set<C: MetricCollectorTrait, T: RylvTags, const N: usize>(
 fn benchmarks(criterion: &mut Criterion) {
     let value = String::from("dynamic-value");
     let tags4 = Tags4 {
-        a: &value,
-        b: &value,
-        c: &value,
-        d: &value,
+        a: RylvStr::Borrowed(&value),
+        b: RylvStr::Borrowed(&value),
+        c: RylvStr::Borrowed(&value),
+        d: RylvStr::Borrowed(&value),
     };
     let tags8 = Tags8 {
-        a: &value,
-        b: &value,
-        c: &value,
-        d: &value,
-        e: &value,
-        f: &value,
-        g: &value,
-        h: &value,
+        a: RylvStr::Borrowed(&value),
+        b: RylvStr::Borrowed(&value),
+        c: RylvStr::Borrowed(&value),
+        d: RylvStr::Borrowed(&value),
+        e: RylvStr::Borrowed(&value),
+        f: RylvStr::Borrowed(&value),
+        g: RylvStr::Borrowed(&value),
+        h: RylvStr::Borrowed(&value),
     };
     let shared = SharedCollector::default();
     let tls = TLSCollector::new(TLSCollectorOptions::default());

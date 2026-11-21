@@ -83,6 +83,7 @@ pub mod __private {
 
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 pub use dogstats::writer::StatsWriterTrait;
+pub use dogstats::RylvTags;
 pub use dogstats::{
     DrainMetricCollectorTrait, HistogramBaseMetric, HistogramConfig, MetricCollectorTrait,
     MetricDrain, MetricFrameRef, MetricKind, MetricSuffix, MetricValue, PreparedMetric, SortedTags,
@@ -92,7 +93,6 @@ pub use dogstats::{
     MetricCollector, MetricCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
 pub use dogstats::{RylvStr, RylvTag, SigFig};
-pub use dogstats::{RylvTags, RylvValue};
 #[cfg(feature = "shared-collector")]
 pub use dogstats::{SharedCollector, SharedCollectorOptions};
 #[cfg(feature = "tls-collector")]

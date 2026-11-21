@@ -15,14 +15,14 @@ use syn::{parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, 
 /// `#[rylv(skip)]` omits a field. `#[rylv(crate = "path")]` on the struct
 /// overrides the default `::rylv_metrics` path, for renamed dependencies.
 /// Keys must be unique and cannot be empty or contain `:`, `,`, `|`, `#`,
-/// whitespace, or line breaks. Values implement `RylvValue`.
+/// whitespace, or line breaks. Every non-skipped field must have type `RylvStr`.
 ///
 /// ```ignore
 /// #[derive(rylv_metrics::RylvTags)]
 /// struct Tags<'a> {
-///     env: &'a str,
+///     env: rylv_metrics::RylvStr<'a>,
 ///     #[rylv(rename = "http.route")]
-///     route: &'a str,
+///     route: rylv_metrics::RylvStr<'a>,
 /// }
 /// ```
 #[proc_macro_derive(RylvTags, attributes(rylv))]
@@ -125,7 +125,6 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
-    let mut generics = input.generics.clone();
     for field in &fields.named {
         let (rename, skip) = field_options(&field.attrs)?;
         if skip {
@@ -145,11 +144,6 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             return Err(syn::Error::new(span, format!("duplicate tag key `{key}`")));
         }
         let key_literal = LitStr::new(&key, span);
-        let ty = &field.ty;
-        generics
-            .make_where_clause()
-            .predicates
-            .push(parse_quote!(#ty: #path::RylvValue));
         entries.push((format!("{key}:"), ident.clone(), key_literal));
     }
     entries.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
@@ -157,12 +151,18 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         quote! {
             #path::RylvTag::Compound(
                 #path::RylvStr::Static(#key),
-                #path::RylvValue::__as_rylv_str(&self.#ident),
+                {
+                    let value: &#path::RylvStr<'_> = &self.#ident;
+                    match value {
+                        #path::RylvStr::Static(value) => #path::RylvStr::Static(*value),
+                        _ => #path::RylvStr::Borrowed(value.as_ref()),
+                    }
+                },
             )
         }
     });
     let name = &input.ident;
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics #path::__private::Sealed for #name #ty_generics #where_clause {}
