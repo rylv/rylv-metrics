@@ -1,3 +1,6 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::expect_used, clippy::unwrap_used, missing_docs)]
+
 use rylv_metrics::{
     histogram, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, SharedCollector,
     StatsWriterType,

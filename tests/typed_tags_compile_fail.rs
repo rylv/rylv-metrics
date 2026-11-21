@@ -1,3 +1,5 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(missing_docs)]
 #![cfg(feature = "derive")]
 
 #[test]

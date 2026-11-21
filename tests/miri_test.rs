@@ -1,3 +1,6 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::expect_used, clippy::panic, missing_docs)]
+
 #[cfg(feature = "shared-collector")]
 use rylv_metrics::{
     DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, MetricKind as FrameMetricKind,

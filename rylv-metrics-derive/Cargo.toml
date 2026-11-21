@@ -12,6 +12,9 @@ authors = ["Rylv"]
 keywords = ["metrics", "dogstatsd", "statsd", "derive", "telemetry"]
 categories = ["development-tools::profiling", "network-programming"]
 
+[lints]
+workspace = true
+
 [lib]
 proc-macro = true
 

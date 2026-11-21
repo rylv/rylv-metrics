@@ -1,3 +1,6 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(missing_docs)]
+
 use rylv_metrics::{MetricCollectorTrait, RylvStr, RylvTags, SharedCollector};
 
 #[derive(RylvTags)]

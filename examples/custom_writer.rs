@@ -2,6 +2,9 @@
 //!
 //! Run with: `cargo run --example custom_writer`
 
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use rylv_metrics::{
     MetricCollector, MetricCollectorOptions, MetricCollectorTrait, MetricKind, MetricResult,
     RylvStr, RylvTag, SharedCollector, SharedCollectorOptions, StatsWriterTrait, StatsWriterType,

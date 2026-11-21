@@ -1,3 +1,12 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(
+    clippy::elidable_lifetime_names,
+    clippy::expect_used,
+    clippy::needless_pass_by_value,
+    clippy::struct_field_names,
+    clippy::unwrap_used,
+    missing_docs
+)]
 #![cfg(feature = "derive")]
 
 use proptest::prelude::*;

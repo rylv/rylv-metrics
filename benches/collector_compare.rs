@@ -1,3 +1,10 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(
+    clippy::option_if_let_else,
+    clippy::redundant_closure_for_method_calls,
+    missing_docs
+)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rylv_metrics::{
     MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag, SharedCollector,

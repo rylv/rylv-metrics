@@ -1,9 +1,5 @@
 //! Derive support for compile-time ordered `rylv-metrics` tags.
 
-#![deny(missing_docs)]
-#![deny(clippy::pedantic, clippy::nursery, clippy::cargo)]
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashSet;

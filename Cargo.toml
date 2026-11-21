@@ -17,8 +17,25 @@ exclude = [".github/", "fuzz/", "Makefile", ".gitignore"]
 members = ["rylv-metrics-derive"]
 exclude = ["fuzz"]
 
-[lints.rust]
+[workspace.lints.rust]
+missing_docs = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["rlib"]
