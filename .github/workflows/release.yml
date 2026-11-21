@@ -20,7 +20,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.90.0"
           components: clippy, rustfmt
 
       - name: Cache cargo registry
@@ -93,11 +93,8 @@ jobs:
         with:
           feature-group: all-features
 
-      # The root crate cannot be packaged against crates.io until the derive
-      # crate exists there. Verify the workspace above and package the derive
-      # crate here; verify the root package after publishing its dependency.
-      - name: Dry-run derive publish
-        run: cargo publish -p rylv-metrics-derive --dry-run
+      - name: Dry-run workspace publish
+        run: cargo publish --workspace --dry-run --all-features
 
   publish:
     name: Publish to crates.io
@@ -112,7 +109,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.90.0"
 
       - name: Publish crates in dependency order
         env:
@@ -126,6 +123,7 @@ jobs:
           import urllib.request
           from pathlib import Path
 
+          packages = []
           for manifest in [Path('rylv-metrics-derive/Cargo.toml'), Path('Cargo.toml')]:
               package = tomllib.loads(manifest.read_text())['package']
               name, version = package['name'], package['version']
@@ -144,9 +142,10 @@ jobs:
                       raise RuntimeError(f'{name}@{version} is yanked; choose a new version')
                   print(f'{name}@{version} already published; skipping', flush=True)
                   continue
-              subprocess.run(['cargo', 'publish', '-p', name, '--dry-run', '--all-features'], check=True)
-              # Cargo waits for the new version to appear in the registry index.
-              subprocess.run(['cargo', 'publish', '-p', name], check=True)
+              packages.extend(['-p', name])
+          if packages:
+              # Cargo validates all selected packages and publishes in dependency order.
+              subprocess.run(['cargo', 'publish', *packages, '--all-features'], check=True)
           PYTHON
 
   github-release:

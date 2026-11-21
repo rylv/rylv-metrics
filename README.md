@@ -21,11 +21,13 @@ A high-performance DogStatsD metrics client for Rust with support for client-sid
 
 ## Installation
 
+Requires Rust 1.90 or newer.
+
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rylv-metrics = "0.4.0"
+rylv-metrics = "0.6.0"
 ```
 
 Default build enables no transport or collector backend features.
@@ -33,7 +35,7 @@ Enable the APIs you want explicitly. For example, UDP sending with a inner colle
 
 ```toml
 [dependencies]
-rylv-metrics = { version = "0.4.0", features = ["udp", "shared-collector"] }
+rylv-metrics = { version = "0.6.0", features = ["udp", "shared-collector"] }
 ```
 
 ## Quick Start
@@ -110,7 +112,7 @@ collector.count_add_sorted(RylvStr::from_static("requests.total"), 1, &tags);
 Enable the optional `derive` feature alongside a collector feature:
 
 ```toml
-rylv-metrics = { version = "0.5", features = ["derive", "shared-collector"] }
+rylv-metrics = { version = "0.6", features = ["derive", "shared-collector"] }
 ```
 
 ```rust
@@ -348,4 +350,4 @@ Before publishing, run:
 make prepare-publish
 ```
 
-This verifies the workspace, lists both packages, runs release tests, and dry-runs publishing `rylv-metrics-derive`. The release workflow publishes the derive crate first, then dry-runs and publishes `rylv-metrics` once its dependency is available on crates.io. Re-running a partially completed release skips versions that are already published.
+This requires Rust 1.90 or newer. It verifies the workspace, lists both packages, runs release tests, and dry-runs publishing the entire workspace with all features. Cargo validates both packages before publishing them in dependency order. Re-running a partially completed release skips versions that are already published.

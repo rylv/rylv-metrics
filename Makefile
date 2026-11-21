@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-RUST_IMAGE ?= rust:1.88.0
+RUST_IMAGE ?= rust:1.90.0
 DOCKER_TARGET_DIR ?= $(PWD)/target-docker
 DOCKER_RUN = docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(DOCKER_TARGET_DIR):/app/target -e CARGO_TARGET_DIR=/app/target -w /app $(RUST_IMAGE)
 THREAD_LOCAL_BENCH_FEATURES = udp tls-collector custom_writer shared-collector
@@ -408,5 +408,5 @@ prepare-publish:
 	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 	@echo "=> Running release tests"
 	@cargo test --workspace --release --all-features
-	@echo "=> Dry-run derive publish (root packaging follows dependency publication in release CI)"
-	@cargo publish -p rylv-metrics-derive --dry-run
+	@echo "=> Dry-run workspace publish"
+	@cargo publish --workspace --dry-run --all-features
