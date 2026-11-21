@@ -165,8 +165,6 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics #path::__private::Sealed for #name #ty_generics #where_clause {}
-        #[automatically_derived]
         impl #impl_generics #path::RylvTags for #name #ty_generics #where_clause {
             #[inline]
             fn __with_sorted_tags<R>(&self, f: impl FnOnce(&mut [#path::RylvTag<'_>]) -> R) -> R {
