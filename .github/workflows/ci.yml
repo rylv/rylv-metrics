@@ -454,14 +454,15 @@ jobs:
       - name: Run benchmarks on base branch
         run: |
           cd ../bench-base
+          # Override each worktree's rust-toolchain.toml for a fair comparison.
           CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
-            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
+            cargo +1.90.0 bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
 
       - name: Run benchmarks on PR branch
         run: |
           cd ../bench-pr
           CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
-            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
+            cargo +1.90.0 bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
 
       - name: Compare benchmarks
         env:
