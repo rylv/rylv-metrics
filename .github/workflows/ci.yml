@@ -45,6 +45,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Quint Rust evaluator
+        run: |
+          archive="$RUNNER_TEMP/quint_evaluator.tar.gz"
+          evaluator_dir="$HOME/.quint/rust-evaluator-v0.7.0"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "$archive" \
+            'https://github.com/quint-co/quint/releases/download/evaluator%2Fv0.7.0/quint_evaluator-x86_64-unknown-linux-gnu.tar.gz'
+          echo "869adb8762a518483eb39f67fde622253a58527494e15afe77d610a0b6dab7d2  $archive" | sha256sum --check -
+          mkdir -p "$evaluator_dir"
+          tar -xzf "$archive" -C "$evaluator_dir"
+          chmod +x "$evaluator_dir/quint_evaluator"
+
       - name: Check Quint model and replay traces
         run: make quint-conformance
 
