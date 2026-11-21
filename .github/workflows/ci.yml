@@ -397,6 +397,9 @@ jobs:
       - name: Run doctests
         run: cargo test --doc --workspace --all-features
 
+      - name: Run doctests with derive only
+        run: cargo test --doc --no-default-features --features derive
+
   bench:
     name: Benchmark regression check
     runs-on: ubuntu-latest

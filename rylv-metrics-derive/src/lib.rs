@@ -163,12 +163,20 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     });
     let count = entries.len();
     let name = &input.ident;
+    let mut guard_lifetime = syn::Lifetime::new("'__rylv_guard", proc_macro2::Span::call_site());
+    while input
+        .generics
+        .lifetimes()
+        .any(|parameter| parameter.lifetime.ident == guard_lifetime.ident)
+    {
+        guard_lifetime.ident = quote::format_ident!("{}_", guard_lifetime.ident);
+    }
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics #path::RylvTags for #name #ty_generics #where_clause {
-            type Guard<'__rylv_guard> = #path::RylvTagsGuard<'__rylv_guard, #count>
-                where Self: '__rylv_guard;
+            type Guard<#guard_lifetime> = #path::RylvTagsGuard<#guard_lifetime, #count>
+                where Self: #guard_lifetime;
 
             #[inline]
             fn sorted_tags(&self) -> Self::Guard<'_> {

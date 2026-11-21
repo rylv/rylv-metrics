@@ -348,4 +348,4 @@ Before publishing, run:
 make prepare-publish
 ```
 
-This runs verification, package/doc checks, release tests, and `cargo publish --dry-run`.
+This verifies the workspace, lists both packages, runs release tests, and dry-runs publishing `rylv-metrics-derive`. The release workflow publishes the derive crate first, then dry-runs and publishes `rylv-metrics` once its dependency is available on crates.io. Re-running a partially completed release skips versions that are already published.

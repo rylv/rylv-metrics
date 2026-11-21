@@ -140,6 +140,31 @@ struct Generic<'a, T> {
 struct Empty {}
 
 #[test]
+fn generated_guard_lifetime_avoids_existing_parameters() {
+    #[derive(RylvTags)]
+    struct Tags<'__rylv_guard, '__rylv_guard_, '__rylv_guard__> {
+        first: RylvStr<'__rylv_guard>,
+        second: RylvStr<'__rylv_guard_>,
+        third: RylvStr<'__rylv_guard__>,
+    }
+    let value = String::from("dynamic");
+    let tags = Tags {
+        first: RylvStr::Borrowed(&value),
+        second: RylvStr::Borrowed(&value),
+        third: RylvStr::Borrowed(&value),
+    };
+    let guard = tags.sorted_tags();
+    assert_eq!(
+        guard.as_ref(),
+        &[
+            RylvTag::from_static("first:dynamic"),
+            RylvTag::from_static("second:dynamic"),
+            RylvTag::from_static("third:dynamic"),
+        ]
+    );
+}
+
+#[test]
 fn generics_raw_identifiers_skipped_fields_and_empty_structs_work() {
     let tags = Generic {
         r#type: RylvStr::from_static("kind"),

@@ -403,10 +403,10 @@ prepare-publish:
 	@echo "=> Preparing for cargo publish"
 	@$(MAKE) verify
 	@echo "=> Checking package contents"
-	@cargo package --list
+	@cargo package --workspace --list
 	@echo "=> Building docs with warnings as errors"
-	@RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 	@echo "=> Running release tests"
-	@cargo test --release --all-features
-	@echo "=> Running cargo publish dry-run"
-	@cargo publish --dry-run
+	@cargo test --workspace --release --all-features
+	@echo "=> Dry-run derive publish (root packaging follows dependency publication in release CI)"
+	@cargo publish -p rylv-metrics-derive --dry-run

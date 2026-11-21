@@ -22,7 +22,7 @@ use crate::RylvTag;
 /// aggregation series.
 ///
 /// ```
-/// # #[cfg(feature = "derive")] {
+/// # #[cfg(all(feature = "derive", feature = "shared-collector"))] {
 /// use rylv_metrics::{MetricCollectorTrait, RylvStr, RylvTags, SharedCollector};
 /// #[derive(RylvTags)]
 /// struct Tags<'a> { env: RylvStr<'a> }

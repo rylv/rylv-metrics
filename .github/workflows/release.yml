@@ -52,21 +52,21 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-features --verbose
+        run: cargo test --workspace --all-features --verbose
 
       - name: Run release tests
-        run: cargo test --release --all-features --verbose
+        run: cargo test --workspace --release --all-features --verbose
 
       - name: Build documentation
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: "-D warnings"
 
       - name: List package contents
-        run: cargo package --list
+        run: cargo package --workspace --list
 
       - name: Determine whether semver checks apply
         id: semver_scope
@@ -93,8 +93,11 @@ jobs:
         with:
           feature-group: all-features
 
-      - name: Dry-run publish
-        run: cargo publish --dry-run
+      # The root crate cannot be packaged against crates.io until the derive
+      # crate exists there. Verify the workspace above and package the derive
+      # crate here; verify the root package after publishing its dependency.
+      - name: Dry-run derive publish
+        run: cargo publish -p rylv-metrics-derive --dry-run
 
   publish:
     name: Publish to crates.io
@@ -111,10 +114,40 @@ jobs:
         with:
           toolchain: "1.88.0"
 
-      - name: Publish
-        run: cargo publish
+      - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import subprocess
+          import tomllib
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          for manifest in [Path('rylv-metrics-derive/Cargo.toml'), Path('Cargo.toml')]:
+              package = tomllib.loads(manifest.read_text())['package']
+              name, version = package['name'], package['version']
+              request = urllib.request.Request(
+                  f'https://crates.io/api/v1/crates/{name}/{version}',
+                  headers={'User-Agent': 'rylv-metrics-release'},
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      published = json.load(response)['version']
+              except urllib.error.HTTPError as error:
+                  if error.code != 404:
+                      raise
+              else:
+                  if published['yanked']:
+                      raise RuntimeError(f'{name}@{version} is yanked; choose a new version')
+                  print(f'{name}@{version} already published; skipping', flush=True)
+                  continue
+              subprocess.run(['cargo', 'publish', '-p', name, '--dry-run', '--all-features'], check=True)
+              # Cargo waits for the new version to appear in the registry index.
+              subprocess.run(['cargo', 'publish', '-p', name], check=True)
+          PYTHON
 
   github-release:
     name: Create GitHub Release
