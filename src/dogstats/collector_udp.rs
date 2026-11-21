@@ -10,7 +10,7 @@ use std::{
 use crate::MetricsError;
 use crate::{
     dogstats::writer::StatsWriterHolder, MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag,
-    SortedTags,
+    RylvTags, SortedTags,
 };
 
 #[cfg(feature = "custom_writer")]
@@ -188,6 +188,46 @@ where
     type Hasher = MC::Hasher;
 
     #[inline]
+    fn histogram_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        self.inner.histogram_typed(metric, value, tags)
+    }
+
+    #[inline]
+    fn timing_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        self.inner.timing_typed(metric, value, tags)
+    }
+
+    #[inline]
+    fn count_add_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        self.inner.count_add_typed(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_avg_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        self.inner.gauge_avg_typed(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        self.inner.gauge_typed(metric, value, tags);
+    }
+
+    #[inline]
+    fn count_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, tags: &T) {
+        self.inner.count_typed(metric, tags);
+    }
+
+    #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
@@ -328,6 +368,8 @@ mod tests {
     use crate::MetricResult;
     #[cfg(target_vendor = "apple")]
     use crate::MetricsError;
+    #[cfg(feature = "derive")]
+    use crate::RylvTags;
     use crate::{MetricCollectorTrait, PreparedMetric, RylvStr, RylvTag, SortedTags};
     use crossbeam::channel::unbounded;
     use std::hash::BuildHasher;
@@ -378,6 +420,16 @@ mod tests {
             TT: AsMut<[RylvTag<'t>]>,
         {
             self.record(format!("count_add:{}:{value}", metric.as_ref()));
+        }
+
+        #[cfg(feature = "derive")]
+        fn count_add_typed<T: RylvTags + ?Sized>(
+            &self,
+            metric: RylvStr<'_>,
+            value: i64,
+            _tags: &T,
+        ) {
+            self.record(format!("count_add_typed:{}:{value}", metric.as_ref()));
         }
 
         fn gauge_avg<'m, 't, TT>(&self, metric: RylvStr<'m>, value: i64, _tags: TT)
@@ -641,6 +693,28 @@ mod tests {
                 "histogram_prepared:prepared:8".to_string(),
                 "timing_prepared:prepared:15".to_string(),
             ]
+        );
+    }
+
+    #[cfg(feature = "derive")]
+    #[test]
+    fn typed_method_forwards_to_inner_override_and_default_method_works() {
+        #[derive(crate::RylvTags)]
+        #[rylv(crate = "crate")]
+        struct Tags {
+            env: RylvStr<'static>,
+        }
+
+        let inner = Arc::new(FakeInner::default());
+        let collector = collector_with_inner(Arc::clone(&inner));
+        let tags = Tags {
+            env: RylvStr::from_static("test"),
+        };
+        collector.count_add_typed(RylvStr::from_static("requests"), 7, &tags);
+        inner.gauge_avg_typed(RylvStr::from_static("load"), 9, &tags);
+        assert_eq!(
+            inner.take_calls(),
+            ["count_add_typed:requests:7", "gauge_avg:load:9"]
         );
     }
 

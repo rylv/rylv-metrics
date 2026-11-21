@@ -1,3 +1,10 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(
+    clippy::expect_used,
+    clippy::needless_pass_by_value,
+    clippy::panic,
+    missing_docs
+)]
 #![cfg(any(feature = "shared-collector", feature = "tls-collector"))]
 
 use rylv_metrics::{

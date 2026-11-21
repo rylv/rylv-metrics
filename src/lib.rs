@@ -49,20 +49,8 @@
 
 // #![deny(unsafe_code)]
 #![cfg_attr(kani, feature(stmt_expr_attributes, proc_macro_hygiene))]
-#![deny(clippy::unwrap_used)]
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unreachable)]
-#![deny(clippy::todo)]
-#![deny(clippy::unimplemented)]
-#![deny(clippy::pedantic)]
-#![deny(clippy::nursery)]
-// Disabled because it reports false duplicate-crate errors from dev-dependencies
-#![deny(clippy::cargo)]
+// Dev-dependencies can introduce multiple versions of the same crate.
 #![allow(clippy::multiple_crate_versions)]
-#![deny(missing_docs)]
-#![deny(clippy::missing_errors_doc)]
-#![deny(clippy::missing_panics_doc)]
 #![allow(clippy::module_name_repetitions)]
 #![cfg_attr(test, allow(clippy::unreachable))]
 #![cfg_attr(test, allow(clippy::unimplemented))]
@@ -85,11 +73,14 @@ pub use dogstats::{
     MetricCollector, MetricCollectorOptions, StatsWriterType, DEFAULT_STATS_WRITER_TYPE,
 };
 pub use dogstats::{RylvStr, RylvTag, SigFig};
+pub use dogstats::{RylvTags, RylvTagsGuard};
 #[cfg(feature = "shared-collector")]
 pub use dogstats::{SharedCollector, SharedCollectorOptions};
 #[cfg(feature = "tls-collector")]
 pub use dogstats::{TLSCollector, TLSCollectorOptions};
 pub use error::MetricsError;
+#[cfg(feature = "derive")]
+pub use rylv_metrics_derive::RylvTags;
 
 /// Result type for metric operations.
 ///

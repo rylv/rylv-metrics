@@ -4,7 +4,7 @@ use crate::MetricResult;
 
 use crate::dogstats::RylvStr;
 use crate::dogstats::RylvTag;
-use crate::dogstats::{PreparedMetric, SortedTags};
+use crate::dogstats::{PreparedMetric, RylvTags, SortedTags};
 
 #[cfg(feature = "shared-collector")]
 mod shared_collector;
@@ -25,6 +25,58 @@ pub use tls_collector::{TLSCollector, TLSCollectorOptions};
 pub trait MetricCollectorTrait {
     /// The hasher used to produce [`PreparedMetric`] keys.
     type Hasher: BuildHasher + Clone;
+
+    /// Records a histogram with a compile-time ordered tag set.
+    ///
+    /// # Errors
+    /// Returns the same recording error as [`Self::histogram`].
+    #[inline]
+    fn histogram_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        self.histogram(metric, value, tags.sorted_tags())
+    }
+
+    /// Increments a counter by one with a compile-time ordered tag set.
+    #[inline]
+    fn count_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, tags: &T) {
+        self.count_add_typed(metric, 1, tags);
+    }
+
+    /// Adds a signed value to a counter with a compile-time ordered tag set.
+    #[inline]
+    fn count_add_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        self.count_add(metric, value, tags.sorted_tags());
+    }
+
+    /// Records an averaged gauge with a compile-time ordered tag set.
+    #[inline]
+    fn gauge_avg_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        self.gauge_avg(metric, value, tags.sorted_tags());
+    }
+
+    /// Records a last-write-wins gauge with a compile-time ordered tag set.
+    #[inline]
+    fn gauge_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        self.gauge(metric, value, tags.sorted_tags());
+    }
+
+    /// Records a timing with a compile-time ordered tag set.
+    ///
+    /// # Errors
+    /// Returns the same recording error as [`Self::timing`].
+    #[inline]
+    fn timing_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        self.timing(metric, value, tags.sorted_tags())
+    }
 
     /// Records a histogram value for distribution tracking.
     ///

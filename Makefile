@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-RUST_IMAGE ?= rust:1.88.0
+RUST_IMAGE ?= rust:1.90.0
 DOCKER_TARGET_DIR ?= $(PWD)/target-docker
 DOCKER_RUN = docker run --rm -v $(PWD):/app -v $(HOME)/.cargo/registry:/usr/local/cargo/registry -v $(HOME)/.cargo/git:/usr/local/cargo/git -v $(DOCKER_TARGET_DIR):/app/target -e CARGO_TARGET_DIR=/app/target -w /app $(RUST_IMAGE)
 THREAD_LOCAL_BENCH_FEATURES = udp tls-collector custom_writer shared-collector
@@ -10,7 +10,7 @@ SYNC_TLS_BENCH_FEATURES = udp tls-collector shared-collector
 help:
 	@echo "Available targets:"
 	@echo "  check              Run cargo check for all features and targets"
-	@echo "  test               Run cargo test --all-features"
+	@echo "  test               Run cargo test --workspace --all-features"
 	@echo "  test-default       Run cargo test with default feature set"
 	@echo "  quint-check        Check SharedCollector and TLSCollector models"
 	@echo "  quint-conformance  Replay Quint traces against both collectors"
@@ -30,12 +30,12 @@ clean:
 .PHONY: check
 check:
 	@echo "=> Running cargo check (all features, all targets)"
-	@cargo check --all-features --all-targets
+	@cargo check --workspace --all-features --all-targets
 
 .PHONY: clippy
 clippy:
 	@echo "=> Executing cargo clippy"
-	@cargo clippy --all-features --color auto --all-targets -- -D warnings
+	@cargo clippy --workspace --all-features --color auto --all-targets -- -D warnings
 
 .PHONY: fmt
 fmt:
@@ -50,7 +50,7 @@ fmt-check:
 .PHONY: test
 test:
 	@echo "=> Running tests (all features)"
-	@cargo test --all-features
+	@cargo test --workspace --all-features
 
 .PHONY: test-default
 test-default:
@@ -60,7 +60,7 @@ test-default:
 .PHONY: doctest
 doctest:
 	@echo "=> Running doctests"
-	@cargo test --doc --all-features
+	@cargo test --doc --workspace --all-features
 
 .PHONY: quint-check
 quint-check:
@@ -140,15 +140,15 @@ docker-build:
 
 .PHONY: docker-check
 docker-check:
-	$(DOCKER_RUN) cargo check --all-features --all-targets
+	$(DOCKER_RUN) cargo check --workspace --all-features --all-targets
 
 .PHONY: docker-test
 docker-test:
-	$(DOCKER_RUN) cargo test --all-features
+	$(DOCKER_RUN) cargo test --workspace --all-features
 
 .PHONY: docker-ci
 docker-ci:
-	$(DOCKER_RUN) sh -c "cargo check --all-features --all-targets && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features && cargo test --doc --all-features"
+	$(DOCKER_RUN) sh -c "cargo check --workspace --all-features --all-targets && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && cargo test --doc --workspace --all-features"
 
 .PHONY: coverage
 coverage:
@@ -403,10 +403,10 @@ prepare-publish:
 	@echo "=> Preparing for cargo publish"
 	@$(MAKE) verify
 	@echo "=> Checking package contents"
-	@cargo package --list
+	@cargo package --workspace --list
 	@echo "=> Building docs with warnings as errors"
-	@RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+	@RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 	@echo "=> Running release tests"
-	@cargo test --release --all-features
-	@echo "=> Running cargo publish dry-run"
-	@cargo publish --dry-run
+	@cargo test --workspace --release --all-features
+	@echo "=> Dry-run workspace publish"
+	@cargo publish --workspace --dry-run --all-features

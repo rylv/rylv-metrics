@@ -2,6 +2,9 @@
 //!
 //! Run with: `cargo run --example multithreaded`
 
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::doc_markdown, clippy::expect_used, clippy::unwrap_used)]
+
 use rylv_metrics::{
     count, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag,
     SharedCollector, SharedCollectorOptions, StatsWriterType,

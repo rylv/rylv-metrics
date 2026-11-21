@@ -45,6 +45,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Quint Rust evaluator
+        run: |
+          archive="$RUNNER_TEMP/quint_evaluator.tar.gz"
+          evaluator_dir="$HOME/.quint/rust-evaluator-v0.7.0"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "$archive" \
+            'https://github.com/quint-co/quint/releases/download/evaluator%2Fv0.7.0/quint_evaluator-x86_64-unknown-linux-gnu.tar.gz'
+          echo "869adb8762a518483eb39f67fde622253a58527494e15afe77d610a0b6dab7d2  $archive" | sha256sum --check -
+          mkdir -p "$evaluator_dir"
+          tar -xzf "$archive" -C "$evaluator_dir"
+          chmod +x "$evaluator_dir/quint_evaluator"
+
       - name: Check Quint model and replay traces
         run: make quint-conformance
 
@@ -55,7 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        rust: ["1.88.0"]
+        rust: ["1.90.0"]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -102,7 +114,7 @@ jobs:
         run: cargo check --verbose
 
       - name: Run cargo check (all features, all targets)
-        run: cargo check --all-features --all-targets --verbose
+        run: cargo check --workspace --all-features --all-targets --verbose
 
       - name: Run cargo build
         run: cargo build --verbose
@@ -111,7 +123,7 @@ jobs:
         run: cargo test --verbose
 
       - name: Run cargo test (all features)
-        run: cargo test --all-features --verbose
+        run: cargo test --workspace --all-features --verbose
 
       - name: Run cargo test (no default features)
         run: cargo test --no-default-features --verbose
@@ -131,7 +143,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.90.0"
           components: clippy
 
       - name: Cache cargo registry
@@ -153,7 +165,7 @@ jobs:
           key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   semver:
     name: Semver checks
@@ -342,7 +354,7 @@ jobs:
         run: cargo +stable deny check
 
   msrv:
-    name: MSRV (1.88.0) on ${{ matrix.os }}
+    name: MSRV (1.90.0) on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -353,10 +365,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.88.0
+      - name: Install Rust 1.90.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.90.0"
 
       - name: Run cargo check
         run: cargo check --verbose
@@ -375,7 +387,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.90.0"
 
       - name: Build documentation
         run: cargo doc --no-deps --all-features
@@ -383,7 +395,10 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
 
       - name: Run doctests
-        run: cargo test --doc --all-features
+        run: cargo test --doc --workspace --all-features
+
+      - name: Run doctests with derive only
+        run: cargo test --doc --no-default-features --features derive
 
   bench:
     name: Benchmark regression check
@@ -397,7 +412,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.90.0"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -439,14 +454,15 @@ jobs:
       - name: Run benchmarks on base branch
         run: |
           cd ../bench-base
+          # Override each worktree's rust-toolchain.toml for a fair comparison.
           CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
-            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
+            cargo +1.90.0 bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline base
 
       - name: Run benchmarks on PR branch
         run: |
           cd ../bench-pr
           CARGO_TARGET_DIR="${{ github.workspace }}/target-bench" \
-            cargo bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
+            cargo +1.90.0 bench --bench collector_compare --features "tls-collector shared-collector" -- --save-baseline pr
 
       - name: Compare benchmarks
         env:
@@ -481,7 +497,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.90.0"
           components: rustfmt
 
       - name: Check formatting

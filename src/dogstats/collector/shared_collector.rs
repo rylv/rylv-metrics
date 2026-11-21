@@ -14,7 +14,7 @@ use crate::dogstats::histogram_config::{
     ResolvedHistogramConfigs,
 };
 use crate::dogstats::sorted_tags::{combine_metric_tags_hash, hash_tags, PreparedMetric};
-use crate::dogstats::{Aggregator, RylvStr, RylvTag, SortedTags};
+use crate::dogstats::{Aggregator, RylvStr, RylvTag, RylvTags, SortedTags};
 use crate::error::histogram_record_error;
 use crate::{DefaultMetricHasher, MetricResult};
 use arc_swap::ArcSwap;
@@ -1094,6 +1094,72 @@ where
     type Hasher = S;
 
     #[inline]
+    fn histogram_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_histogram_in_aggregator_presorted(
+            &aggregator,
+            &self.histogram_configs,
+            &self.default_histogram_config,
+            metric,
+            value,
+            guard.as_mut(),
+        )
+        .map_err(histogram_record_error)
+    }
+
+    #[inline]
+    fn timing_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_timing_in_aggregator_presorted(
+            &aggregator,
+            &self.histogram_configs,
+            &self.default_histogram_config,
+            metric,
+            value,
+            guard.as_mut(),
+        )
+        .map_err(histogram_record_error)
+    }
+
+    #[inline]
+    fn count_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, tags: &T) {
+        self.count_add_typed(metric, 1, tags);
+    }
+
+    #[inline]
+    fn count_add_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_count_add_in_aggregator_presorted(&aggregator, metric, value, guard.as_mut());
+    }
+
+    #[inline]
+    fn gauge_avg_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_gauge_in_aggregator_presorted(&aggregator, metric, value, guard.as_mut());
+    }
+
+    #[inline]
+    fn gauge_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        let mut guard = tags.sorted_tags();
+        let aggregator = self.current_aggregator.load();
+        record_gauge_last_in_aggregator_presorted(&aggregator, metric, value, guard.as_mut());
+    }
+
+    #[inline]
     fn histogram<'m, 't, TT>(
         &self,
         metric: RylvStr<'m>,
@@ -1291,6 +1357,46 @@ where
     type Hasher = S;
 
     #[inline]
+    fn histogram_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        (*self).histogram_typed(metric, value, tags)
+    }
+
+    #[inline]
+    fn timing_typed<T: RylvTags + ?Sized>(
+        &self,
+        metric: RylvStr<'_>,
+        value: u64,
+        tags: &T,
+    ) -> MetricResult<()> {
+        (*self).timing_typed(metric, value, tags)
+    }
+
+    #[inline]
+    fn count_add_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        (*self).count_add_typed(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_avg_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        (*self).gauge_avg_typed(metric, value, tags);
+    }
+
+    #[inline]
+    fn gauge_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, value: i64, tags: &T) {
+        (*self).gauge_typed(metric, value, tags);
+    }
+
+    #[inline]
+    fn count_typed<T: RylvTags + ?Sized>(&self, metric: RylvStr<'_>, tags: &T) {
+        (*self).count_typed(metric, tags);
+    }
+
+    #[inline]
     fn histogram<'m, 't, TT>(&self, metric: RylvStr<'m>, value: u64, tags: TT) -> MetricResult<()>
     where
         TT: AsMut<[RylvTag<'t>]>,
@@ -1466,9 +1572,31 @@ where
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
+    record_histogram_in_aggregator_presorted(
+        aggregator,
+        histogram_configs,
+        default_histogram_config,
+        metric,
+        value,
+        mut_tags,
+    )
+}
+
+fn record_histogram_in_aggregator_presorted<S>(
+    aggregator: &Aggregator<S>,
+    histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
+    default_histogram_config: &ResolvedHistogramConfig,
+    metric: RylvStr<'_>,
+    value: u64,
+    tags: &[RylvTag<'_>],
+) -> Result<(), RecordError>
+where
+    S: BuildHasher + Clone,
+{
+    debug_assert!(tags.is_sorted());
 
     let hashmap = &aggregator.histograms;
-    let lookup_key = build_lookup_key(metric, mut_tags, hashmap);
+    let lookup_key = build_lookup_key(metric, tags, hashmap);
 
     #[allow(clippy::cast_possible_truncation)]
     let shard = hashmap.determine_shard(lookup_key.hash as usize);
@@ -1643,9 +1771,31 @@ where
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
+    record_timing_in_aggregator_presorted(
+        aggregator,
+        histogram_configs,
+        default_histogram_config,
+        metric,
+        value,
+        mut_tags,
+    )
+}
+
+fn record_timing_in_aggregator_presorted<S>(
+    aggregator: &Aggregator<S>,
+    histogram_configs: &HashMap<String, ResolvedHistogramConfig, S>,
+    default_histogram_config: &ResolvedHistogramConfig,
+    metric: RylvStr<'_>,
+    value: u64,
+    tags: &[RylvTag<'_>],
+) -> Result<(), RecordError>
+where
+    S: BuildHasher + Clone,
+{
+    debug_assert!(tags.is_sorted());
 
     let hashmap = &aggregator.timings;
-    let lookup_key = build_lookup_key(metric, mut_tags, hashmap);
+    let lookup_key = build_lookup_key(metric, tags, hashmap);
 
     #[allow(clippy::cast_possible_truncation)]
     let shard = hashmap.determine_shard(lookup_key.hash as usize);
@@ -1832,9 +1982,21 @@ fn record_count_add_in_aggregator<S>(
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
+    record_count_add_in_aggregator_presorted(aggregator, metric, value, mut_tags);
+}
+
+fn record_count_add_in_aggregator_presorted<S>(
+    aggregator: &Aggregator<S>,
+    metric: RylvStr<'_>,
+    value: i64,
+    tags: &[RylvTag<'_>],
+) where
+    S: BuildHasher + Clone,
+{
+    debug_assert!(tags.is_sorted());
     let _ = add_or_insert_entry_read_first(
         metric,
-        mut_tags,
+        tags,
         value,
         &aggregator.count,
         |v, value| {
@@ -1894,9 +2056,21 @@ fn record_gauge_in_aggregator<S>(
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
+    record_gauge_in_aggregator_presorted(aggregator, metric, value, mut_tags);
+}
+
+fn record_gauge_in_aggregator_presorted<S>(
+    aggregator: &Aggregator<S>,
+    metric: RylvStr<'_>,
+    value: i64,
+    tags: &[RylvTag<'_>],
+) where
+    S: BuildHasher + Clone,
+{
+    debug_assert!(tags.is_sorted());
     let _ = add_or_insert_entry_read_first(
         metric,
-        mut_tags,
+        tags,
         value,
         &aggregator.gauge,
         |v, value| {
@@ -1959,9 +2133,21 @@ fn record_gauge_last_in_aggregator<S>(
     S: BuildHasher + Clone,
 {
     mut_tags.sort_unstable();
+    record_gauge_last_in_aggregator_presorted(aggregator, metric, value, mut_tags);
+}
+
+fn record_gauge_last_in_aggregator_presorted<S>(
+    aggregator: &Aggregator<S>,
+    metric: RylvStr<'_>,
+    value: i64,
+    tags: &[RylvTag<'_>],
+) where
+    S: BuildHasher + Clone,
+{
+    debug_assert!(tags.is_sorted());
     let _ = add_or_insert_entry_read_first(
         metric,
-        mut_tags,
+        tags,
         value,
         &aggregator.gauge_last,
         |v, value| {

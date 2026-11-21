@@ -2,6 +2,9 @@
 //!
 //! Run with: `cargo run --example gauges`
 
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use rylv_metrics::{
     gauge_avg, MetricCollector, MetricCollectorOptions, MetricCollectorTrait, RylvStr, RylvTag,
     SharedCollector, SharedCollectorOptions, StatsWriterType,

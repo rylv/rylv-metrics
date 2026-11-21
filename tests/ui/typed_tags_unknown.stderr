@@ -1,0 +1,5 @@
+error: unknown field-level `rylv` attribute
+ --> tests/ui/typed_tags_unknown.rs:5:12
+  |
+5 |     #[rylv(unknown)]
+  |            ^^^^^^^

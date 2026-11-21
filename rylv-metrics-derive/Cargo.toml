@@ -1,0 +1,24 @@
+[package]
+name = "rylv-metrics-derive"
+version = "0.6.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Derive macro for compile-time ordered rylv-metrics tags"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rylv/rylv-metrics"
+documentation = "https://docs.rs/rylv-metrics-derive"
+readme = "README.md"
+authors = ["Rylv"]
+keywords = ["metrics", "dogstatsd", "statsd", "derive", "telemetry"]
+categories = ["development-tools::profiling", "network-programming"]
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", default-features = false, features = ["derive", "parsing", "printing", "proc-macro"] }
+quote = "1"
+proc-macro2 = "1"

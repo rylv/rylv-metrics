@@ -7,6 +7,9 @@
 //! one key, which is the worst case for the spinlock (distinct keys never
 //! contend).
 
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::option_if_let_else, missing_docs)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use rylv_metrics::{
     MetricCollectorTrait, RylvStr, RylvTag, SharedCollector, SharedCollectorOptions,

@@ -1,8 +1,8 @@
 [package]
 name = "rylv-metrics"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "High-performance DogStatsD metrics client with client-side aggregation"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rylv/rylv-metrics"
@@ -13,8 +13,29 @@ keywords = ["metrics", "dogstatsd", "statsd", "monitoring", "telemetry"]
 categories = ["development-tools::profiling", "network-programming"]
 exclude = [".github/", "fuzz/", "Makefile", ".gitignore"]
 
-[lints.rust]
+[workspace]
+members = ["rylv-metrics-derive"]
+exclude = ["fuzz"]
+
+[workspace.lints.rust]
+missing_docs = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+
+[lints]
+workspace = true
 
 [lib]
 crate-type = ["rlib"]
@@ -35,6 +56,7 @@ thread_local = { version = "1.1.9", default-features = false, optional = true }
 rustix = { version = "1.1.2", default-features = false, features = ["std", "net", "time"], optional = true }
 libc = { version = "0.2", default-features=false, optional = true }
 bumpalo = { version = "3.19.0", default-features = false}
+rylv-metrics-derive = { path = "rylv-metrics-derive", version = "0.6.0", optional = true }
 
 # Used in benchmarks for profiling
 dhat = {version="0.3.3", default-features = false, optional=true}
@@ -44,6 +66,8 @@ allocation-counter = { version = "0", default-features = false, optional = true 
 criterion = "0.5.1"
 ahash = "0.8.12"
 serde_json = "1.0"
+trybuild = "1.0"
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
 [[bin]]
 name = "shared_dhat_single"
@@ -86,10 +110,20 @@ harness = false
 required-features = ["tls-collector", "shared-collector"]
 
 [[bench]]
+name = "typed_tags"
+path = "benches/typed_tags.rs"
+harness = false
+required-features = ["derive", "shared-collector", "tls-collector"]
+
+[[bench]]
 name = "shared_collector_contention"
 path = "benches/shared_collector_contention.rs"
 harness = false
 required-features = ["shared-collector"]
+
+[[example]]
+name = "typed_tags"
+required-features = ["derive", "shared-collector"]
 
 [[example]]
 name = "basic"
@@ -141,6 +175,7 @@ required-features = ["udp"]
 
 [features]
 default = []
+derive = ["dep:rylv-metrics-derive"]
 custom_writer = []
 shared-collector = ["dep:dashmap", "dep:arc-swap"]
 tls-collector = ["dep:thread_local", "dep:hashbrown", "dep:parking_lot"]

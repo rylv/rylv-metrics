@@ -1,3 +1,6 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(missing_docs)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rylv_metrics::benchmark_lookup_compare as bench_lookup_compare_impl;
 

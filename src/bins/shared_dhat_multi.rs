@@ -1,3 +1,6 @@
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::unwrap_used, missing_docs)]
+
 use rylv_metrics::{
     HistogramConfig, MetricCollectorTrait, RylvStr, RylvTag, SharedCollector, SigFig,
 };

@@ -6,6 +6,9 @@
 //! - `PreparedMetric` is great for single-threaded hot paths.
 //! - For heavily shared multi-threaded UDP collectors, prefer `*_sorted`.
 
+// Target-specific exceptions to the shared library lint policy.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use rylv_metrics::{
     count_add_sorted, histogram_sorted, sorted_tags, MetricCollector, MetricCollectorOptions,
     MetricCollectorTrait, RylvStr, SharedCollector, SharedCollectorOptions, StatsWriterType,

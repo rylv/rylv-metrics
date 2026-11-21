@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-21
+
+### Changed
+- Breaking: raise the minimum supported Rust version from 1.88 to 1.90.
+- Validate workspace publication before uploading either crate, using Cargo 1.90 multi-package publishing.
+
+### Added
+- Optional `RylvTags` derive and typed collector methods for canonically ordered tags without per-call sorting.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added
