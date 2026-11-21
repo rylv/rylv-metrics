@@ -111,42 +111,10 @@ jobs:
         with:
           toolchain: "1.90.0"
 
-      - name: Publish crates in dependency order
+      - name: Publish workspace
+        run: cargo publish --workspace --all-features
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          python3 - <<'PYTHON'
-          import json
-          import subprocess
-          import tomllib
-          import urllib.error
-          import urllib.request
-          from pathlib import Path
-
-          packages = []
-          for manifest in [Path('rylv-metrics-derive/Cargo.toml'), Path('Cargo.toml')]:
-              package = tomllib.loads(manifest.read_text())['package']
-              name, version = package['name'], package['version']
-              request = urllib.request.Request(
-                  f'https://crates.io/api/v1/crates/{name}/{version}',
-                  headers={'User-Agent': 'rylv-metrics-release'},
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=60) as response:
-                      published = json.load(response)['version']
-              except urllib.error.HTTPError as error:
-                  if error.code != 404:
-                      raise
-              else:
-                  if published['yanked']:
-                      raise RuntimeError(f'{name}@{version} is yanked; choose a new version')
-                  print(f'{name}@{version} already published; skipping', flush=True)
-                  continue
-              packages.extend(['-p', name])
-          if packages:
-              # Cargo validates all selected packages and publishes in dependency order.
-              subprocess.run(['cargo', 'publish', *packages, '--all-features'], check=True)
-          PYTHON
 
   github-release:
     name: Create GitHub Release

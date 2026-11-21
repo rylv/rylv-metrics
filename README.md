@@ -350,4 +350,4 @@ Before publishing, run:
 make prepare-publish
 ```
 
-This requires Rust 1.90 or newer. It verifies the workspace, lists both packages, runs release tests, and dry-runs publishing the entire workspace with all features. Cargo validates both packages before publishing them in dependency order. Re-running a partially completed release skips versions that are already published.
+This requires Rust 1.90 or newer. It verifies the workspace, lists both packages, runs release tests, and dry-runs publishing the entire workspace with all features. Cargo validates both packages before publishing them in dependency order.
