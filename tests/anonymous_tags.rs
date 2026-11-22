@@ -116,3 +116,56 @@ fn generated_names_do_not_capture_caller_expressions() {
         ]
     );
 }
+
+#[test]
+fn caller_constants_do_not_capture_generated_bindings() {
+    #[allow(non_upper_case_globals)]
+    const __rylv_field_0: u8 = 1;
+    #[allow(non_upper_case_globals)]
+    const __rylv_values: u8 = 2;
+    let tags = rylv_tags! {
+        env: RylvStr::from_static("prod"),
+        region?: Some(RylvStr::from_static("us")),
+    };
+    assert_eq!(__rylv_field_0 + __rylv_values, 3);
+    assert_eq!(tags.sorted_tags().as_ref().len(), 2);
+}
+
+#[cfg(feature = "shared-collector")]
+#[test]
+fn borrowed_temporaries_survive_the_collector_call() {
+    use rylv_metrics::{
+        DrainMetricCollectorTrait, MetricCollectorTrait, MetricDrain, SharedCollector,
+    };
+    let collector = SharedCollector::default();
+    collector.count_typed(
+        RylvStr::from_static("requests"),
+        &rylv_tags! {
+            env: RylvStr::Borrowed(&format!("env{}", 1)),
+            region?: Some(RylvStr::Borrowed(&format!("region{}", 2))),
+        },
+    );
+    let mut drain = collector.try_begin_drain().expect("drain available");
+    let frames: Vec<_> = drain.frames().collect();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].tags, "env:env1,region:region2");
+}
+
+#[test]
+fn caller_scope_and_control_flow_are_preserved() -> Result<(), &'static str> {
+    struct Caller;
+    impl Caller {
+        fn value(fail: bool) -> Result<RylvStr<'static>, &'static str> {
+            if fail {
+                return Err("unavailable");
+            }
+            Ok(RylvStr::from_static("prod"))
+        }
+        fn tags(fail: bool) -> Result<impl RylvTags, &'static str> {
+            Ok(rylv_tags! { env: Self::value(fail)? })
+        }
+    }
+    assert_eq!(Caller::tags(false)?.sorted_tags().as_ref().len(), 1);
+    assert_eq!(Caller::tags(true).err(), Some("unavailable"));
+    Ok(())
+}

@@ -63,7 +63,7 @@ fn expand_anonymous(input: &AnonymousTags) -> syn::Result<proc_macro2::TokenStre
     let mut declarations = Vec::new();
     let mut definitions = Vec::new();
     let mut values = Vec::new();
-    let mut bindings = Vec::new();
+    let mut types = Vec::new();
     let mut expressions = Vec::new();
     for (index, field) in input.fields.iter().enumerate() {
         let AnonymousField {
@@ -94,26 +94,31 @@ fn expand_anonymous(input: &AnonymousTags) -> syn::Result<proc_macro2::TokenStre
         };
         declarations.push(quote!(#(#attrs)* #ident: #ty));
         definitions.push(quote!(#ident: #ty));
-        let binding = quote::format_ident!(
-            "__rylv_field_{index}",
-            span = proc_macro2::Span::mixed_site()
-        );
-        values.push(quote!(#ident: #binding));
-        bindings.push(binding);
+        let index = syn::Index::from(index);
+        values.push(quote!(#ident: __rylv_values.#index));
+        types.push(ty);
         expressions.push(value);
     }
     let derived: DeriveInput = syn::parse2(quote! {
         struct __RylvAnonymousTags #lifetime { #(#declarations),* }
     })?;
     let implementation = expand_with_path(&derived, path)?;
-    Ok(quote! {{
-        let (#(#bindings,)*) = (#(#expressions,)*);
+    // The module isolates generated bindings from caller constants. Keep the
+    // caller expressions in the function arguments, outside the callee block,
+    // so borrowed temporaries live through the enclosing statement.
+    Ok(quote! {
         {
-            struct __RylvAnonymousTags #lifetime { #(#definitions),* }
-            #implementation
-            __RylvAnonymousTags { #(#values),* }
-        }
-    }})
+            mod __rylv_anonymous {
+                pub struct __RylvAnonymousTags #lifetime { #(#definitions),* }
+                #implementation
+                #[inline]
+                pub fn new #lifetime(__rylv_values: (#(#types,)*)) -> __RylvAnonymousTags #lifetime {
+                    __RylvAnonymousTags { #(#values),* }
+                }
+            }
+            __rylv_anonymous::new
+        }((#(#expressions,)*))
+    })
 }
 
 /// Derives a tag set with one tag per non-skipped named field.
