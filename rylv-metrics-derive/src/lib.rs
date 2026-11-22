@@ -109,8 +109,11 @@ fn validate_key(key: &str, span: proc_macro2::Span) -> syn::Result<()> {
 }
 
 fn is_option_type(ty: &Type) -> bool {
-    let Type::Path(ty) = ty else {
-        return false;
+    let ty = match ty {
+        Type::Group(group) => return is_option_type(&group.elem),
+        Type::Paren(paren) => return is_option_type(&paren.elem),
+        Type::Path(path) => path,
+        _ => return false,
     };
     let Some(segment) = ty.path.segments.last() else {
         return false;
@@ -143,13 +146,13 @@ fn tag_tokens(
     if optional {
         quote! {
             {
-                let value: &Option<#path::RylvStr<'_>> = &self.#ident;
+                let value: &::core::option::Option<#path::RylvStr<'_>> = &self.#ident;
                 value.as_ref().map(|value| #tag)
             }
         }
     } else if has_optional {
         quote! {
-            Some({
+            ::core::option::Option::Some({
                 let value: &#path::RylvStr<'_> = &self.#ident;
                 #tag
             })
