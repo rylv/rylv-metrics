@@ -135,7 +135,8 @@ let tags = RequestTags {
 collector.count_add_typed(RylvStr::from_static("requests.total"), 1, &tags);
 ```
 
-Each included field must be `RylvStr`; use `from_static` for known constants,
+Each included field must be `RylvStr` or `Option<RylvStr>`; `None` omits a tag.
+Use `from_static` for known constants,
 `Borrowed` for temporary values, and `Owned` or `OwnedStr` for owned values.
 The derive computes canonical key order at compile time. `sorted_tags()` returns
 a stack-backed `RylvTagsGuard` that owns the temporary tag array. `*_typed`
@@ -144,6 +145,24 @@ Use the slice API for keys or tag counts chosen at runtime. Use
 `SortedTags` when the entire set can be prepared and reused, since it also
 caches the tags hash. Use `PreparedMetric` when the metric name and tag values
 are both reusable; it also caches the metric identity.
+
+For an inline tag set, use `rylv_tags!` with the same `derive` feature:
+
+```rust
+collector.count_typed(
+    RylvStr::from_static("requests.total"),
+    &rylv_metrics::rylv_tags! {
+        env: RylvStr::from_static("prod"),
+        #[rylv(rename = "http-route")]
+        route: RylvStr::from_static("/users"),
+        region?: None,
+    },
+);
+```
+
+The macro creates a local struct and its `RylvTags` implementation. Append `?`
+to mark an optional field. Expressions run once in declaration order; tag keys
+are ordered at compile time.
 
 ## Metric Types
 

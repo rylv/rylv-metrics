@@ -3,7 +3,118 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
-use syn::{parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, LitStr, Path};
+use syn::{
+    parse::{Parse, ParseStream},
+    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Expr, Fields, Ident, LitStr,
+    Path, Token,
+};
+
+struct AnonymousField {
+    attrs: Vec<Attribute>,
+    ident: Ident,
+    optional: bool,
+    value: Expr,
+}
+
+struct AnonymousTags {
+    path: proc_macro2::TokenStream,
+    fields: Vec<AnonymousField>,
+}
+
+impl Parse for AnonymousTags {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let path;
+        syn::parenthesized!(path in input);
+        let path = path.parse()?;
+        let mut fields = Vec::new();
+        while !input.is_empty() {
+            let attrs = input.call(Attribute::parse_outer)?;
+            let ident = input.parse()?;
+            let optional = input.parse::<Option<Token![?]>>()?.is_some();
+            input.parse::<Token![:]>()?;
+            let value = input.parse()?;
+            fields.push(AnonymousField {
+                attrs,
+                ident,
+                optional,
+                value,
+            });
+            if !input.is_empty() {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(Self { path, fields })
+    }
+}
+
+/// Implementation detail of `rylv_metrics::rylv_tags!`.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __rylv_tags(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as AnonymousTags);
+    expand_anonymous(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn expand_anonymous(input: &AnonymousTags) -> syn::Result<proc_macro2::TokenStream> {
+    let path = &input.path;
+    let lifetime = (!input.fields.is_empty()).then(|| quote!(<'__rylv_value>));
+    let mut declarations = Vec::new();
+    let mut definitions = Vec::new();
+    let mut values = Vec::new();
+    let mut bindings = Vec::new();
+    let mut expressions = Vec::new();
+    for (index, field) in input.fields.iter().enumerate() {
+        let AnonymousField {
+            attrs,
+            ident,
+            optional,
+            value,
+        } = field;
+        for attr in attrs {
+            if !attr.path().is_ident("rylv") {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "only `rylv` attributes are supported in rylv_tags!",
+                ));
+            }
+        }
+        let (_, skip) = field_options(attrs)?;
+        if skip {
+            return Err(syn::Error::new_spanned(
+                ident,
+                "`skip` is not supported in rylv_tags!",
+            ));
+        }
+        let ty = if *optional {
+            quote!(::core::option::Option<#path::RylvStr<'__rylv_value>>)
+        } else {
+            quote!(#path::RylvStr<'__rylv_value>)
+        };
+        declarations.push(quote!(#(#attrs)* #ident: #ty));
+        definitions.push(quote!(#ident: #ty));
+        let binding = quote::format_ident!(
+            "__rylv_field_{index}",
+            span = proc_macro2::Span::mixed_site()
+        );
+        values.push(quote!(#ident: #binding));
+        bindings.push(binding);
+        expressions.push(value);
+    }
+    let derived: DeriveInput = syn::parse2(quote! {
+        struct __RylvAnonymousTags #lifetime { #(#declarations),* }
+    })?;
+    let implementation = expand_with_path(&derived, path)?;
+    Ok(quote! {{
+        let (#(#bindings,)*) = (#(#expressions,)*);
+        {
+            struct __RylvAnonymousTags #lifetime { #(#definitions),* }
+            #implementation
+            __RylvAnonymousTags { #(#values),* }
+        }
+    }})
+}
 
 /// Derives a tag set with one tag per non-skipped named field.
 ///
@@ -105,7 +216,11 @@ fn validate_key(key: &str, span: proc_macro2::Span) -> syn::Result<()> {
     Ok(())
 }
 
-fn tag_tokens(path: &Path, ident: &syn::Ident, key: &LitStr) -> proc_macro2::TokenStream {
+fn tag_tokens(
+    path: &proc_macro2::TokenStream,
+    ident: &syn::Ident,
+    key: &LitStr,
+) -> proc_macro2::TokenStream {
     quote! {
         #path::__RylvTagValue::optional_tag(&self.#ident, #key)
     }
@@ -113,6 +228,13 @@ fn tag_tokens(path: &Path, ident: &syn::Ident, key: &LitStr) -> proc_macro2::Tok
 
 fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let path = crate_path(&input.attrs)?;
+    expand_with_path(input, &quote!(#path))
+}
+
+fn expand_with_path(
+    input: &DeriveInput,
+    path: &proc_macro2::TokenStream,
+) -> syn::Result<proc_macro2::TokenStream> {
     let Data::Struct(data) = &input.data else {
         return Err(syn::Error::new_spanned(
             input,
@@ -152,7 +274,7 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     entries.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
     let tags: Vec<_> = entries
         .iter()
-        .map(|(_, ident, key, _)| tag_tokens(&path, ident, key))
+        .map(|(_, ident, key, _)| tag_tokens(path, ident, key))
         .collect();
     let types = entries.iter().map(|entry| entry.3);
     let required_tags = entries.iter().map(|(_, ident, key, _)| {
