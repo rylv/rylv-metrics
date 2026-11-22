@@ -219,6 +219,81 @@ fn derived_values_keep_static_and_borrow_dynamic() {
     ));
 }
 
+#[derive(RylvTags)]
+struct OptionalTags<'a> {
+    z: Option<RylvStr<'a>>,
+    #[rylv(rename = "a-b")]
+    dash: Option<RylvStr<'a>>,
+    middle: RylvStr<'a>,
+    first: Option<RylvStr<'a>>,
+}
+
+#[test]
+fn optional_tags_preserve_order_and_distinguish_none_from_empty() {
+    let dynamic = String::from("dynamic");
+    let tags = OptionalTags {
+        z: None,
+        dash: Some(RylvStr::from_static("")),
+        middle: RylvStr::Borrowed(&dynamic),
+        first: Some(RylvStr::from_static("prod")),
+    };
+    let mut guard = tags.sorted_tags();
+    assert_eq!(
+        guard.as_ref(),
+        &[
+            RylvTag::from_static("a-b:"),
+            RylvTag::from_static("first:prod"),
+            RylvTag::from_static("middle:dynamic"),
+        ]
+    );
+    assert_eq!(guard.as_mut().len(), 3);
+    assert!(matches!(
+        guard.as_ref()[0],
+        RylvTag::Compound(_, RylvStr::Static(""))
+    ));
+    assert!(matches!(
+        guard.as_ref()[2],
+        RylvTag::Compound(_, RylvStr::Borrowed("dynamic"))
+    ));
+}
+
+#[test]
+fn optional_tags_all_presence_combinations_match_runtime_sort() {
+    for mask in 0_u8..8 {
+        let tags = OptionalTags {
+            z: (mask & 1 != 0).then(|| RylvStr::from_static("z")),
+            dash: (mask & 2 != 0).then(|| RylvStr::from_static("dash")),
+            middle: RylvStr::from_static("middle"),
+            first: (mask & 4 != 0).then(|| RylvStr::from_static("first")),
+        };
+        let guard = tags.sorted_tags();
+        let mut expected = vec![RylvTag::from_static("middle:middle")];
+        if mask & 1 != 0 {
+            expected.push(RylvTag::from_static("z:z"));
+        }
+        if mask & 2 != 0 {
+            expected.push(RylvTag::from_static("a-b:dash"));
+        }
+        if mask & 4 != 0 {
+            expected.push(RylvTag::from_static("first:first"));
+        }
+        expected.sort_unstable();
+        assert_eq!(guard.as_ref(), expected.as_slice());
+    }
+}
+
+#[test]
+fn all_optional_tags_can_be_absent() {
+    #[derive(RylvTags)]
+    struct AllOptional<'a> {
+        env: Option<RylvStr<'a>>,
+    }
+    let tags = AllOptional { env: None };
+    let mut guard = tags.sorted_tags();
+    assert!(guard.as_ref().is_empty());
+    assert!(guard.as_mut().is_empty());
+}
+
 #[cfg(any(feature = "shared-collector", feature = "tls-collector"))]
 mod aggregation {
     use super::*;
@@ -348,10 +423,42 @@ mod aggregation {
         assert!(drain.frames().next().is_none());
     }
 
+    fn optional_values_form_distinct_series<C: DrainMetricCollectorTrait>(collector: C) {
+        #[derive(RylvTags)]
+        struct Tags<'a> {
+            env: RylvStr<'a>,
+            region: Option<RylvStr<'a>>,
+        }
+        let without = Tags {
+            env: RylvStr::from_static("prod"),
+            region: None,
+        };
+        let with_empty = Tags {
+            env: RylvStr::from_static("prod"),
+            region: Some(RylvStr::from_static("")),
+        };
+        collector.count_add_typed(RylvStr::from_static("requests"), 1, &without);
+        collector.count_add_typed(RylvStr::from_static("requests"), 2, &with_empty);
+        let mut drain = collector.try_begin_drain().expect("drain available");
+        let mut frames: Vec<_> = drain.frames().collect();
+        frames.sort_unstable_by(|left, right| left.tags.cmp(right.tags));
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].tags, "env:prod");
+        assert_eq!(frames[0].value, MetricValue::Int(1));
+        assert_eq!(frames[1].tags, "env:prod,region:");
+        assert_eq!(frames[1].value, MetricValue::Int(2));
+    }
+
     #[cfg(feature = "shared-collector")]
     #[test]
     fn shared_paths_aggregate_together() {
         check(rylv_metrics::SharedCollector::default());
+    }
+
+    #[cfg(feature = "shared-collector")]
+    #[test]
+    fn shared_optional_values_form_distinct_series() {
+        optional_values_form_distinct_series(rylv_metrics::SharedCollector::default());
     }
 
     #[cfg(feature = "shared-collector")]
@@ -371,6 +478,14 @@ mod aggregation {
     #[test]
     fn tls_paths_aggregate_together() {
         check(rylv_metrics::TLSCollector::new(
+            rylv_metrics::TLSCollectorOptions::default(),
+        ));
+    }
+
+    #[cfg(feature = "tls-collector")]
+    #[test]
+    fn tls_optional_values_form_distinct_series() {
+        optional_values_form_distinct_series(rylv_metrics::TLSCollector::new(
             rylv_metrics::TLSCollectorOptions::default(),
         ));
     }

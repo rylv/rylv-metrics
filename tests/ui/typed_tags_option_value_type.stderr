@@ -1,0 +1,12 @@
+error[E0308]: mismatched types
+ --> tests/ui/typed_tags_option_value_type.rs:3:10
+  |
+3 | #[derive(RylvTags)]
+  |          ^^^^^^^^
+  |          |
+  |          expected `&Option<RylvStr<'_>>`, found `&Option<String>`
+  |          expected due to this
+  |
+  = note: expected reference `&Option<RylvStr<'_>>`
+             found reference `&Option<String>`
+  = note: this error originates in the derive macro `RylvTags` (in Nightly builds, run with -Z macro-backtrace for more info)

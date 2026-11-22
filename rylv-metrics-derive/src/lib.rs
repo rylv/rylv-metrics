@@ -3,7 +3,10 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
-use syn::{parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, LitStr, Path};
+use syn::{
+    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericArgument, LitStr,
+    Path, PathArguments, Type,
+};
 
 /// Derives a tag set with one tag per non-skipped named field.
 ///
@@ -11,7 +14,8 @@ use syn::{parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, 
 /// `#[rylv(skip)]` omits a field. `#[rylv(crate = "path")]` on the struct
 /// overrides the default `::rylv_metrics` path, for renamed dependencies.
 /// Keys must be unique and cannot be empty or contain `:`, `,`, `|`, `#`,
-/// whitespace, or line breaks. Every non-skipped field must have type `RylvStr`.
+/// whitespace, or line breaks. Every non-skipped field must have type `RylvStr`
+/// or `Option<RylvStr>`. `None` omits the tag; `Some("")` includes an empty value.
 ///
 /// ```ignore
 /// #[derive(rylv_metrics::RylvTags)]
@@ -104,6 +108,62 @@ fn validate_key(key: &str, span: proc_macro2::Span) -> syn::Result<()> {
     Ok(())
 }
 
+fn is_option_type(ty: &Type) -> bool {
+    let Type::Path(ty) = ty else {
+        return false;
+    };
+    let Some(segment) = ty.path.segments.last() else {
+        return false;
+    };
+    segment.ident == "Option"
+        && matches!(
+            &segment.arguments,
+            PathArguments::AngleBracketed(arguments)
+                if matches!(arguments.args.first(), Some(GenericArgument::Type(_)))
+                    && arguments.args.len() == 1
+        )
+}
+
+fn tag_tokens(
+    path: &Path,
+    ident: &syn::Ident,
+    key: &LitStr,
+    optional: bool,
+    has_optional: bool,
+) -> proc_macro2::TokenStream {
+    let value = quote! {
+        match value {
+            #path::RylvStr::Static(value) => #path::RylvStr::Static(*value),
+            _ => #path::RylvStr::Borrowed(value.as_ref()),
+        }
+    };
+    let tag = quote! {
+        #path::RylvTag::Compound(#path::RylvStr::Static(#key), #value)
+    };
+    if optional {
+        quote! {
+            {
+                let value: &Option<#path::RylvStr<'_>> = &self.#ident;
+                value.as_ref().map(|value| #tag)
+            }
+        }
+    } else if has_optional {
+        quote! {
+            Some({
+                let value: &#path::RylvStr<'_> = &self.#ident;
+                #tag
+            })
+        }
+    } else {
+        quote! {
+            {
+                let value: &#path::RylvStr<'_> = &self.#ident;
+                #tag
+            }
+        }
+    }
+}
+
 fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let path = crate_path(&input.attrs)?;
     let Data::Struct(data) = &input.data else {
@@ -140,23 +200,23 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             return Err(syn::Error::new(span, format!("duplicate tag key `{key}`")));
         }
         let key_literal = LitStr::new(&key, span);
-        entries.push((format!("{key}:"), ident.clone(), key_literal));
+        entries.push((
+            format!("{key}:"),
+            ident.clone(),
+            key_literal,
+            is_option_type(&field.ty),
+        ));
     }
     entries.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
-    let tags = entries.iter().map(|(_, ident, key)| {
-        quote! {
-            #path::RylvTag::Compound(
-                #path::RylvStr::Static(#key),
-                {
-                    let value: &#path::RylvStr<'_> = &self.#ident;
-                    match value {
-                        #path::RylvStr::Static(value) => #path::RylvStr::Static(*value),
-                        _ => #path::RylvStr::Borrowed(value.as_ref()),
-                    }
-                },
-            )
-        }
-    });
+    let has_optional = entries.iter().any(|entry| entry.3);
+    let tags = entries
+        .iter()
+        .map(|(_, ident, key, optional)| tag_tokens(&path, ident, key, *optional, has_optional));
+    let constructor = if has_optional {
+        quote!(#path::RylvTagsGuard::from_optional)
+    } else {
+        quote!(#path::RylvTagsGuard::new)
+    };
     let count = entries.len();
     let name = &input.ident;
     let mut guard_lifetime = syn::Lifetime::new("'__rylv_guard", proc_macro2::Span::call_site());
@@ -176,7 +236,7 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
             #[inline]
             fn sorted_tags(&self) -> Self::Guard<'_> {
-                #path::RylvTagsGuard::new([#(#tags),*])
+                #constructor([#(#tags),*])
             }
         }
     })
