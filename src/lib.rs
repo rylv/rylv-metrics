@@ -64,6 +64,8 @@ mod error;
 
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 pub use dogstats::writer::StatsWriterTrait;
+#[doc(hidden)]
+pub use dogstats::TagValue as __RylvTagValue;
 pub use dogstats::{
     DrainMetricCollectorTrait, HistogramBaseMetric, HistogramConfig, MetricCollectorTrait,
     MetricDrain, MetricFrameRef, MetricKind, MetricSuffix, MetricValue, PreparedMetric, SortedTags,

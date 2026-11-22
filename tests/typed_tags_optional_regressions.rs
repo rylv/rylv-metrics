@@ -4,6 +4,53 @@
 use rylv_metrics::{RylvStr, RylvTag, RylvTags};
 
 #[test]
+fn aliases_use_the_underlying_value_type() {
+    use ::core::option::Option as Maybe;
+    type Option<T> = T;
+    type OptionalValue<'a> = Maybe<RylvStr<'a>>;
+
+    #[derive(RylvTags)]
+    struct Tags<'a> {
+        env: Option<RylvStr<'a>>,
+        region: OptionalValue<'a>,
+        zone: Maybe<RylvStr<'a>>,
+    }
+
+    let tags = Tags {
+        env: RylvStr::from_static("prod"),
+        region: Some(RylvStr::from_static("us")),
+        zone: None,
+    };
+    assert_eq!(
+        tags.sorted_tags().as_ref(),
+        &[
+            RylvTag::from_static("env:prod"),
+            RylvTag::from_static("region:us"),
+        ]
+    );
+}
+
+#[test]
+fn required_aliases_use_the_required_guard_path() {
+    type Option<T> = T;
+
+    #[derive(RylvTags)]
+    struct Tags<'a> {
+        env: Option<RylvStr<'a>>,
+    }
+
+    let tags = Tags {
+        env: RylvStr::from(String::from("prod")),
+    };
+    let guard = tags.sorted_tags();
+    assert_eq!(guard.as_ref(), &[RylvTag::from_static("env:prod")]);
+    assert!(matches!(
+        guard.as_ref()[0],
+        RylvTag::Compound(_, RylvStr::Borrowed("prod"))
+    ));
+}
+
+#[test]
 fn local_option_name_does_not_affect_qualified_optional_fields() {
     struct Option;
 

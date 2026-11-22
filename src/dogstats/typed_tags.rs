@@ -2,6 +2,60 @@
 
 use crate::{RylvStr, RylvTag};
 
+mod private {
+    pub trait Sealed {}
+
+    impl Sealed for super::RylvStr<'_> {}
+    impl Sealed for Option<super::RylvStr<'_>> {}
+}
+
+/// Conversion used by the derive macro for required and optional tag values.
+#[doc(hidden)]
+pub trait TagValue: private::Sealed {
+    /// Whether this value can omit its tag.
+    const OPTIONAL: bool;
+
+    /// Creates a tag, preserving static strings and omitting absent values.
+    fn optional_tag(&self, key: &'static str) -> Option<RylvTag<'_>>;
+
+    /// Creates a tag on the statically selected path for required fields.
+    fn required_tag(&self, key: &'static str) -> RylvTag<'_>;
+}
+
+impl TagValue for RylvStr<'_> {
+    const OPTIONAL: bool = false;
+
+    #[inline]
+    fn optional_tag(&self, key: &'static str) -> Option<RylvTag<'_>> {
+        Some(self.required_tag(key))
+    }
+
+    #[inline]
+    fn required_tag(&self, key: &'static str) -> RylvTag<'_> {
+        let value = match self {
+            Self::Static(value) => RylvStr::Static(value),
+            _ => RylvStr::Borrowed(self.as_ref()),
+        };
+        RylvTag::Compound(RylvStr::Static(key), value)
+    }
+}
+
+impl TagValue for Option<RylvStr<'_>> {
+    const OPTIONAL: bool = true;
+
+    #[inline]
+    fn optional_tag(&self, key: &'static str) -> Option<RylvTag<'_>> {
+        self.as_ref().map(|value| value.required_tag(key))
+    }
+
+    #[inline]
+    fn required_tag(&self, key: &'static str) -> RylvTag<'_> {
+        // OPTIONAL is true, so the derive never selects this path for Option.
+        self.optional_tag(key)
+            .unwrap_or(RylvTag::Full(RylvStr::Static("")))
+    }
+}
+
 /// A set of tags supplied in canonical order to `*_typed` collector methods.
 ///
 /// Prefer `#[derive(RylvTags)]`, which enforces these rules for structs with
