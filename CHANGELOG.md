@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-23
+
+### Added
+- Optional `Option<RylvStr>` fields in typed tag sets; `None` omits the tag while `Some("")` retains an empty value.
+- `rylv_tags!` to create typed tag sets inline, with compile-time key ordering and optional fields.
+
+### Fixed
+- Preserve temporary borrows in inline tag sets and allow updating generated fields.
+- Parse all supported inline expressions in consumers that only enable the `derive` feature.
+
 ## [0.6.0] - 2026-11-21
 
 ### Changed
