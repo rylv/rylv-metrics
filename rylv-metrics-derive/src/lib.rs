@@ -63,9 +63,7 @@ fn expand_anonymous(input: &AnonymousTags) -> syn::Result<proc_macro2::TokenStre
     let mut declarations = Vec::new();
     let mut definitions = Vec::new();
     let mut values = Vec::new();
-    let mut types = Vec::new();
-    let mut expressions = Vec::new();
-    for (index, field) in input.fields.iter().enumerate() {
+    for field in &input.fields {
         let AnonymousField {
             attrs,
             ident,
@@ -93,32 +91,22 @@ fn expand_anonymous(input: &AnonymousTags) -> syn::Result<proc_macro2::TokenStre
             quote!(#path::RylvStr<'__rylv_value>)
         };
         declarations.push(quote!(#(#attrs)* #ident: #ty));
-        definitions.push(quote!(#ident: #ty));
-        let index = syn::Index::from(index);
-        values.push(quote!(#ident: __rylv_values.#index));
-        types.push(ty);
-        expressions.push(value);
+        definitions.push(quote!(pub #ident: #ty));
+        values.push(quote!(#ident: #value));
     }
     let derived: DeriveInput = syn::parse2(quote! {
         struct __RylvAnonymousTags #lifetime { #(#declarations),* }
     })?;
     let implementation = expand_with_path(&derived, path)?;
-    // The module isolates generated bindings from caller constants. Keep the
-    // caller expressions in the function arguments, outside the callee block,
-    // so borrowed temporaries live through the enclosing statement.
-    Ok(quote! {
-        {
-            mod __rylv_anonymous {
-                pub struct __RylvAnonymousTags #lifetime { #(#definitions),* }
-                #implementation
-                #[inline]
-                pub fn new #lifetime(__rylv_values: (#(#types,)*)) -> __RylvAnonymousTags #lifetime {
-                    __RylvAnonymousTags { #(#values),* }
-                }
-            }
-            __rylv_anonymous::new
-        }((#(#expressions,)*))
-    })
+    // Keep the expressions in the final struct literal so Rust extends the
+    // lifetime of borrowed temporaries in a surrounding `let` initializer.
+    Ok(quote! {{
+        mod __rylv_anonymous {
+            pub struct __RylvAnonymousTags #lifetime { #(#definitions),* }
+            #implementation
+        }
+        __rylv_anonymous::__RylvAnonymousTags { #(#values),* }
+    }})
 }
 
 /// Derives a tag set with one tag per non-skipped named field.

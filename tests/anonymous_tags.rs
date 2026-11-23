@@ -169,3 +169,44 @@ fn caller_scope_and_control_flow_are_preserved() -> Result<(), &'static str> {
     assert_eq!(Caller::tags(true).err(), Some("unavailable"));
     Ok(())
 }
+
+#[test]
+fn optional_fields_can_be_updated_after_construction() {
+    let mut tags = rylv_tags! { region?: None };
+    tags.region = Some(RylvStr::from_static("us"));
+    assert_eq!(
+        tags.sorted_tags().as_ref(),
+        &[RylvTag::from_static("region:us")]
+    );
+}
+
+#[test]
+fn borrowed_temporaries_live_for_the_let_binding() {
+    let tags = rylv_tags! {
+        env: RylvStr::Borrowed(&format!("env{}", 1)),
+    };
+    assert_eq!(
+        tags.sorted_tags().as_ref(),
+        &[RylvTag::from_static("env:env1")]
+    );
+}
+
+#[test]
+fn control_flow_expressions_are_supported() {
+    let prod = true;
+    let tags = rylv_tags! {
+        env: if prod {
+            RylvStr::from_static("prod")
+        } else {
+            RylvStr::from_static("test")
+        },
+        zone: { RylvStr::from_static("us") },
+    };
+    assert_eq!(
+        tags.sorted_tags().as_ref(),
+        &[
+            RylvTag::from_static("env:prod"),
+            RylvTag::from_static("zone:us"),
+        ]
+    );
+}
