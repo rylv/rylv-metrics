@@ -1,0 +1,21 @@
+error[E0308]: mismatched types
+ --> tests/ui/typed_tags_anonymous_optional_type.rs:2:51
+  |
+2 |     let _ = rylv_metrics::rylv_tags! { env?: Some(String::from("prod")) };
+  |                                              ---- ^^^^^^^^^^^^^^^^^^^^ expected `RylvStr<'_>`, found `String`
+  |                                              |
+  |                                              arguments to this enum variant are incorrect
+  |
+help: the type constructed contains `String` due to the type of the argument passed
+ --> tests/ui/typed_tags_anonymous_optional_type.rs:2:46
+  |
+2 |     let _ = rylv_metrics::rylv_tags! { env?: Some(String::from("prod")) };
+  |                                              ^^^^^--------------------^
+  |                                                   |
+  |                                                   this argument influences the type of `Some`
+note: tuple variant defined here
+ --> $RUST/core/src/option.rs
+help: call `Into::into` on this expression to convert `String` into `RylvStr<'_>`
+  |
+2 |     let _ = rylv_metrics::rylv_tags! { env?: Some(String::from("prod").into()) };
+  |                                                                       +++++++

@@ -36,6 +36,8 @@ pub use collector_udp::{
 };
 pub use histogram_config::{HistogramBaseMetric, HistogramConfig};
 pub use sorted_tags::{PreparedMetric, SortedTags};
+#[doc(hidden)]
+pub use typed_tags::TagValue;
 pub use typed_tags::{RylvTags, RylvTagsGuard};
 
 /// A flexible string type that can hold static references, borrowed references, or owned values.

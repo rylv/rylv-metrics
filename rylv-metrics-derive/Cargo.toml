@@ -1,6 +1,6 @@
 [package]
 name = "rylv-metrics-derive"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 rust-version = "1.90"
 description = "Derive macro for compile-time ordered rylv-metrics tags"
@@ -19,6 +19,6 @@ workspace = true
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", default-features = false, features = ["derive", "parsing", "printing", "proc-macro"] }
+syn = { version = "2", default-features = false, features = ["derive", "full", "parsing", "printing", "proc-macro"] }
 quote = "1"
 proc-macro2 = "1"

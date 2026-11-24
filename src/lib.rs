@@ -64,6 +64,8 @@ mod error;
 
 #[cfg(all(feature = "custom_writer", feature = "udp"))]
 pub use dogstats::writer::StatsWriterTrait;
+#[doc(hidden)]
+pub use dogstats::TagValue as __RylvTagValue;
 pub use dogstats::{
     DrainMetricCollectorTrait, HistogramBaseMetric, HistogramConfig, MetricCollectorTrait,
     MetricDrain, MetricFrameRef, MetricKind, MetricSuffix, MetricValue, PreparedMetric, SortedTags,
@@ -81,6 +83,34 @@ pub use dogstats::{TLSCollector, TLSCollectorOptions};
 pub use error::MetricsError;
 #[cfg(feature = "derive")]
 pub use rylv_metrics_derive::RylvTags;
+#[cfg(feature = "derive")]
+#[doc(hidden)]
+pub use rylv_metrics_derive::__rylv_tags;
+
+/// Creates a typed tag set without a separate struct declaration.
+///
+/// Fields take `RylvStr` expressions. Append `?` to a field name to accept
+/// `Option<RylvStr>` and omit its tag when the value is `None`. Use
+/// `#[rylv(rename = "tag-name")]` to override a tag key. Expressions are
+/// evaluated once, in declaration order. Keys are ordered at compile time.
+///
+/// ```
+/// use rylv_metrics::{rylv_tags, RylvStr, RylvTags};
+/// let tags = rylv_tags! {
+///     env: RylvStr::from_static("prod"),
+///     #[rylv(rename = "http-route")]
+///     route: RylvStr::from_static("/users"),
+///     region?: None,
+/// };
+/// assert_eq!(tags.sorted_tags().as_ref().len(), 2);
+/// ```
+#[cfg(feature = "derive")]
+#[macro_export]
+macro_rules! rylv_tags {
+    ($($fields:tt)*) => {
+        $crate::__rylv_tags!(($crate) $($fields)*)
+    };
+}
 
 /// Result type for metric operations.
 ///

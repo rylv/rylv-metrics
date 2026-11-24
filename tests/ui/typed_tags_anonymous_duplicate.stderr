@@ -1,0 +1,5 @@
+error: duplicate tag key `env`
+ --> tests/ui/typed_tags_anonymous_duplicate.rs:4:25
+  |
+4 |         #[rylv(rename = "env")]
+  |                         ^^^^^
